@@ -31,6 +31,8 @@ interface TerminalProps {
   onExit?: (code: number | null) => void;
   /** Whether to run Claude in auto-accept mode (--dangerously-skip-permissions) */
   autoAcceptMode?: boolean;
+  /** The label of the window this terminal belongs to (for multi-window support) */
+  windowLabel?: string;
 }
 
 /**
@@ -49,7 +51,7 @@ export interface TerminalHandle {
 }
 
 export const Terminal = forwardRef<TerminalHandle, TerminalProps>(function Terminal(
-  { projectPath, onExit, autoAcceptMode = false },
+  { projectPath, onExit, autoAcceptMode = false, windowLabel = 'main' },
   ref
 ) {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -255,6 +257,11 @@ export const Terminal = forwardRef<TerminalHandle, TerminalProps>(function Termi
         }
 
         ptyRef.current = pty;
+
+        // Register PTY with window for cleanup tracking
+        invoke('register_pty_window', { ptyId: pty.pid, windowLabel }).catch(() => {
+          // Non-critical - just for cleanup tracking
+        });
 
         // Handle PTY output -> terminal
         pty.onData((data) => {

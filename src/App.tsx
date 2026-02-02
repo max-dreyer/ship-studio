@@ -90,6 +90,14 @@ import { getFullSetupStatus, quickSetupCheck, markSetupComplete } from './lib/se
 import { UpdateBanner } from './components/UpdateBanner';
 import { invoke } from '@tauri-apps/api/core';
 import { logger } from './lib/logger';
+import { useWindowContext } from './hooks/useWindowContext';
+import {
+  getOpenProjects,
+  isProjectOpen,
+  registerProjectOpen,
+  unregisterProject,
+  allocateWindowPort,
+} from './lib/window';
 import './styles/index.css';
 
 // Initialize logger
@@ -201,6 +209,12 @@ function integrationReducer(state: IntegrationState, action: IntegrationAction):
 }
 
 function App() {
+  // Window context for multi-window support
+  const { windowLabel } = useWindowContext();
+
+  // Track which projects are open in other windows
+  const [openProjectsMap, setOpenProjectsMap] = useState<Record<string, string>>({});
+
   const [view, setView] = useState<AppView>('loading');
   const [currentProject, setCurrentProject] = useState<Project | null>(null);
   const [autoAcceptMode, setAutoAcceptMode] = useState(false);
@@ -338,6 +352,23 @@ function App() {
     setToasts((prev) => prev.filter((t) => t.id !== id));
   }, []);
 
+  // Poll for open projects across windows (for project locking)
+  useEffect(() => {
+    const refresh = async () => {
+      try {
+        const projects = await getOpenProjects();
+        setOpenProjectsMap(projects);
+      } catch {
+        // Ignore errors during polling
+      }
+    };
+    // Initial fetch
+    void refresh();
+    // Poll every 2 seconds to sync cross-window state
+    const interval = setInterval(() => void refresh(), 2000);
+    return () => clearInterval(interval);
+  }, []);
+
   // Check IDE availability on mount
   useEffect(() => {
     void invoke<{ vscode: boolean; cursor: boolean }>('check_ide_availability')
@@ -367,10 +398,18 @@ function App() {
 
   const checkSetup = async (forceFullCheck = false) => {
     setView('loading');
+
+    // Timeout helper to prevent indefinite hangs
+    const withTimeout = <T,>(promise: Promise<T>, ms: number): Promise<T> =>
+      Promise.race([
+        promise,
+        new Promise<T>((_, reject) => setTimeout(() => reject(new Error('Timeout')), ms)),
+      ]);
+
     try {
       // Fast path: if setup was previously completed, try quick check first
       if (!forceFullCheck) {
-        const quickCheck = await quickSetupCheck();
+        const quickCheck = await withTimeout(quickSetupCheck(), 5000);
         if (quickCheck.setupCompleteCached && quickCheck.allPresent) {
           // Setup was completed before and all binaries still exist
           // Show projects immediately, verify auth in background
@@ -381,14 +420,13 @@ function App() {
       }
 
       // Slow path: full setup check (first launch or something missing)
-      const setupStatus = await getFullSetupStatus();
+      const setupStatus = await withTimeout(getFullSetupStatus(), 10000);
 
       // Check GitHub, Vercel, and Claude status in parallel
-      const [ghStatus, vcStatus, clStatus] = await Promise.all([
-        checkGitHubCliStatus(),
-        checkVercelCliStatus(),
-        checkClaudeCliStatus(),
-      ]);
+      const [ghStatus, vcStatus, clStatus] = await withTimeout(
+        Promise.all([checkGitHubCliStatus(), checkVercelCliStatus(), checkClaudeCliStatus()]),
+        10000
+      );
 
       let ghUsername: string | null = null;
       if (ghStatus.authenticated) {
@@ -921,6 +959,23 @@ function App() {
     let stepStart = performance.now();
     logger.info(`[OpenProject] Starting: ${project.name}`);
 
+    // Check if project is already open in another window
+    try {
+      const openInWindow = await isProjectOpen(project.path);
+      if (openInWindow && openInWindow !== windowLabel) {
+        showToast('Project is open in another window', 'error');
+        return;
+      }
+
+      // Register this project as open in our window
+      await registerProjectOpen(windowLabel, project.path);
+    } catch (e) {
+      // If registration fails (e.g., already open), show error and abort
+      showToast('Project is open in another window', 'error');
+      logger.warn('Failed to register project open', { error: e });
+      return;
+    }
+
     // Stop any existing dev server first
     if (devServerRef.current) {
       await devServerRef.current.stop();
@@ -930,41 +985,30 @@ function App() {
       `[OpenProject] Step 1: Stop existing dev server - ${Math.round(performance.now() - stepStart)}ms`
     );
 
-    // Kill any process on our previously used port (handles orphaned processes from this session)
+    // Clean up this window's PTY processes from previous project (if any)
+    // Note: We don't kill port here because we haven't started a dev server yet in this window session,
+    // and killing port 3000 would kill another window's dev server. find_available_port handles this.
     stepStart = performance.now();
     try {
-      await invoke('kill_port', { port: devServerPort });
-    } catch {
-      // Ignore errors - port may already be free
-    }
-    logger.info(
-      `[OpenProject] Step 2: Kill port ${devServerPort} - ${Math.round(performance.now() - stepStart)}ms`
-    );
-
-    // Clean up any orphaned PTY processes from previous operations
-    stepStart = performance.now();
-    try {
-      await invoke('kill_all_pty');
+      await invoke('kill_window_ptys', { windowLabel });
       await invoke('cleanup_orphaned_processes');
     } catch {
       // Ignore cleanup errors
     }
     logger.info(
-      `[OpenProject] Step 3: Kill PTY and cleanup orphaned processes - ${Math.round(performance.now() - stepStart)}ms`
+      `[OpenProject] Step 2: Kill window PTYs and cleanup orphaned processes - ${Math.round(performance.now() - stepStart)}ms`
     );
 
-    // Find an available port (doesn't kill other apps' processes)
+    // Atomically allocate AND register port to prevent race conditions
     stepStart = performance.now();
     let port = PREFERRED_DEV_SERVER_PORT;
     try {
-      port = await invoke<number>('find_available_port', {
-        preferredPort: PREFERRED_DEV_SERVER_PORT,
-      });
+      port = await allocateWindowPort(windowLabel, PREFERRED_DEV_SERVER_PORT);
     } catch (error) {
-      logger.error('Failed to find available port, using default', { error });
+      logger.error('Failed to allocate port, using default', { error });
     }
     logger.info(
-      `[OpenProject] Step 4: Find available port ${port} - ${Math.round(performance.now() - stepStart)}ms`
+      `[OpenProject] Step 3: Allocate port ${port} for window ${windowLabel} - ${Math.round(performance.now() - stepStart)}ms`
     );
     setDevServerPort(port);
 
@@ -1104,6 +1148,10 @@ function App() {
   };
 
   const handleBackToProjects = async () => {
+    logger.info(
+      `[BackToProjects] Starting - windowLabel: ${windowLabel}, devServerPort: ${devServerPort}`
+    );
+
     // Clear screenshot interval and project ref
     if (screenshotIntervalRef.current) {
       clearInterval(screenshotIntervalRef.current);
@@ -1130,24 +1178,49 @@ function App() {
     setTerminalSessionId((prev) => prev + 1);
     setShowDevServerLogs(false);
 
-    // Stop dev server if running
-    if (devServerRef.current) {
-      await devServerRef.current.stop();
-      devServerRef.current = null;
-    }
-
-    // Clean up any orphaned PTY processes
-    try {
-      await invoke('kill_all_pty');
-      await invoke('cleanup_orphaned_processes');
-      await invoke('kill_port', { port: devServerPort });
-    } catch {
-      // Ignore cleanup errors
-    }
-
+    // Navigate to projects view immediately - don't wait for cleanup
     setCurrentProject(null);
     dispatch({ type: 'CLEAR_PROJECT_STATUSES' });
     setView('projects');
+    logger.info(`[BackToProjects] Navigated to projects view`);
+
+    // Unregister project first (fast operation, shouldn't block IPC)
+    try {
+      await unregisterProject(windowLabel);
+      logger.info(`[BackToProjects] Unregistered project for window: ${windowLabel}`);
+    } catch (e) {
+      logger.warn(`[BackToProjects] Failed to unregister project`, { error: e });
+    }
+
+    // Do heavy cleanup in background after a delay to avoid blocking IPC
+    const portToKill = devServerPort;
+    const labelToCleanup = windowLabel;
+    const devServerToStop = devServerRef.current;
+    devServerRef.current = null;
+
+    // Delay heavy cleanup to let IPC settle
+    setTimeout(() => {
+      void (async () => {
+        // Stop dev server if running
+        if (devServerToStop) {
+          try {
+            await devServerToStop.stop();
+          } catch {
+            // Ignore stop errors
+          }
+        }
+
+        logger.info(`[BackToProjects] Cleaning up port ${portToKill} for window ${labelToCleanup}`);
+        try {
+          await invoke('kill_window_ptys', { windowLabel: labelToCleanup });
+          await invoke('cleanup_orphaned_processes');
+          await invoke('kill_port', { port: portToKill });
+          logger.info(`[BackToProjects] Cleanup complete`);
+        } catch (e) {
+          logger.warn(`[BackToProjects] Cleanup error (non-critical)`, { error: e });
+        }
+      })();
+    }, 500); // Delay cleanup to let IPC settle after navigation
   };
 
   const handleRestartDevServer = async () => {
@@ -1312,6 +1385,8 @@ function App() {
             onGitHubConnectForImport={() => void handleGitHubConnectFromOverlay()}
             onGitHubConnect={handleGitHubConnectFromOverlay}
             onVercelConnect={handleVercelConnectFromOverlay}
+            openProjectsMap={openProjectsMap}
+            currentWindowLabel={windowLabel}
           />
           {showCreateModal && (
             <CreateProject
@@ -1618,6 +1693,7 @@ function App() {
                         projectPath={currentProject?.path || ''}
                         onExit={handleTerminalExit}
                         autoAcceptMode={autoAcceptMode}
+                        windowLabel={windowLabel}
                       />
                     </div>
                   ))}

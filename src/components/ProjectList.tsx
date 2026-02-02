@@ -74,6 +74,10 @@ interface ProjectListProps {
   onGitHubConnect?: () => void;
   /** Callback to connect Vercel account */
   onVercelConnect?: () => void;
+  /** Map of window labels to project paths for projects open in other windows */
+  openProjectsMap?: Record<string, string>;
+  /** The current window's label */
+  currentWindowLabel?: string;
 }
 
 export function ProjectList({
@@ -84,6 +88,8 @@ export function ProjectList({
   onGitHubConnectForImport,
   onGitHubConnect,
   onVercelConnect,
+  openProjectsMap = {},
+  currentWindowLabel = 'main',
 }: ProjectListProps) {
   const [projects, setProjects] = useState<ProjectWithThumbnail[]>([]);
   const [folders, setFolders] = useState<FolderInfo[]>([]);
@@ -159,8 +165,45 @@ export function ProjectList({
 
   const loadAll = useCallback(async () => {
     setLoading(true);
-    await Promise.all([loadProjects(), loadFolders()]);
-    setLoading(false);
+
+    try {
+      // Run loads with individual timeouts to prevent hanging
+      // Use 8s timeout per attempt, with retry
+      const loadWithTimeout = async <T,>(
+        promiseFn: () => Promise<T>,
+        name: string,
+        timeoutMs: number
+      ): Promise<T | null> => {
+        const timeout = new Promise<null>((resolve) =>
+          setTimeout(() => {
+            console.warn(`${name} timed out after ${timeoutMs}ms`);
+            resolve(null);
+          }, timeoutMs)
+        );
+        return Promise.race([promiseFn().then((v) => v), timeout]);
+      };
+
+      // First attempt with 8s timeout
+      const [projectsResult, foldersResult] = await Promise.all([
+        loadWithTimeout(() => loadProjects(), 'loadProjects', 8000),
+        loadWithTimeout(() => loadFolders(), 'loadFolders', 8000),
+      ]);
+
+      // If both failed, retry once after a short delay
+      // This helps when IPC channel is temporarily blocked
+      if (projectsResult === null && foldersResult === null) {
+        console.warn('Initial load failed, retrying in 500ms...');
+        await new Promise((r) => setTimeout(r, 500));
+        await Promise.all([
+          loadWithTimeout(() => loadProjects(), 'loadProjects-retry', 8000),
+          loadWithTimeout(() => loadFolders(), 'loadFolders-retry', 8000),
+        ]);
+      }
+    } catch (error) {
+      console.error('Failed to load projects:', error);
+    } finally {
+      setLoading(false);
+    }
   }, []);
 
   // Load folder details when navigating into a folder
@@ -179,7 +222,12 @@ export function ProjectList({
   }, [currentFolderId]);
 
   useEffect(() => {
-    void loadAll();
+    // Small delay before loading to let any pending IPC cleanup complete
+    // This helps avoid IPC channel congestion when transitioning from workspace
+    const timer = setTimeout(() => {
+      void loadAll();
+    }, 100);
+    return () => clearTimeout(timer);
   }, [loadAll]);
 
   // Get projects to display based on current folder
@@ -237,6 +285,19 @@ export function ProjectList({
     const query = searchQuery.toLowerCase();
     return folders.filter((f) => f.name.toLowerCase().includes(query));
   }, [folders, searchQuery, currentFolderId]);
+
+  // Check if a project is open in another window
+  const isProjectOpenInOtherWindow = useCallback(
+    (projectPath: string): boolean => {
+      for (const [label, path] of Object.entries(openProjectsMap)) {
+        if (path === projectPath && label !== currentWindowLabel) {
+          return true;
+        }
+      }
+      return false;
+    },
+    [openProjectsMap, currentWindowLabel]
+  );
 
   const handleDelete = async (project: DashboardProject) => {
     setDeleting(true);
@@ -478,6 +539,7 @@ export function ProjectList({
                     }
                   : undefined
               }
+              isOpenInOtherWindow={isProjectOpenInOtherWindow(project.path)}
             />
           ))}
         </div>

@@ -18,6 +18,7 @@ pub mod types;
 pub mod utils;
 
 use std::process::Command;
+use tauri::menu::{MenuBuilder, MenuItemBuilder, SubmenuBuilder};
 
 // Kill orphaned Claude processes spawned by this app
 fn cleanup_claude_processes() {
@@ -84,10 +85,64 @@ pub fn run() {
         .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_deep_link::init())
         .plugin(tauri_plugin_dialog::init())
-        .on_window_event(|_window, event| {
+        .setup(|app| {
+            // Create "File" menu with "New Window" item (Cmd+N)
+            let new_window = MenuItemBuilder::with_id("new_window", "New Window")
+                .accelerator("CmdOrCtrl+N")
+                .build(app)?;
+
+            let file_menu = SubmenuBuilder::new(app, "File")
+                .item(&new_window)
+                .separator()
+                .close_window()
+                .build()?;
+
+            // Create standard Edit menu for text editing
+            let edit_menu = SubmenuBuilder::new(app, "Edit")
+                .undo()
+                .redo()
+                .separator()
+                .cut()
+                .copy()
+                .paste()
+                .select_all()
+                .build()?;
+
+            // Create Window menu
+            let window_menu = SubmenuBuilder::new(app, "Window")
+                .minimize()
+                .separator()
+                .close_window()
+                .build()?;
+
+            let menu = MenuBuilder::new(app)
+                .item(&file_menu)
+                .item(&edit_menu)
+                .item(&window_menu)
+                .build()?;
+
+            app.set_menu(menu)?;
+            Ok(())
+        })
+        .on_menu_event(|app, event| {
+            if event.id().as_ref() == "new_window" {
+                let _ = commands::window::create_new_window(app.clone());
+            }
+        })
+        .on_window_event(|window, event| {
             if let tauri::WindowEvent::Destroyed = event {
-                cleanup_claude_processes();
-                commands::setup::cleanup_auth_processes_sync();
+                let label = window.label().to_string();
+                // Clean up window-specific resources
+                let _ = commands::window::cleanup_window_resources(label.clone());
+                // Kill PTYs belonging to this window
+                let _ = commands::pty::kill_window_ptys(label.clone());
+
+                // Global cleanup only when main window closes (app exit)
+                // Don't run global cleanup for secondary windows (main-2, main-3, etc.)
+                if label == "main" {
+                    cleanup_claude_processes();
+                    commands::setup::cleanup_auth_processes_sync();
+                }
             }
         })
         .invoke_handler(tauri::generate_handler![
@@ -205,10 +260,12 @@ pub fn run() {
             commands::pty::spawn_pty,
             commands::pty::kill_pty,
             commands::pty::kill_all_pty,
+            commands::pty::kill_window_ptys,
             commands::pty::cleanup_orphaned_processes,
             commands::pty::kill_port,
             commands::pty::find_available_port,
             commands::pty::get_shell_path,
+            commands::pty::register_pty_window,
             // Setup/Onboarding
             commands::setup::get_full_setup_status,
             commands::setup::install_homebrew,
@@ -250,6 +307,16 @@ pub fn run() {
             // Logging
             logging::get_log_path,
             logging::log_frontend_event,
+            // Window management
+            commands::window::register_project_open,
+            commands::window::unregister_project,
+            commands::window::get_open_projects,
+            commands::window::is_project_open,
+            commands::window::register_window_port,
+            commands::window::get_window_port,
+            commands::window::allocate_window_port,
+            commands::window::create_new_window,
+            commands::window::cleanup_window_resources,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

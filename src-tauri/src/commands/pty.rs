@@ -14,10 +14,19 @@ use tauri::Emitter;
 /// Counter for generating unique PTY IDs
 static PTY_ID_COUNTER: AtomicU32 = AtomicU32::new(1);
 
+/// PTY process info including PID and window label
+#[derive(Clone)]
+struct PtyInfo {
+    /// OS process ID
+    pid: u32,
+    /// Window label this PTY belongs to
+    window_label: String,
+}
+
 lazy_static::lazy_static! {
     /// Global registry of spawned PTY process PIDs for cleanup
-    /// Maps our internal PTY ID -> OS process ID (PID)
-    static ref PTY_PIDS: Mutex<HashMap<u32, u32>> = Mutex::new(HashMap::new());
+    /// Maps our internal PTY ID -> PTY info (PID and window label)
+    static ref PTY_PIDS: Mutex<HashMap<u32, PtyInfo>> = Mutex::new(HashMap::new());
 }
 
 /// Spawns a command in a pseudo-terminal (PTY) and streams output to the frontend.
@@ -49,9 +58,16 @@ pub async fn spawn_pty(app: tauri::AppHandle, options: SpawnPtyOptions) -> Resul
                 .map_err(|e| e.to_string())?;
 
             // Store the process PID for potential cleanup
+            // Note: window_label tracking is done separately via register_pty_window
             let pid = child.id();
             if let Ok(mut pids) = PTY_PIDS.lock() {
-                pids.insert(id, pid);
+                pids.insert(
+                    id,
+                    PtyInfo {
+                        pid,
+                        window_label: String::new(), // Will be set by register_pty_window
+                    },
+                );
             }
 
             let stdout = child.stdout.take();
@@ -144,10 +160,11 @@ fn is_process_running(pid: u32) -> bool {
 pub async fn kill_pty(id: u32) -> Result<bool, String> {
     let pid = {
         let pids = PTY_PIDS.lock().map_err(|e| e.to_string())?;
-        pids.get(&id).copied()
+        pids.get(&id).cloned()
     };
 
-    if let Some(pid) = pid {
+    if let Some(info) = pid {
+        let pid = info.pid;
         #[cfg(unix)]
         {
             // Send SIGTERM first for graceful shutdown
@@ -201,7 +218,7 @@ pub async fn kill_pty(id: u32) -> Result<bool, String> {
 pub async fn kill_all_pty() -> Result<u32, String> {
     let pids: Vec<(u32, u32)> = {
         let pids = PTY_PIDS.lock().map_err(|e| e.to_string())?;
-        pids.iter().map(|(&id, &pid)| (id, pid)).collect()
+        pids.iter().map(|(&id, info)| (id, info.pid)).collect()
     };
 
     let count = pids.len() as u32;
@@ -225,6 +242,61 @@ pub async fn kill_all_pty() -> Result<u32, String> {
         pids.clear();
     }
 
+    Ok(count)
+}
+
+/// Register which window owns a PTY process.
+///
+/// This should be called from the frontend after spawn_pty returns the PTY ID.
+/// It enables per-window cleanup when a window is closed.
+#[tauri::command]
+pub fn register_pty_window(pty_id: u32, window_label: String) -> Result<(), String> {
+    let mut pids = PTY_PIDS.lock().map_err(|e| e.to_string())?;
+    if let Some(info) = pids.get_mut(&pty_id) {
+        info.window_label = window_label;
+    }
+    Ok(())
+}
+
+/// Kill all PTY processes belonging to a specific window.
+///
+/// This is called when a window is being destroyed to clean up its PTYs,
+/// or when switching projects within a window.
+/// Returns the number of processes killed.
+#[tauri::command]
+pub fn kill_window_ptys(window_label: String) -> Result<u32, String> {
+    let pids_to_kill: Vec<(u32, u32)> = {
+        let pids = PTY_PIDS.lock().map_err(|e| e.to_string())?;
+        pids.iter()
+            .filter(|(_, info)| info.window_label == window_label)
+            .map(|(&id, info)| (id, info.pid))
+            .collect()
+    };
+
+    let count = pids_to_kill.len() as u32;
+
+    for (_id, pid) in &pids_to_kill {
+        #[cfg(unix)]
+        {
+            let _ = Command::new("kill").args(["-9", &pid.to_string()]).output();
+        }
+
+        #[cfg(windows)]
+        {
+            let _ = Command::new("taskkill")
+                .args(["/F", "/PID", &pid.to_string()])
+                .output();
+        }
+    }
+
+    // Remove from registry
+    if let Ok(mut pids) = PTY_PIDS.lock() {
+        for (id, _) in pids_to_kill {
+            pids.remove(&id);
+        }
+    }
+
+    tracing::info!("Killed {} PTYs for window {}", count, window_label);
     Ok(count)
 }
 

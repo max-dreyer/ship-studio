@@ -210,6 +210,39 @@
   opacity: 1;
 }
 
+/* Locked project card overlay (open in another window) */
+.project-card-locked {
+  opacity: 0.7;
+}
+
+.project-card-locked .project-card-thumbnail {
+  cursor: not-allowed;
+}
+
+.project-card-locked-overlay {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.65);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: inherit;
+}
+
+.project-card-locked-overlay span {
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-weight: 500;
+  text-align: center;
+  padding: 8px 12px;
+  background: var(--bg-secondary);
+  border-radius: 6px;
+  border: 1px solid var(--border);
+}
+
 .project-card-quick-actions {
   display: flex;
   gap: 8px;

@@ -34,6 +34,8 @@ interface ProjectCardProps {
   onMoveToFolder?: () => void;
   /** Callback to export project as a template zip */
   onExportAsTemplate?: () => void;
+  /** Whether this project is open in another window */
+  isOpenInOtherWindow?: boolean;
 }
 
 export function ProjectCard({
@@ -47,20 +49,21 @@ export function ProjectCard({
   onOpenIde,
   onMoveToFolder,
   onExportAsTemplate,
+  isOpenInOtherWindow = false,
 }: ProjectCardProps) {
   const hasChanges = project.uncommitted_count !== null && project.uncommitted_count > 0;
   const autoAcceptMode = project.auto_accept_mode === true;
   const hideMainBranchWarning = project.hide_main_branch_warning === true;
 
   return (
-    <div className="project-card">
+    <div className={`project-card ${isOpenInOtherWindow ? 'project-card-locked' : ''}`}>
       <div
         className="project-card-thumbnail"
-        onClick={onSelect}
+        onClick={isOpenInOtherWindow ? undefined : onSelect}
         role="button"
-        tabIndex={0}
+        tabIndex={isOpenInOtherWindow ? -1 : 0}
         onKeyDown={(e) => {
-          if (e.key === 'Enter' || e.key === ' ') {
+          if (!isOpenInOtherWindow && (e.key === 'Enter' || e.key === ' ')) {
             e.preventDefault();
             onSelect();
           }
@@ -73,35 +76,43 @@ export function ProjectCard({
             <span>No preview</span>
           </div>
         )}
-        {/* Hover actions overlay */}
-        <div className="project-card-overlay">
-          <div className="project-card-quick-actions">
-            {project.production_url && onOpenSite && (
-              <button
-                className="quick-action-btn"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onOpenSite();
-                }}
-                title="Open live site"
-              >
-                <ExternalLinkIcon size={16} />
-              </button>
-            )}
-            {onOpenIde && (
-              <button
-                className="quick-action-btn"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onOpenIde();
-                }}
-                title="Open in IDE"
-              >
-                <CodeIcon size={16} />
-              </button>
-            )}
+        {/* Locked overlay for projects open in other windows */}
+        {isOpenInOtherWindow && (
+          <div className="project-card-locked-overlay">
+            <span>Open in another window</span>
           </div>
-        </div>
+        )}
+        {/* Hover actions overlay - only show when not locked */}
+        {!isOpenInOtherWindow && (
+          <div className="project-card-overlay">
+            <div className="project-card-quick-actions">
+              {project.production_url && onOpenSite && (
+                <button
+                  className="quick-action-btn"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onOpenSite();
+                  }}
+                  title="Open live site"
+                >
+                  <ExternalLinkIcon size={16} />
+                </button>
+              )}
+              {onOpenIde && (
+                <button
+                  className="quick-action-btn"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onOpenIde();
+                  }}
+                  title="Open in IDE"
+                >
+                  <CodeIcon size={16} />
+                </button>
+              )}
+            </div>
+          </div>
+        )}
       </div>
       <div className="project-card-info">
         <div className="project-card-details">

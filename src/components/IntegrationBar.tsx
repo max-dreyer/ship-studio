@@ -36,24 +36,45 @@ export function IntegrationBar({ onGitHubConnect, onVercelConnect }: Integration
   const [setupItems, setSetupItems] = useState<SetupItem[]>([]);
   const [isLoading, setIsLoading] = useState(true);
 
-  // Fetch full setup status on mount
+  // Fetch full setup status on mount with timeout
   useEffect(() => {
+    let cancelled = false;
+
     const load = async () => {
       setIsLoading(true);
       try {
-        const status = await getFullSetupStatus();
-        // Sort by display order
-        const sorted = [...status.items].sort((a, b) => {
-          return SETUP_ITEM_ORDER.indexOf(a.id) - SETUP_ITEM_ORDER.indexOf(b.id);
-        });
-        setSetupItems(sorted);
+        // Add timeout to prevent indefinite hang
+        const timeout = new Promise<null>((resolve) =>
+          setTimeout(() => {
+            console.warn('IntegrationBar: getFullSetupStatus timed out after 8s');
+            resolve(null);
+          }, 8000)
+        );
+
+        const result = await Promise.race([getFullSetupStatus(), timeout]);
+
+        if (cancelled) return;
+
+        if (result) {
+          // Sort by display order
+          const sorted = [...result.items].sort((a, b) => {
+            return SETUP_ITEM_ORDER.indexOf(a.id) - SETUP_ITEM_ORDER.indexOf(b.id);
+          });
+          setSetupItems(sorted);
+        }
       } catch (error) {
         console.error(error);
       } finally {
-        setIsLoading(false);
+        if (!cancelled) {
+          setIsLoading(false);
+        }
       }
     };
     void load();
+
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   const readyCount = setupItems.filter((item) => item.status === 'ready').length;
