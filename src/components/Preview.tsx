@@ -17,6 +17,7 @@ import { useState, useEffect, useRef, forwardRef, useImperativeHandle, useCallba
 import { invoke } from '@tauri-apps/api/core';
 import { useClickOutside } from '../hooks/useClickOutside';
 import { logger } from '../lib/logger';
+import { getWindowLabel } from '../lib/window';
 
 /** How often to refresh the page list (ms) */
 const PAGE_REFRESH_INTERVAL_MS = 5000;
@@ -208,6 +209,7 @@ export const Preview = forwardRef<PreviewHandle, PreviewProps>(function Preview(
   const [showCmsModal, setShowCmsModal] = useState(false);
   const [cmsWebviewReady, setCmsWebviewReady] = useState(false);
   const [isCapturing, setIsCapturing] = useState(false);
+  const [proxyPort, setProxyPort] = useState<number | null>(null);
 
   // Crop selection state
   const [selectionStart, setSelectionStart] = useState<{ x: number; y: number } | null>(null);
@@ -222,13 +224,14 @@ export const Preview = forwardRef<PreviewHandle, PreviewProps>(function Preview(
   const cropOverlayRef = useRef<HTMLDivElement>(null);
   const viewportRef = useRef<HTMLDivElement | null>(null);
 
-  // Dev server URL (for health checks and page loading)
+  // Dev server URL (for health checks - always use direct URL, not proxy)
   const devServerUrl = `http://localhost:${port}`;
   // Cache-buster to prevent showing stale content when switching projects
   const [cacheBuster, setCacheBuster] = useState(() => Date.now());
-  // For now, always use dev server directly (proxy disabled due to issues)
+  // Use proxy URL when available (for nav tracking), fall back to dev server directly
   // Add shipstudio=1 param so sites can detect they're in Ship Studio preview (e.g., to disable iframe detection)
-  const currentUrl = `${devServerUrl}${currentPage === '/' ? '' : currentPage}?_cb=${cacheBuster}&shipstudio=1`;
+  const baseUrl = proxyPort ? `http://localhost:${proxyPort}` : devServerUrl;
+  const currentUrl = `${baseUrl}${currentPage === '/' ? '' : currentPage}?_cb=${cacheBuster}&shipstudio=1`;
 
   // Reset state when project or port changes
   useEffect(() => {
@@ -319,6 +322,52 @@ export const Preview = forwardRef<PreviewHandle, PreviewProps>(function Preview(
   useEffect(() => {
     onPageChange?.(currentPage);
   }, [currentPage, onPageChange]);
+
+  // Start/stop preview proxy for navigation tracking
+  useEffect(() => {
+    if (!serverReady) {
+      setProxyPort(null);
+      return;
+    }
+
+    let cancelled = false;
+    const windowLabel = getWindowLabel();
+
+    invoke<number>('start_preview_proxy', {
+      windowLabel,
+      targetPort: port,
+    })
+      .then((proxyP) => {
+        if (!cancelled) {
+          logger.info('[Preview] Proxy started', { proxyPort: proxyP, targetPort: port });
+          setProxyPort(proxyP);
+        }
+      })
+      .catch((err) => {
+        logger.error('[Preview] Failed to start proxy, using direct URL', { error: err });
+        // Fallback: use dev server directly (current behavior)
+      });
+
+    return () => {
+      cancelled = true;
+      setProxyPort(null);
+      invoke('stop_preview_proxy', { windowLabel }).catch(() => {});
+    };
+  }, [serverReady, port]);
+
+  // Listen for navigation events from the injected proxy script
+  useEffect(() => {
+    const handleMessage = (event: MessageEvent<{ type?: string; pathname?: string }>) => {
+      const data = event.data;
+      if (data && data.type === 'shipstudio:navigate' && typeof data.pathname === 'string') {
+        const pathname: string = data.pathname || '/';
+        // Only update if actually different (prevents feedback loops)
+        setCurrentPage((prev) => (prev === pathname ? prev : pathname));
+      }
+    };
+    window.addEventListener('message', handleMessage);
+    return () => window.removeEventListener('message', handleMessage);
+  }, []);
 
   useEffect(() => {
     // Skip if not ready to check yet (-1 means waiting for old server to die)

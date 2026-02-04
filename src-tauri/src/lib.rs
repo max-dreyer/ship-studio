@@ -14,6 +14,7 @@
 pub mod cache;
 pub mod commands;
 pub mod logging;
+pub mod proxy;
 pub mod state;
 pub mod types;
 pub mod utils;
@@ -91,6 +92,9 @@ pub fn run() {
                 let label = window.label().to_string();
                 tracing::info!("Window {} destroyed, cleaning up", label);
 
+                // Stop preview proxy for this window
+                proxy::stop_preview_proxy(&label);
+
                 // Kill PTY processes (dev server, etc.) owned by this window
                 let killed = commands::pty::kill_window_pty_sync(&label);
                 if killed > 0 {
@@ -117,6 +121,7 @@ pub fn run() {
                     );
                     cleanup_claude_processes();
                     commands::setup::cleanup_auth_processes_sync();
+                    proxy::stop_all_proxies();
                 }
             }
         })
@@ -245,6 +250,9 @@ pub fn run() {
             commands::conflicts::resolve_conflict,
             commands::conflicts::abort_merge,
             commands::conflicts::complete_merge,
+            // Preview Proxy
+            commands::proxy::start_preview_proxy,
+            commands::proxy::stop_preview_proxy,
             // PTY & Terminal
             commands::pty::spawn_pty,
             commands::pty::kill_pty,
