@@ -201,6 +201,10 @@ export const Preview = forwardRef<PreviewHandle, PreviewProps>(function Preview(
   const [customWidth, setCustomWidth] = useState<number | null>(null); // null = 100% (desktop)
   const [pages, setPages] = useState<PageInfo[]>([]);
   const [currentPage, setCurrentPage] = useState('/');
+  // Separate state for controlling iframe src — only updated on explicit navigation
+  // (page select, refresh, project change). Proxy messages update currentPage (display)
+  // but NOT iframePath, so in-iframe client-side navigation doesn't cause a full reload.
+  const [iframePath, setIframePath] = useState('/');
   const [hasSanity, setHasSanity] = useState(false);
   const [sanityMissingEnvKeys, setSanityMissingEnvKeys] = useState<string[]>([]);
   const [showEnvWarning, setShowEnvWarning] = useState(false);
@@ -231,7 +235,7 @@ export const Preview = forwardRef<PreviewHandle, PreviewProps>(function Preview(
   // Use proxy URL when available (for nav tracking), fall back to dev server directly
   // Add shipstudio=1 param so sites can detect they're in Ship Studio preview (e.g., to disable iframe detection)
   const baseUrl = proxyPort ? `http://localhost:${proxyPort}` : devServerUrl;
-  const currentUrl = `${baseUrl}${currentPage === '/' ? '' : currentPage}?_cb=${cacheBuster}&shipstudio=1`;
+  const currentUrl = `${baseUrl}${iframePath === '/' ? '' : iframePath}?_cb=${cacheBuster}&shipstudio=1`;
 
   // Reset state when project or port changes
   useEffect(() => {
@@ -240,6 +244,7 @@ export const Preview = forwardRef<PreviewHandle, PreviewProps>(function Preview(
     setServerReady(false);
     setRetryCount(-1); // -1 = not checking yet
     setCurrentPage('/');
+    setIframePath('/');
     setPages([]);
     setHasSanity(false);
     setSanityMissingEnvKeys([]);
@@ -465,11 +470,15 @@ export const Preview = forwardRef<PreviewHandle, PreviewProps>(function Preview(
   }, [serverReady, devServerUrl]);
 
   const handleRefresh = () => {
+    // Sync iframePath to the actual current page so refresh loads what the user sees,
+    // not the stale iframePath from the last explicit navigation
+    setIframePath(currentPage);
     setCacheBuster(Date.now());
   };
 
   const handlePageSelect = (route: string) => {
     setCurrentPage(route);
+    setIframePath(route); // Explicit navigation — update iframe src
     setShowPageDropdown(false);
     setPageSearch('');
     // Update cache-buster to force reload with new page
@@ -531,16 +540,17 @@ export const Preview = forwardRef<PreviewHandle, PreviewProps>(function Preview(
   }, [projectPath, captureWindowScreenshot, isCapturing]);
 
   // Full-page capture using Playwright (scrolls page to trigger lazy content, then captures)
-  // Note: Uses currentUrl from page selector state - if user navigated via iframe links,
-  // this may not match. Use the page selector dropdown to ensure correct page.
+  // Uses currentPage (tracked via proxy) so it captures the actual visible page,
+  // even if the user navigated via in-iframe links.
   const captureFullPage = useCallback(async (): Promise<string | null> => {
     if (isCapturing) return null;
 
     setIsCapturing(true);
     try {
+      const captureUrl = `${baseUrl}${currentPage === '/' ? '' : currentPage}?_cb=${Date.now()}&shipstudio=1`;
       const filePath = await invoke<string>('capture_fullpage_playwright', {
         projectPath,
-        url: currentUrl,
+        url: captureUrl,
       });
       return filePath;
     } catch (error) {
@@ -550,7 +560,7 @@ export const Preview = forwardRef<PreviewHandle, PreviewProps>(function Preview(
     } finally {
       setIsCapturing(false);
     }
-  }, [isCapturing, projectPath, currentUrl, captureForClaude]);
+  }, [isCapturing, projectPath, baseUrl, currentPage, captureForClaude]);
 
   // Capture a specific region of the preview
   const captureRegion = useCallback(
@@ -787,34 +797,20 @@ export const Preview = forwardRef<PreviewHandle, PreviewProps>(function Preview(
   }, []);
 
   // Force refresh the preview iframe with cache busting
+  // Uses currentPage (tracked via proxy) so it refreshes the actual visible page,
+  // not the stale iframe src attribute (which doesn't update on client-side navigation).
   const refresh = useCallback(() => {
     if (iframeRef.current && serverReady) {
-      // Parse current URL and add/update cache-busting parameter
-      const currentSrc = iframeRef.current.src;
-      try {
-        const url = new URL(currentSrc);
-        // Remove old cache buster if present
-        url.searchParams.delete('_refresh');
-        // Add new cache buster
-        url.searchParams.set('_refresh', Date.now().toString());
-        // Set to blank first to ensure full reload
-        iframeRef.current.src = 'about:blank';
-        setTimeout(() => {
-          if (iframeRef.current) {
-            iframeRef.current.src = url.toString();
-          }
-        }, 100);
-      } catch {
-        // Fallback: just reload current src
-        iframeRef.current.src = 'about:blank';
-        setTimeout(() => {
-          if (iframeRef.current) {
-            iframeRef.current.src = currentSrc;
-          }
-        }, 100);
-      }
+      setIframePath(currentPage);
+      const refreshUrl = `${baseUrl}${currentPage === '/' ? '' : currentPage}?_cb=${Date.now()}&shipstudio=1`;
+      iframeRef.current.src = 'about:blank';
+      setTimeout(() => {
+        if (iframeRef.current) {
+          iframeRef.current.src = refreshUrl;
+        }
+      }, 100);
     }
-  }, [serverReady]);
+  }, [serverReady, baseUrl, currentPage]);
 
   // Expose methods to parent
   useImperativeHandle(
