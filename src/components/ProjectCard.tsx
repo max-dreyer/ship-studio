@@ -8,35 +8,37 @@
  * @module components/ProjectCard
  */
 
-import { memo } from 'react';
+import { memo, useCallback } from 'react';
 import { DashboardProject } from '../lib/project';
 import { BranchIcon, CodeIcon, NewWindowIcon } from './icons';
 import { ProjectCardMenu } from './ProjectCardMenu';
 
 /** Props for the ProjectCard component */
+type MaybeAsync<T extends unknown[]> = (...args: T) => void | Promise<void>;
+
 interface ProjectCardProps {
   /** Project data including name, path, git info, and deployment URLs */
   project: DashboardProject;
   /** Base64-encoded thumbnail image (or null for placeholder) */
   thumbnailData: string | null;
   /** Callback when the card is clicked to open the project */
-  onSelect: () => void;
+  onSelect: MaybeAsync<[project: DashboardProject]>;
   /** Callback when delete button is clicked */
-  onDelete: () => void;
+  onDelete: MaybeAsync<[project: DashboardProject]>;
   /** Callback when main branch warning is toggled */
-  onToggleMainBranchWarning: (hidden: boolean) => void;
+  onToggleMainBranchWarning: MaybeAsync<[projectPath: string, hidden: boolean]>;
   /** Callback to open the project in VS Code or Cursor */
   onOpenIde?: () => void;
   /** Callback to move project to a folder */
-  onMoveToFolder?: () => void;
+  onMoveToFolder: MaybeAsync<[project: DashboardProject]>;
   /** Callback to export project as a template zip */
-  onExportAsTemplate?: () => void;
+  onExportAsTemplate: MaybeAsync<[projectPath: string]>;
   /** Callback to open project in a new window */
-  onOpenInNewWindow?: () => void;
+  onOpenInNewWindow: MaybeAsync<[project: DashboardProject]>;
   /** Whether this is an external project */
   isExternal?: boolean;
   /** Callback when remove from list is clicked (for external projects) */
-  onRemove?: () => void;
+  onRemove?: MaybeAsync<[project: DashboardProject]>;
 }
 
 export const ProjectCard = memo(function ProjectCard({
@@ -55,18 +57,43 @@ export const ProjectCard = memo(function ProjectCard({
   const hasChanges = project.uncommitted_count !== null && project.uncommitted_count > 0;
   const hideMainBranchWarning = project.hide_main_branch_warning === true;
 
+  const handleSelect = useCallback(() => {
+    void onSelect(project);
+  }, [onSelect, project]);
+  const handleDelete = useCallback(() => {
+    void onDelete(project);
+  }, [onDelete, project]);
+  const handleToggleWarning = useCallback(
+    (hidden: boolean) => {
+      void onToggleMainBranchWarning(project.path, hidden);
+    },
+    [onToggleMainBranchWarning, project.path]
+  );
+  const handleMoveToFolder = useCallback(() => {
+    void onMoveToFolder(project);
+  }, [onMoveToFolder, project]);
+  const handleExport = useCallback(() => {
+    void onExportAsTemplate(project.path);
+  }, [onExportAsTemplate, project.path]);
+  const handleNewWindow = useCallback(() => {
+    void onOpenInNewWindow(project);
+  }, [onOpenInNewWindow, project]);
+  const handleRemove = useCallback(() => {
+    void onRemove?.(project);
+  }, [onRemove, project]);
+
   return (
     <div className="project-card">
       <div
         className="project-card-thumbnail"
-        onClick={onSelect}
+        onClick={handleSelect}
         role="button"
         tabIndex={0}
         aria-label={`Open ${project.name}`}
         onKeyDown={(e) => {
           if (e.key === 'Enter' || e.key === ' ') {
             e.preventDefault();
-            onSelect();
+            handleSelect();
           }
         }}
       >
@@ -80,19 +107,17 @@ export const ProjectCard = memo(function ProjectCard({
         {/* Hover actions overlay */}
         <div className="project-card-overlay">
           <div className="project-card-quick-actions">
-            {onOpenInNewWindow && (
-              <button
-                className="quick-action-btn"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onOpenInNewWindow();
-                }}
-                title="Open in new window"
-                aria-label="Open in new window"
-              >
-                <NewWindowIcon size={16} />
-              </button>
-            )}
+            <button
+              className="quick-action-btn"
+              onClick={(e) => {
+                e.stopPropagation();
+                handleNewWindow();
+              }}
+              title="Open in new window"
+              aria-label="Open in new window"
+            >
+              <NewWindowIcon size={16} />
+            </button>
             {onOpenIde && (
               <button
                 className="quick-action-btn"
@@ -109,7 +134,7 @@ export const ProjectCard = memo(function ProjectCard({
         </div>
       </div>
       <div className="project-card-info">
-        <div className="project-card-details" onClick={onSelect} style={{ cursor: 'pointer' }}>
+        <div className="project-card-details" onClick={handleSelect} style={{ cursor: 'pointer' }}>
           <div className="project-card-name-row">
             <span className="project-card-name">{project.name}</span>
           </div>
@@ -127,12 +152,12 @@ export const ProjectCard = memo(function ProjectCard({
         </div>
         <ProjectCardMenu
           hideMainBranchWarning={hideMainBranchWarning}
-          onToggleMainBranchWarning={onToggleMainBranchWarning}
-          onMoveToFolder={onMoveToFolder}
-          onExportAsTemplate={onExportAsTemplate}
-          onDelete={onDelete}
+          onToggleMainBranchWarning={handleToggleWarning}
+          onMoveToFolder={handleMoveToFolder}
+          onExportAsTemplate={handleExport}
+          onDelete={handleDelete}
           isExternal={isExternal}
-          onRemove={onRemove}
+          onRemove={isExternal ? handleRemove : undefined}
         />
       </div>
     </div>

@@ -7,6 +7,7 @@
  * @module components/ProjectsView
  */
 
+import { useCallback } from 'react';
 import { ProjectList } from './ProjectList';
 import { CreateProject } from './CreateProject';
 import { ImportProject } from './ImportProject';
@@ -80,17 +81,27 @@ export function ProjectsView({
   projectsLoading,
   onLoadingChange,
 }: ProjectsViewProps) {
+  const handleSelectProject = useCallback(
+    (project: Project) => {
+      void onSelectProject(project);
+    },
+    [onSelectProject]
+  );
+  const handleGitHubConnectForImport = useCallback(() => {
+    void onGitHubConnect();
+  }, [onGitHubConnect]);
+
   return (
     <>
       <div className="app">
         <UpdateBanner />
         <div className="dashboard-with-changelog">
           <ProjectList
-            onSelectProject={(project) => void onSelectProject(project)}
+            onSelectProject={handleSelectProject}
             onCreateProject={onCreateProject}
             onImportProject={onImportProject}
             isGitHubAuthenticated={isGitHubAuthenticated}
-            onGitHubConnectForImport={() => void onGitHubConnect()}
+            onGitHubConnectForImport={handleGitHubConnectForImport}
             onGitHubConnect={onGitHubConnect}
             githubUsername={githubUsername}
             isAuthCheckDone={isAuthCheckDone}

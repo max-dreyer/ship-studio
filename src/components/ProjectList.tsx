@@ -268,38 +268,44 @@ export function ProjectList({
     return folders.filter((f) => f.name.toLowerCase().includes(query));
   }, [folders, searchQuery, currentFolderId]);
 
-  const handleDelete = async (project: DashboardProject) => {
-    setDeleting(true);
-    try {
-      await deleteProject(project.path);
-      setDeleteConfirm(null);
-      await loadAll();
-    } catch (error) {
-      logger.error('Failed to delete project', {
-        error: error instanceof Error ? error.message : String(error),
-      });
-      alert('Failed to delete project: ' + String(error));
-    } finally {
-      setDeleting(false);
-    }
-  };
+  const handleDelete = useCallback(
+    async (project: DashboardProject) => {
+      setDeleting(true);
+      try {
+        await deleteProject(project.path);
+        setDeleteConfirm(null);
+        await loadAll();
+      } catch (error) {
+        logger.error('Failed to delete project', {
+          error: error instanceof Error ? error.message : String(error),
+        });
+        alert('Failed to delete project: ' + String(error));
+      } finally {
+        setDeleting(false);
+      }
+    },
+    [loadAll]
+  );
 
-  const handleToggleMainBranchWarning = async (projectPath: string, hidden: boolean) => {
-    try {
-      await setHideMainBranchWarning(projectPath, hidden);
-      // Update local state immediately for responsive UI
-      setProjects((prev) =>
-        prev.map((p) => (p.path === projectPath ? { ...p, hide_main_branch_warning: hidden } : p))
-      );
-    } catch (error) {
-      logger.error('Failed to toggle main branch warning', {
-        error: error instanceof Error ? error.message : String(error),
-      });
-      alert('Failed to update main branch warning: ' + String(error));
-    }
-  };
+  const handleToggleMainBranchWarning = useCallback(
+    async (projectPath: string, hidden: boolean) => {
+      try {
+        await setHideMainBranchWarning(projectPath, hidden);
+        // Update local state immediately for responsive UI
+        setProjects((prev) =>
+          prev.map((p) => (p.path === projectPath ? { ...p, hide_main_branch_warning: hidden } : p))
+        );
+      } catch (error) {
+        logger.error('Failed to toggle main branch warning', {
+          error: error instanceof Error ? error.message : String(error),
+        });
+        alert('Failed to update main branch warning: ' + String(error));
+      }
+    },
+    []
+  );
 
-  const handleExportAsTemplate = async (projectPath: string) => {
+  const handleExportAsTemplate = useCallback(async (projectPath: string) => {
     try {
       const result = await exportProjectAsTemplate(projectPath);
       if (result) {
@@ -312,21 +318,24 @@ export function ProjectList({
       });
       alert('Failed to export template: ' + String(error));
     }
-  };
+  }, []);
 
-  const handleRemoveExternal = async (project: DashboardProject) => {
-    try {
-      await unregisterExternalProject(project.path);
-      await loadAll();
-    } catch (error) {
-      logger.error('Failed to remove external project', {
-        error: error instanceof Error ? error.message : String(error),
-      });
-      alert('Failed to remove project: ' + String(error));
-    }
-  };
+  const handleRemoveExternal = useCallback(
+    async (project: DashboardProject) => {
+      try {
+        await unregisterExternalProject(project.path);
+        await loadAll();
+      } catch (error) {
+        logger.error('Failed to remove external project', {
+          error: error instanceof Error ? error.message : String(error),
+        });
+        alert('Failed to remove project: ' + String(error));
+      }
+    },
+    [loadAll]
+  );
 
-  const handleOpenInNewWindow = async (project: DashboardProject) => {
+  const handleOpenInNewWindow = useCallback(async (project: DashboardProject) => {
     try {
       await openProjectInNewWindow(project.path, project.name);
     } catch (error) {
@@ -337,7 +346,7 @@ export function ProjectList({
       });
       alert('Failed to open in new window: ' + String(error));
     }
-  };
+  }, []);
 
   const handleCreateFolder = async (name: string) => {
     await createFolder(name);
@@ -374,26 +383,40 @@ export function ProjectList({
     await loadAll();
   };
 
-  const handleOpenMoveModal = async (project: DashboardProject) => {
-    // Check if project is currently in a folder
-    const paths = await getFiledProjectPaths();
-    const isInFolder = paths.includes(project.path);
+  const handleSelectProject = useCallback(
+    (project: DashboardProject) => {
+      onSelectProject(project);
+    },
+    [onSelectProject]
+  );
 
-    if (isInFolder) {
-      // Find which folder it's in
-      for (const folder of folders) {
-        const folderPaths = await getFolderProjects(folder.id);
-        if (folderPaths.includes(project.path)) {
-          setMoveProjectFolderId(folder.id);
-          break;
+  const handleDeleteConfirm = useCallback((project: DashboardProject) => {
+    setDeleteConfirm(project);
+  }, []);
+
+  const handleOpenMoveModal = useCallback(
+    async (project: DashboardProject) => {
+      // Check if project is currently in a folder
+      const paths = await getFiledProjectPaths();
+      const isInFolder = paths.includes(project.path);
+
+      if (isInFolder) {
+        // Find which folder it's in
+        for (const folder of folders) {
+          const folderPaths = await getFolderProjects(folder.id);
+          if (folderPaths.includes(project.path)) {
+            setMoveProjectFolderId(folder.id);
+            break;
+          }
         }
+      } else {
+        setMoveProjectFolderId(null);
       }
-    } else {
-      setMoveProjectFolderId(null);
-    }
 
-    setMoveProject(project);
-  };
+      setMoveProject(project);
+    },
+    [folders]
+  );
 
   if (loading) {
     return (
@@ -544,18 +567,14 @@ export function ProjectList({
                 key={project.path}
                 project={project}
                 thumbnailData={project.thumbnailData}
-                onSelect={() => onSelectProject(project)}
-                onDelete={() => setDeleteConfirm(project)}
-                onToggleMainBranchWarning={(hidden) =>
-                  void handleToggleMainBranchWarning(project.path, hidden)
-                }
-                onMoveToFolder={() => void handleOpenMoveModal(project)}
-                onExportAsTemplate={() => void handleExportAsTemplate(project.path)}
-                onOpenInNewWindow={() => void handleOpenInNewWindow(project)}
+                onSelect={handleSelectProject}
+                onDelete={handleDeleteConfirm}
+                onToggleMainBranchWarning={handleToggleMainBranchWarning}
+                onMoveToFolder={handleOpenMoveModal}
+                onExportAsTemplate={handleExportAsTemplate}
+                onOpenInNewWindow={handleOpenInNewWindow}
                 isExternal={project.is_external}
-                onRemove={
-                  project.is_external ? () => void handleRemoveExternal(project) : undefined
-                }
+                onRemove={project.is_external ? handleRemoveExternal : undefined}
               />
             ))}
           </div>

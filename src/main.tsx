@@ -40,34 +40,54 @@ Node.prototype.removeChild = function <T extends Node>(child: T): T {
 };
 
 // Initialize OverlayScrollbars on scrollable elements.
-// Uses a debounced MutationObserver to catch dynamically added containers.
+// Uses a MutationObserver to catch dynamically added containers.
 // Skips elements with scrollbar-width: none (intentionally hidden scrollbars).
 const OS_ATTR = 'data-os-init';
 const OS_OPTS = { scrollbars: { theme: 'os-theme-shipstudio', autoHide: 'move' as const } };
 
-function initScrollbars() {
-  document.querySelectorAll<HTMLElement>('*').forEach((el) => {
-    // TODO: Substring class matching is fragile — could false-positive on classes like "bimodal-chart". Use explicit class list or data attributes instead.
-    if (el.closest('[class*="-modal"], [class*="-overlay"], [class*="-dropdown"]')) return;
-    if (el.matches('.branches-tab, .prs-tab')) return;
-    if (el.hasAttribute(OS_ATTR)) return;
-    const style = getComputedStyle(el);
-    if (style.scrollbarWidth === 'none') return;
-    const oy = style.overflowY;
-    if (oy === 'auto' || oy === 'scroll') {
-      el.setAttribute(OS_ATTR, '');
-      OverlayScrollbars(el, OS_OPTS);
-    }
-  });
+function tryInitScrollbar(el: HTMLElement) {
+  if (el.nodeType !== Node.ELEMENT_NODE) return;
+  if (el.hasAttribute(OS_ATTR)) return;
+  // TODO: Substring class matching is fragile — could false-positive on classes like "bimodal-chart". Use explicit class list or data attributes instead.
+  if (el.closest('[class*="-modal"], [class*="-overlay"], [class*="-dropdown"]')) return;
+  if (el.matches('.branches-tab, .prs-tab')) return;
+  const style = getComputedStyle(el);
+  if (style.scrollbarWidth === 'none') return;
+  const oy = style.overflowY;
+  if (oy === 'auto' || oy === 'scroll') {
+    el.setAttribute(OS_ATTR, '');
+    OverlayScrollbars(el, OS_OPTS);
+  }
+}
+
+function initScrollbarsInSubtree(root: Node) {
+  if (root instanceof HTMLElement) {
+    tryInitScrollbar(root);
+    root.querySelectorAll<HTMLElement>('*').forEach(tryInitScrollbar);
+  }
 }
 
 requestAnimationFrame(() => {
-  initScrollbars();
+  // Initial full scan
+  document.querySelectorAll<HTMLElement>('*').forEach(tryInitScrollbar);
 
+  // Only scan newly added nodes on subsequent mutations
   let timer: number;
-  new MutationObserver(() => {
+  let pendingNodes: Node[] = [];
+  new MutationObserver((mutations) => {
+    for (const m of mutations) {
+      for (let i = 0; i < m.addedNodes.length; i++) {
+        pendingNodes.push(m.addedNodes[i]);
+      }
+    }
     clearTimeout(timer);
-    timer = window.setTimeout(initScrollbars, 150);
+    timer = window.setTimeout(() => {
+      const nodes = pendingNodes;
+      pendingNodes = [];
+      for (const node of nodes) {
+        initScrollbarsInSubtree(node);
+      }
+    }, 150);
   }).observe(document.body, { childList: true, subtree: true });
 });
 

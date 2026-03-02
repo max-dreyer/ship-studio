@@ -8,17 +8,11 @@
  * @module components/GitHubCalendar
  */
 
-import { useState, useEffect } from 'react';
-import { GitHubCalendar as GitHubCalendarLib } from 'react-github-calendar';
+import { useState, useEffect, useCallback, useRef } from 'react';
+import { GitHubCalendar as GitHubCalendarLib, type Activity } from 'react-github-calendar';
 import { Tooltip } from 'react-tooltip';
 import 'react-tooltip/dist/react-tooltip.css';
 import { EyeOffIcon } from './icons';
-
-interface Activity {
-  date: string;
-  count: number;
-  level: number;
-}
 
 interface GitHubCalendarProps {
   /** GitHub username to display contributions for */
@@ -36,7 +30,7 @@ const theme = {
   dark: ['#2d2d2d', '#0e4429', '#006d32', '#26a641', '#54e36e'],
 };
 
-function formatTooltip(activity: Activity): string {
+function formatTooltip(activity: { date: string; count: number }): string {
   const date = new Date(activity.date);
   const formatted = date.toLocaleDateString('en-US', {
     weekday: 'short',
@@ -51,6 +45,17 @@ function formatTooltip(activity: Activity): string {
 
   const s = activity.count === 1 ? '' : 's';
   return `${activity.count} contribution${s} on ${formatted}`;
+}
+
+function renderBlock(
+  block: React.ReactElement,
+  activity: { date: string; count: number; level: number }
+) {
+  return (
+    <g data-tooltip-id="github-calendar-tooltip" data-tooltip-content={formatTooltip(activity)}>
+      {block}
+    </g>
+  );
 }
 
 function CalendarSkeleton() {
@@ -73,11 +78,21 @@ export function GitHubCalendar({
 }: GitHubCalendarProps) {
   const currentYear = new Date().getFullYear();
   const [dataLoaded, setDataLoaded] = useState(false);
+  const dataLoadedRef = useRef(false);
 
   // Reset data loaded state when username changes
   useEffect(() => {
     setDataLoaded(false); // eslint-disable-line react-hooks/set-state-in-effect -- intentional: reset loading state when username prop changes
+    dataLoadedRef.current = false;
   }, [username]);
+
+  const transformData = useCallback((data: Activity[]) => {
+    if (!dataLoadedRef.current) {
+      dataLoadedRef.current = true;
+      setTimeout(() => setDataLoaded(true), 0);
+    }
+    return data;
+  }, []);
 
   // Only hide after auth check is DONE and confirmed NOT authenticated
   if (isAuthCheckDone && !isAuthenticated) {
@@ -113,19 +128,8 @@ export function GitHubCalendar({
             showColorLegend={false}
             showTotalCount={false}
             year={currentYear}
-            renderBlock={(block, activity) => (
-              <g
-                data-tooltip-id="github-calendar-tooltip"
-                data-tooltip-content={formatTooltip(activity)}
-              >
-                {block}
-              </g>
-            )}
-            transformData={(data) => {
-              // Called when data is loaded
-              setTimeout(() => setDataLoaded(true), 0);
-              return data;
-            }}
+            renderBlock={renderBlock}
+            transformData={transformData}
           />
         </div>
       )}

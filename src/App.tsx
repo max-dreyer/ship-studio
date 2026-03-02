@@ -23,7 +23,7 @@
  * @module App
  */
 
-import { useState, useEffect, useRef, useMemo } from 'react';
+import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { useToasts } from './hooks/useToasts';
 import { useTerminalManagement } from './hooks/useTerminalManagement';
@@ -373,6 +373,35 @@ function App({ initialProjectPath }: AppProps) {
     openHelpModal,
   });
 
+  // Stable callbacks for ProjectsView (prevents re-render cascade through ProjectList → ProjectCard)
+  const stableSelectProject = useCallback(
+    (project: Project) => {
+      void handleSelectProject(project);
+    },
+    [handleSelectProject]
+  );
+
+  const stableImportLocalFolder = useCallback(() => {
+    void handleImportLocalFolder();
+  }, [handleImportLocalFolder]);
+
+  const stableCloseCreateModal = useCallback(() => setShowCreateModal(false), [setShowCreateModal]);
+
+  const stableAuthTerminalExit = useCallback(
+    (exitCode: number | null) => {
+      void handleAuthTerminalExit(exitCode, currentProject?.path);
+    },
+    [handleAuthTerminalExit, currentProject?.path]
+  );
+
+  // Stable callback for WorkspaceView auth terminal exit
+  const stableWorkspaceAuthExit = useCallback(
+    (exitCode: number | null, projectPath?: string) => {
+      void handleAuthTerminalExit(exitCode, projectPath);
+    },
+    [handleAuthTerminalExit]
+  );
+
   // Plugin data for PluginSlot components (defined before early returns so all views can use them)
   const pluginProject = useMemo(
     () =>
@@ -465,25 +494,23 @@ function App({ initialProjectPath }: AppProps) {
   if (view === 'projects') {
     return (
       <ProjectsView
-        onSelectProject={(project) => void handleSelectProject(project)}
+        onSelectProject={stableSelectProject}
         onCreateProject={handleCreateProject}
         onImportProject={handleImportProject}
-        onImportLocalFolder={() => void handleImportLocalFolder()}
+        onImportLocalFolder={stableImportLocalFolder}
         isGitHubAuthenticated={integrations.github.cliStatus.authenticated}
         githubUsername={integrations.github.username}
         isAuthCheckDone={isInitialCheckDone}
         onGitHubConnect={handleGitHubConnectFromOverlay}
         showCreateModal={showCreateModal}
-        onCloseCreateModal={() => setShowCreateModal(false)}
+        onCloseCreateModal={stableCloseCreateModal}
         onProjectCreated={handleProjectCreated}
         importView={importView}
         setImportView={setImportView}
         onProjectImported={handleProjectImported}
         authTerminalConfig={authTerminalConfig}
         closeAuthTerminal={closeAuthTerminal}
-        onAuthTerminalExit={(exitCode) =>
-          void handleAuthTerminalExit(exitCode, currentProject?.path)
-        }
+        onAuthTerminalExit={stableAuthTerminalExit}
         pluginProject={pluginProject}
         pluginActions={pluginActions}
         pluginTheme={pluginTheme}
@@ -548,8 +575,7 @@ function App({ initialProjectPath }: AppProps) {
         handleGitHubConnect: handleGitHubConnectFromOverlay,
         authTerminalConfig,
         closeAuthTerminal,
-        handleAuthTerminalExit: (exitCode: number | null, projectPath?: string) =>
-          void handleAuthTerminalExit(exitCode, projectPath),
+        handleAuthTerminalExit: stableWorkspaceAuthExit,
       }}
       screenshots={{
         isCapturing,

@@ -13,6 +13,7 @@
   flex-shrink: 0;
   overflow: hidden;
   margin-left: 24px;
+  will-change: transform;
 }
 
 .changelog-header {
