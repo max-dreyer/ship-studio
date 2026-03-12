@@ -65,7 +65,33 @@ export const EditorState = {
   },
 
   addEdit: (edit: EditSubmission) => {
-    state.pendingEdits.push(edit);
+    // Merge with existing edit on the same element to avoid duplicates.
+    // E.g. editing "A" → "B" then "B" → "C" should produce one edit: "A" → "C"
+    const existingIdx = state.pendingEdits.findIndex(
+      (e) =>
+        e.page_url === edit.page_url &&
+        e.edit_type === edit.edit_type &&
+        e.element_fingerprint.cssSelector === edit.element_fingerprint.cssSelector
+    );
+
+    if (existingIdx >= 0) {
+      const existing = state.pendingEdits[existingIdx];
+
+      // If the user reverted back to the original, remove the edit entirely
+      if (existing.original_text === edit.new_text) {
+        state.pendingEdits.splice(existingIdx, 1);
+      } else {
+        // Keep the original from the first edit, use new values from latest edit
+        state.pendingEdits[existingIdx] = {
+          ...edit,
+          original_text: existing.original_text,
+          original_html: existing.original_html,
+        };
+      }
+    } else {
+      state.pendingEdits.push(edit);
+    }
+
     listeners.forEach((fn) => fn(state.phase));
   },
 
