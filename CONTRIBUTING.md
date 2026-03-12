@@ -26,6 +26,39 @@ pnpm tauri dev
 
 This starts both the Vite dev server (frontend) and Tauri app (backend).
 
+### Windows VM Testing
+
+A Windows 11 VM is available for testing Windows builds. You need `sshpass` on your host (`brew install sshpass` or `sudo dnf install sshpass`).
+
+All scripts take `user@host` and `password` as arguments, or read from `VM` and `VM_PASS` env vars:
+
+```bash
+# 1. First time only: install Node, Rust, VS Build Tools, pnpm on the VM
+./scripts/windows-vm-install.sh user@host password
+
+# 2. Sync source files to the VM (repeat after each change)
+./scripts/windows-vm-sync.sh user@host password
+
+# 3. Compile check (frontend + Rust backend, no GUI)
+./scripts/windows-vm-build.sh user@host password
+
+# 4. Launch the app on the VM desktop (with file watcher)
+./scripts/windows-vm-start.sh user@host password
+
+# 5. Stop the running app on the VM
+./scripts/windows-vm-stop.sh user@host password
+```
+
+Or with env vars:
+
+```bash
+export VM=user@host VM_PASS=password
+./scripts/windows-vm-sync.sh
+./scripts/windows-vm-start.sh
+```
+
+The sync script excludes platform-specific and build directories (node_modules, target, dist, .git, etc.). The start script launches `pnpm tauri dev` in the VM's interactive desktop session, so the app window is visible. The file watcher auto-rebuilds when you sync new changes.
+
 ## Project Architecture
 
 ```
