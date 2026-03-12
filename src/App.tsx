@@ -38,6 +38,10 @@ import { useBranchManagement } from './hooks/useBranchManagement';
 import { useNotifications } from './hooks/useNotifications';
 import { useProjectLifecycle } from './hooks/useProjectLifecycle';
 import { useAppSetup } from './hooks/useAppSetup';
+import { useAuth } from './hooks/useAuth';
+import { useClientEdits } from './hooks/useClientEdits';
+import { isSupabaseConfigured } from './lib/supabase';
+import { findProjectByRepoUrl } from './lib/inline-editor';
 import { ProjectsView } from './components/ProjectsView';
 import { WorkspaceView } from './components/WorkspaceView';
 import { OnboardingScreen } from './components/setup';
@@ -375,6 +379,39 @@ function App({ initialProjectPath }: AppProps) {
     setProjectGitHubStatus,
     fetchBranchInfo,
     openHelpModal,
+  });
+
+  // Supabase auth and inline editor edits
+  const { isAuthenticated, user: authUser, session: authSession, login: authLogin } = useAuth();
+
+  const [remoteProjectId, setRemoteProjectId] = useState<string | null>(null);
+
+  // Auto-load remoteProjectId from Supabase when project has a GitHub URL
+  const githubUrl = integrations.projectGithub?.github_url ?? null;
+  useEffect(() => {
+    if (!githubUrl || !isSupabaseConfigured() || !authSession) {
+      setRemoteProjectId(null);
+      return;
+    }
+    findProjectByRepoUrl(githubUrl)
+      .then((result) => {
+        setRemoteProjectId(result ? result.projectId : null);
+      })
+      .catch(() => setRemoteProjectId(null));
+  }, [githubUrl, authSession]);
+
+  const {
+    edits: clientEdits,
+    pendingCount: editsPendingCount,
+    loading: editsLoading,
+    filter: editsFilter,
+    setFilter: setEditsFilter,
+    refresh: refreshEdits,
+    handleApprove: approveEditAction,
+    handleReject: rejectEditAction,
+  } = useClientEdits({
+    projectId: remoteProjectId,
+    userId: authUser?.id ?? null,
   });
 
   // Plugin data for PluginSlot components (defined before early returns so all views can use them)
@@ -751,6 +788,48 @@ function App({ initialProjectPath }: AppProps) {
     ]
   );
 
+  const handleProjectLinked = useCallback((projectId: string, _studioId: string) => {
+    setRemoteProjectId(projectId);
+  }, []);
+
+  const inlineEditorSettingsProps = useMemo(() => {
+    if (!isSupabaseConfigured()) return undefined;
+    return {
+      remoteProjectId,
+      session: authSession,
+      onProjectLinked: handleProjectLinked,
+    };
+  }, [remoteProjectId, authSession, handleProjectLinked]);
+
+  const editsProps = useMemo(() => {
+    if (!isSupabaseConfigured()) return undefined;
+    return {
+      edits: clientEdits,
+      pendingCount: editsPendingCount,
+      editsLoading,
+      editsFilter,
+      setEditsFilter,
+      isAuthenticated,
+      onLogin: authLogin,
+      onApproveEdit: approveEditAction,
+      onRejectEdit: rejectEditAction,
+      onApplyWithClaude: sendToClaude,
+      onRefreshEdits: refreshEdits,
+    };
+  }, [
+    clientEdits,
+    editsPendingCount,
+    editsLoading,
+    editsFilter,
+    setEditsFilter,
+    isAuthenticated,
+    authLogin,
+    approveEditAction,
+    rejectEditAction,
+    sendToClaude,
+    refreshEdits,
+  ]);
+
   const pluginsProps = useMemo(
     () => ({
       loadedPlugins,
@@ -949,6 +1028,8 @@ function App({ initialProjectPath }: AppProps) {
       branchMgmt={branchMgmtProps}
       plugins={pluginsProps}
       lifecycle={lifecycleProps}
+      edits={editsProps}
+      inlineEditorSettings={inlineEditorSettingsProps}
       pluginProject={pluginProject}
       pluginActions={pluginActions}
       pluginTheme={pluginTheme}

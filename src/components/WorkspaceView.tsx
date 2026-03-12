@@ -25,6 +25,7 @@ import { CompactActionsRow } from './CompactMode';
 import { MainBranchBanner } from './MainBranchBanner';
 import { BrowserDropdown } from './BrowserDropdown';
 import { ConnectOverlay } from './ConnectOverlay';
+import { ClientEditsPanel } from './ClientEditsPanel';
 import { CodeHealthPanel } from './CodeHealthPanel';
 import type { CodeHealthPanelRef } from './CodeHealthPanel';
 import { WorkspaceModals } from './WorkspaceModals';
@@ -49,6 +50,7 @@ import {
   ArrowLeftIcon,
   ActivityIcon,
   SettingsIcon,
+  EditIcon,
 } from './icons';
 import { ToolbarDropdown } from './ToolbarDropdown';
 import { TerminalTabDropdown } from './TerminalTabDropdown';
@@ -65,6 +67,8 @@ import type { IntegrationState, AuthTerminalConfig } from '../hooks/useIntegrati
 import type { BranchInfo, PullRequestInfo } from '../lib/branches';
 import type { ChangedFile } from '../lib/git';
 import type { LoadedPlugin } from '../hooks/usePlugins';
+import type { InlineEdit, EditStatus } from '@shipstudio/shared';
+import type { Session } from '@supabase/supabase-js';
 import type { PluginThemeData } from '../contexts/PluginContext';
 import '../styles/notifications.css';
 
@@ -142,8 +146,8 @@ interface LayoutProps {
   setShowHealthLogs: (show: boolean) => void;
   isPreviewHidden: boolean;
   setIsPreviewHidden: (hidden: boolean) => void;
-  workspaceTab: 'preview' | 'code' | 'branches' | 'prs';
-  setWorkspaceTab: (tab: 'preview' | 'code' | 'branches' | 'prs') => void;
+  workspaceTab: 'preview' | 'code' | 'branches' | 'prs' | 'edits';
+  setWorkspaceTab: (tab: 'preview' | 'code' | 'branches' | 'prs' | 'edits') => void;
   compactView: 'terminal' | 'branches' | 'prs';
   setCompactView: (view: 'terminal' | 'branches' | 'prs') => void;
   isPinned: boolean;
@@ -300,6 +304,26 @@ interface WorkspacePluginActions {
   ) => Promise<number | null>;
 }
 
+interface InlineEditorSettingsProps {
+  remoteProjectId: string | null;
+  session: Session | null;
+  onProjectLinked: (projectId: string, studioId: string) => void;
+}
+
+interface EditsProps {
+  edits: InlineEdit[];
+  pendingCount: number;
+  editsLoading: boolean;
+  editsFilter: EditStatus | 'all';
+  setEditsFilter: (filter: EditStatus | 'all') => void;
+  isAuthenticated: boolean;
+  onLogin: () => void;
+  onApproveEdit: (editId: string) => Promise<void>;
+  onRejectEdit: (editId: string, note?: string) => Promise<void>;
+  onApplyWithClaude: (prompt: string) => void;
+  onRefreshEdits: () => void;
+}
+
 export interface WorkspaceViewProps {
   currentProject: Project;
   previewRef: RefObject<PreviewHandle | null>;
@@ -315,6 +339,8 @@ export interface WorkspaceViewProps {
   branchMgmt: BranchProps;
   plugins: PluginProps;
   lifecycle: LifecycleProps;
+  edits?: EditsProps;
+  inlineEditorSettings?: InlineEditorSettingsProps;
   pluginProject: WorkspacePluginProject | null;
   pluginActions: WorkspacePluginActions;
   pluginTheme: PluginThemeData;
@@ -336,6 +362,8 @@ export const WorkspaceView = memo(function WorkspaceView({
   branchMgmt,
   plugins,
   lifecycle,
+  edits: editsProps,
+  inlineEditorSettings,
   pluginProject,
   pluginActions,
   pluginTheme,
@@ -920,6 +948,31 @@ export const WorkspaceView = memo(function WorkspaceView({
                         </button>
                       </>
                     )}
+                    {editsProps && (
+                      <button
+                        className={`workspace-tab ${workspaceTab === 'edits' ? 'active' : ''}`}
+                        onClick={() => setWorkspaceTab('edits')}
+                      >
+                        <EditIcon size={14} />
+                        <span>Edits</span>
+                        {editsProps.pendingCount > 0 && (
+                          <span
+                            style={{
+                              background: 'var(--action)',
+                              color: 'var(--action-text)',
+                              fontSize: 10,
+                              fontWeight: 600,
+                              padding: '0 5px',
+                              borderRadius: 8,
+                              marginLeft: 2,
+                              lineHeight: '16px',
+                            }}
+                          >
+                            {editsProps.pendingCount}
+                          </span>
+                        )}
+                      </button>
+                    )}
                   </div>
                   {isWebProject && (
                     <>
@@ -1090,6 +1143,32 @@ export const WorkspaceView = memo(function WorkspaceView({
                       />
                     </div>
                   ))}
+                {workspaceTab === 'edits' && editsProps && (
+                  <div
+                    style={{
+                      flex: 1,
+                      display: 'flex',
+                      flexDirection: 'column',
+                      minHeight: 0,
+                      minWidth: 0,
+                      overflow: 'hidden',
+                    }}
+                  >
+                    <ClientEditsPanel
+                      edits={editsProps.edits}
+                      pendingCount={editsProps.pendingCount}
+                      loading={editsProps.editsLoading}
+                      filter={editsProps.editsFilter}
+                      setFilter={editsProps.setEditsFilter}
+                      isAuthenticated={editsProps.isAuthenticated}
+                      onLogin={editsProps.onLogin}
+                      onApprove={editsProps.onApproveEdit}
+                      onReject={editsProps.onRejectEdit}
+                      onApplyWithClaude={editsProps.onApplyWithClaude}
+                      onRefresh={editsProps.onRefreshEdits}
+                    />
+                  </div>
+                )}
               </div>
             }
           />
@@ -1248,6 +1327,20 @@ export const WorkspaceView = memo(function WorkspaceView({
           onSavePort={lifecycle.handleSavePort}
           onCloseProjectSettings={modals.closeProjectSettings}
           isWebProject={isWebProject}
+          inlineEditor={
+            inlineEditorSettings
+              ? {
+                  projectPath: currentProject.path,
+                  repoUrl: integrations.projectGithub?.github_url ?? '',
+                  githubRepoFullName: integrations.projectGithub?.github_repo ?? '',
+                  defaultBranch: branches.find((b) => b.isDefault)?.name ?? 'main',
+                  remoteProjectId: inlineEditorSettings.remoteProjectId,
+                  session: inlineEditorSettings.session,
+                  onProjectLinked: inlineEditorSettings.onProjectLinked,
+                  onToast: (message: string, type: 'success' | 'error') => showToast(message, type),
+                }
+              : undefined
+          }
           pluginTerminal={pluginTerminal}
           pluginTerminalExited={pluginTerminalExited}
           onClosePluginTerminal={closePluginTerminal}

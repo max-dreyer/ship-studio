@@ -6,6 +6,9 @@
  */
 
 import { useState, useEffect, useCallback } from 'react';
+import { InlineEditorConfigPanel } from './InlineEditorConfig';
+import { ClientManagement } from './ClientManagement';
+import type { Session } from '@supabase/supabase-js';
 import '../styles/notifications.css';
 
 interface ProjectSettingsModalProps {
@@ -16,6 +19,17 @@ interface ProjectSettingsModalProps {
   customDevCommand?: string | null;
   onSaveDevCommand?: (command: string | null) => void;
   isWebProject?: boolean;
+  /** Inline editor props (optional — shown when Supabase is configured) */
+  inlineEditor?: {
+    projectPath: string;
+    repoUrl: string;
+    githubRepoFullName: string;
+    defaultBranch: string;
+    remoteProjectId: string | null;
+    session: Session | null;
+    onProjectLinked: (projectId: string, studioId: string) => void;
+    onToast: (message: string, type: 'success' | 'error') => void;
+  };
 }
 
 export function ProjectSettingsModal({
@@ -25,6 +39,7 @@ export function ProjectSettingsModal({
   customDevCommand,
   onSaveDevCommand,
   isWebProject,
+  inlineEditor,
 }: ProjectSettingsModalProps) {
   const [port, setPort] = useState(currentPort);
   const [devCommand, setDevCommand] = useState(customDevCommand ?? '');
@@ -134,6 +149,22 @@ export function ProjectSettingsModal({
                 </span>
               </div>
             </div>
+          )}
+          {inlineEditor && (
+            <>
+              <div style={{ borderTop: '1px solid var(--border)', margin: '8px 0' }} />
+              <InlineEditorConfigPanel {...inlineEditor} />
+              {inlineEditor.remoteProjectId && inlineEditor.session && (
+                <>
+                  <div style={{ borderTop: '1px solid var(--border)', margin: '8px 0' }} />
+                  <ClientManagement
+                    projectId={inlineEditor.remoteProjectId}
+                    session={inlineEditor.session}
+                    onToast={inlineEditor.onToast}
+                  />
+                </>
+              )}
+            </>
           )}
         </div>
         <div className="notification-settings-footer">

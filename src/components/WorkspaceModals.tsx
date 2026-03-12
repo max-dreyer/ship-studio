@@ -22,6 +22,7 @@ import { McpModal } from './McpModal';
 import { PluginManager } from './PluginManager';
 import { DevCommandModal } from './DevCommandModal';
 import { ProjectSettingsModal } from './ProjectSettingsModal';
+import type { Session } from '@supabase/supabase-js';
 import { GitErrorHandler } from './GitErrorHandler';
 import { SubmitReviewModal } from './SubmitReviewModal';
 import { ConflictResolutionModal } from './ConflictResolutionModal';
@@ -147,6 +148,16 @@ export interface WorkspaceModalsProps {
   onSavePort: (port: number) => void;
   onCloseProjectSettings: () => void;
   isWebProject: boolean;
+  inlineEditor?: {
+    projectPath: string;
+    repoUrl: string;
+    githubRepoFullName: string;
+    defaultBranch: string;
+    remoteProjectId: string | null;
+    session: Session | null;
+    onProjectLinked: (projectId: string, studioId: string) => void;
+    onToast: (message: string, type: 'success' | 'error') => void;
+  };
 
   // Plugin terminal
   pluginTerminal: { command: string; args: string[]; title: string } | null;
@@ -225,6 +236,7 @@ export function WorkspaceModals({
   onSavePort,
   onCloseProjectSettings,
   isWebProject,
+  inlineEditor,
   pluginTerminal,
   pluginTerminalExited,
   onClosePluginTerminal,
@@ -479,6 +491,7 @@ export function WorkspaceModals({
           customDevCommand={customDevCommand}
           onSaveDevCommand={onSaveDevCommand}
           isWebProject={isWebProject}
+          inlineEditor={inlineEditor}
         />
       )}
 

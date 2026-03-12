@@ -374,6 +374,12 @@ pub fn run() {
             commands::window::start_window_drag,
             commands::window::focus_window,
             commands::window::set_window_title,
+            // Auth (Supabase)
+            commands::auth::start_oauth_server,
+            commands::auth::start_supabase_auth,
+            commands::auth::handle_auth_callback,
+            commands::auth::get_auth_session,
+            commands::auth::logout,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

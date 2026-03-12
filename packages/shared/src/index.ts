@@ -1,0 +1,22 @@
+export type {
+  ElementFingerprint,
+  EditType,
+  EditStatus,
+  AppliedMethod,
+
+  StyleChange,
+  ImageChange,
+  MetaChange,
+  ViewportInfo,
+  InlineEdit,
+  InlineEditorConfig,
+  EditSubmission,
+  EnableProjectRequest,
+  EnableProjectResponse,
+  InviteClientRequest,
+  InviteClientResponse,
+  ValidateOriginRequest,
+  ValidateOriginResponse,
+  ProjectClient,
+  ProjectInvite,
+} from './types';

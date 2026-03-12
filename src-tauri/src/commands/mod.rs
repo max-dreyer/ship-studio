@@ -5,6 +5,7 @@
 pub mod ai;
 pub mod analytics;
 pub mod assets;
+pub mod auth;
 pub mod claude;
 pub mod code;
 pub mod conflicts;
@@ -32,6 +33,7 @@ pub mod window;
 pub use ai::*;
 pub use analytics::*;
 pub use assets::*;
+pub use auth::*;
 pub use claude::*;
 pub use code::*;
 pub use conflicts::*;
