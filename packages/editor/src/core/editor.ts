@@ -19,6 +19,22 @@ let activeSession: EditingSession | null = null;
 let shadowRef: ShadowRoot | null = null;
 let hintEl: HTMLElement | null = null;
 
+/**
+ * When an image is covered by overlay divs (gradients, content layers),
+ * clicks land on the overlay instead of the <img>. Walk up to the nearest
+ * positioned container and look for a sibling <img>.
+ */
+function findSiblingImage(el: HTMLElement): HTMLImageElement | null {
+  const parent = el.parentElement;
+  if (!parent) return null;
+  const img = parent.querySelector(':scope > img') as HTMLImageElement | null;
+  if (img) return img;
+  // Check one level higher for nested overlay structures
+  const grandparent = parent.parentElement;
+  if (!grandparent) return null;
+  return grandparent.querySelector(':scope > img') as HTMLImageElement | null;
+}
+
 function handleClick(e: MouseEvent) {
   if (EditorState.getPhase() === 'submitting') return;
 
@@ -26,10 +42,15 @@ function handleClick(e: MouseEvent) {
   if (!target || target.closest('[data-ss-editor]')) return;
 
   // Image click → image panel
-  if (target.tagName === 'IMG') {
+  // Direct img click, or click on an overlay sitting on top of an img
+  const imgTarget = target.tagName === 'IMG'
+    ? (target as HTMLImageElement)
+    : findSiblingImage(target);
+
+  if (imgTarget) {
     e.preventDefault();
     e.stopPropagation();
-    showImagePanel(shadowRef!, target as HTMLImageElement);
+    showImagePanel(shadowRef!, imgTarget);
     return;
   }
 

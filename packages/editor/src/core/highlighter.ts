@@ -71,6 +71,17 @@ function hideOverlay() {
   currentHighlight = null;
 }
 
+/** Find a sibling <img> when hovering over an overlay on top of an image */
+function findSiblingImage(el: Element): HTMLImageElement | null {
+  const parent = el.parentElement;
+  if (!parent) return null;
+  const img = parent.querySelector(':scope > img') as HTMLImageElement | null;
+  if (img) return img;
+  const grandparent = parent.parentElement;
+  if (!grandparent) return null;
+  return grandparent.querySelector(':scope > img') as HTMLImageElement | null;
+}
+
 function handleMouseMove(e: MouseEvent) {
   if (EditorState.getPhase() !== 'active') return;
 
@@ -81,7 +92,14 @@ function handleMouseMove(e: MouseEvent) {
     currentHighlight = target;
     showOverlay(target);
   } else {
-    hideOverlay();
+    // Check for images behind overlay divs (gradients, content layers)
+    const img = findSiblingImage(target);
+    if (img) {
+      currentHighlight = img;
+      showOverlay(img);
+    } else {
+      hideOverlay();
+    }
   }
 }
 

@@ -16,7 +16,7 @@ export function showImagePanel(shadow: ShadowRoot, img: HTMLImageElement) {
   closeImagePanel();
   injectStyles(shadow);
 
-  const originalSrc = img.src;
+  const originalSrc = img.getAttribute('src') || img.src;
   const originalAlt = img.alt;
 
   const panel = h('div', { className: 'ss-panel' });
