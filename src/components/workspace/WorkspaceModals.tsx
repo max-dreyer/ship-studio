@@ -23,7 +23,6 @@ import { PluginManager } from '../plugins/PluginManager';
 import { DevCommandModal } from '../terminal/DevCommandModal';
 import { ProjectSettingsModal } from './ProjectSettingsModal';
 import { ShopifyStoreModal } from '../shopify/ShopifyStoreModal';
-import { ProfilesModal } from '../profiles/ProfilesModal';
 import { GitErrorHandler } from '../branches/GitErrorHandler';
 import { SubmitReviewModal } from '../branches/SubmitReviewModal';
 import { ConflictResolutionModal } from '../branches/ConflictResolutionModal';
@@ -460,9 +459,6 @@ export function WorkspaceModals({
       {isShopifyTheme && (
         <ShopifyStoreModal projectPath={projectPath} onStoreSaved={onShopifyStoreSaved} />
       )}
-
-      {/* Profiles modal — read state via useModal('profiles') */}
-      <ProfilesModal />
 
       {/* Project Settings Modal */}
       <ProjectSettingsModal

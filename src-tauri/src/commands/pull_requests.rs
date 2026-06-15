@@ -2,7 +2,7 @@
 //!
 //! Commands for managing GitHub pull requests.
 
-use crate::commands::github::get_gh_command_for_project;
+use crate::commands::github::get_gh_command;
 use crate::errors::CommandError;
 use crate::types::PullRequestInfo;
 use crate::utils::{create_command, validate_project_path};
@@ -15,7 +15,7 @@ pub async fn list_pull_requests(
 ) -> Result<Vec<PullRequestInfo>, CommandError> {
     let validated_path = validate_project_path(&project_path)?;
 
-    let output = get_gh_command_for_project(Some(&project_path))
+    let output = get_gh_command()
         .args([
             "pr",
             "list",
@@ -95,7 +95,7 @@ pub async fn create_pull_request(
         "pr", "create", "--title", &title, "--body", &body_str, "--base", &base,
     ];
 
-    let output = get_gh_command_for_project(Some(&project_path))
+    let output = get_gh_command()
         .args(&args)
         .current_dir(&validated_path)
         .output()
@@ -119,7 +119,7 @@ pub async fn create_pull_request(
 pub async fn merge_pull_request(project_path: String, pr_number: i32) -> Result<(), CommandError> {
     let validated_path = validate_project_path(&project_path)?;
 
-    let output = get_gh_command_for_project(Some(&project_path))
+    let output = get_gh_command()
         .args(["pr", "merge", &pr_number.to_string(), "--merge"])
         .current_dir(&validated_path)
         .output()
@@ -154,7 +154,7 @@ pub async fn checkout_pull_request(
 ) -> Result<String, CommandError> {
     let validated_path = validate_project_path(&project_path)?;
 
-    let output = get_gh_command_for_project(Some(&project_path))
+    let output = get_gh_command()
         .args(["pr", "checkout", &pr_number.to_string()])
         .current_dir(&validated_path)
         .output()
@@ -184,7 +184,7 @@ pub async fn checkout_pull_request(
 pub async fn close_pull_request(project_path: String, pr_number: i32) -> Result<(), CommandError> {
     let validated_path = validate_project_path(&project_path)?;
 
-    let output = get_gh_command_for_project(Some(&project_path))
+    let output = get_gh_command()
         .args(["pr", "close", &pr_number.to_string()])
         .current_dir(&validated_path)
         .output()

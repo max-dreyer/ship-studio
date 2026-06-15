@@ -441,24 +441,6 @@ export function useAppCommands({
         shortcut: '⌘/',
         run: () => openModal('help'),
       },
-      {
-        id: 'modal.profiles',
-        title: 'Manage profiles…',
-        icon: <SettingsIcon size={14} />,
-        category: 'settings',
-        keywords: [
-          'profile',
-          'credentials',
-          'account',
-          'github token',
-          'api key',
-          'figma',
-          'vercel',
-          'claude',
-          'openai',
-        ],
-        run: () => openModal('profiles'),
-      },
     ],
     [openModal]
   );

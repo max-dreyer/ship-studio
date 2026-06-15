@@ -52,18 +52,6 @@ pub fn get_gh_command() -> Command {
     cmd
 }
 
-/// Returns a gh Command with the project's profile credentials injected.
-/// If `project_path` is None, falls back to `get_gh_command()` with no injection.
-pub fn get_gh_command_for_project(project_path: Option<&str>) -> Command {
-    let mut cmd = get_gh_command();
-    if let Some(path) = project_path {
-        for (key, value) in crate::commands::profiles::get_env_vars_for_project(path) {
-            cmd.env(key, value);
-        }
-    }
-    cmd
-}
-
 /// Parse "owner/repo" from a GitHub URL (HTTPS or SSH format)
 pub fn parse_github_repo(url: &str) -> Option<String> {
     // HTTPS: https://github.com/owner/repo.git
@@ -238,7 +226,7 @@ pub async fn get_project_github_status(project_path: String) -> ProjectGitHubSta
     // Verify repo exists on GitHub using gh CLI (with timeout)
     let step_start = std::time::Instant::now();
     debug!(github_repo = %github_repo, "Running gh repo view");
-    let mut gh_cmd = get_gh_command_for_project(Some(&project_path));
+    let mut gh_cmd = get_gh_command();
     gh_cmd
         .args(["repo", "view", &github_repo, "--json", "url"])
         .current_dir(&project);
@@ -289,26 +277,6 @@ pub async fn get_project_github_status(project_path: String) -> ProjectGitHubSta
 /// Ensures git user.name and user.email are configured for the repo.
 /// If not set, fetches the user's identity from GitHub CLI and sets it locally.
 pub fn ensure_git_identity(repo_path: &std::path::Path) -> Result<(), CommandError> {
-    // Profile git identity always wins — apply it unconditionally if set.
-    let path_str = repo_path.to_string_lossy();
-    let (profile_name, profile_email) =
-        crate::commands::profiles::get_git_identity_for_project(&path_str);
-    if profile_name.is_some() || profile_email.is_some() {
-        if let Some(ref n) = profile_name {
-            let _ = create_command("git")
-                .args(["config", "--local", "user.name", n])
-                .current_dir(repo_path)
-                .output();
-        }
-        if let Some(ref e) = profile_email {
-            let _ = create_command("git")
-                .args(["config", "--local", "user.email", e])
-                .current_dir(repo_path)
-                .output();
-        }
-        return Ok(());
-    }
-
     let has_name = create_command("git")
         .args(["config", "user.name"])
         .current_dir(repo_path)
@@ -439,7 +407,7 @@ pub async fn push_to_github(options: PushToGitHubOptions) -> Result<String, Comm
     }
 
     // Create GitHub repo and push
-    let mut gh_cmd = get_gh_command_for_project(Some(&options.project_path));
+    let mut gh_cmd = get_gh_command();
     gh_cmd
         .args([
             "repo", "create", repo_name, visibility, "--source", ".", "--remote", "origin",

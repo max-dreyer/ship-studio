@@ -17,7 +17,6 @@
 import { useState, useCallback, useMemo, type ReactNode } from 'react';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { GitHubButton } from '../branches/GitHubButton';
-import { ProfileBadge } from '../profiles/ProfileBadge';
 import { openInFinder } from '../../lib/ide';
 import { openUrl } from '@tauri-apps/plugin-opener';
 import { PublishBranchDropdown } from '../branches/PublishBranchDropdown';
@@ -167,7 +166,6 @@ export function WorkspaceHeader({
       >
         {projectPath}
       </button>
-      <ProfileBadge projectPath={projectPath} />
     </div>
   );
 
