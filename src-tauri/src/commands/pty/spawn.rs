@@ -59,14 +59,23 @@ pub async fn spawn_pty(
             #[cfg(not(windows))]
             let (cmd, cmd_args) = (options.command.clone(), options.args.clone());
 
-            let mut child = create_command(&cmd)
+            let mut cmd_builder = create_command(&cmd);
+            cmd_builder
                 .args(&cmd_args)
                 .current_dir(&options.cwd)
                 .env("PATH", get_extended_path())
                 .stdout(Stdio::piped())
-                .stderr(Stdio::piped())
-                .spawn()
-                .map_err(|e| e.to_string())?;
+                .stderr(Stdio::piped());
+
+            // Inject the project profile's credentials as env vars so that
+            // Claude, Vercel, and other CLIs use the right account.
+            if let Some(ref pp) = project_path {
+                for (key, value) in crate::commands::profiles::get_env_vars_for_project(pp) {
+                    cmd_builder.env(key, value);
+                }
+            }
+
+            let mut child = cmd_builder.spawn().map_err(|e| e.to_string())?;
 
             // Store the process info for potential cleanup
             let pid = child.id();

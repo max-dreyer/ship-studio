@@ -756,6 +756,43 @@ pub struct AppState {
     /// macOS beta / GPU-driver combinations).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub terminal_gpu_enabled: Option<bool>,
+    /// User-defined profiles for credential isolation (Personal, Work, Company X…).
+    /// Credentials themselves are stored in the OS keychain — only metadata here.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub profiles: Vec<Profile>,
+    /// Maps absolute project path → profile ID.
+    #[serde(default, skip_serializing_if = "std::collections::HashMap::is_empty")]
+    pub project_profiles: std::collections::HashMap<String, String>,
+}
+
+// ============ Profiles ============
+
+/// A user profile for isolating credentials per client/context.
+#[derive(Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct Profile {
+    pub id: String,
+    pub name: String,
+    /// Hex color for visual identification (e.g., "#6b7280")
+    pub color: String,
+    /// True for the built-in Default profile (cannot be deleted)
+    pub is_default: bool,
+    /// Unix timestamp (ms) when profile was created
+    pub created_at: u64,
+}
+
+/// Which credential keys are set for a profile (values stay in the OS keychain).
+#[derive(Serialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct ProfileCredentialStatus {
+    pub has_anthropic_api_key: bool,
+    pub has_anthropic_base_url: bool,
+    pub has_github_token: bool,
+    pub has_vercel_token: bool,
+    pub has_figma_token: bool,
+    pub has_openai_api_key: bool,
+    pub has_git_name: bool,
+    pub has_git_email: bool,
 }
 
 // ============ Compact Mode ============

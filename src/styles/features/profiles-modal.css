@@ -1,0 +1,331 @@
+/* ── Profiles Modal ────────────────────────────────────────────────────────── */
+
+.profiles-modal-frame {
+  width: 720px;
+}
+
+.profiles-modal {
+  display: flex;
+  height: 520px;
+  overflow: hidden;
+}
+
+/* ── Sidebar ─────────────────────────────────────────────────────────────── */
+
+.profiles-sidebar {
+  width: 200px;
+  flex-shrink: 0;
+  border-right: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.profiles-sidebar-list {
+  flex: 1;
+  overflow-y: auto;
+  padding: var(--spacing-xs) 0;
+}
+
+.profile-sidebar-item {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-sm);
+  padding: var(--spacing-xs) var(--spacing-md);
+  cursor: pointer;
+  border-radius: 0;
+  border: none;
+  background: none;
+  width: 100%;
+  text-align: left;
+  color: var(--text-primary);
+  font-size: var(--font-size-sm);
+  transition: background var(--transition);
+}
+
+.profile-sidebar-item:hover {
+  background: var(--bg-secondary);
+}
+
+.profile-sidebar-item.active {
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+}
+
+.profile-color-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.profile-sidebar-item-name {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.profiles-sidebar-add {
+  border-top: 1px solid var(--border);
+  padding: var(--spacing-xs);
+}
+
+.profiles-sidebar-add button {
+  width: 100%;
+  justify-content: center;
+}
+
+/* ── Detail panel ─────────────────────────────────────────────────────────── */
+
+.profiles-detail {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.profiles-detail-scroll {
+  flex: 1;
+  overflow-y: auto;
+  padding: var(--spacing-lg);
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-lg);
+}
+
+.profiles-empty {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-muted);
+  font-size: var(--font-size-sm);
+}
+
+/* ── Profile header (name + color) ─────────────────────────────────────────── */
+
+.profiles-header-row {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-md);
+}
+
+.profiles-name-input {
+  flex: 1;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text-primary);
+  font-size: var(--font-size-base);
+  font-weight: 600;
+  padding: var(--spacing-xs) var(--spacing-sm);
+}
+
+.profiles-name-input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.profiles-name-input:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+/* ── Color picker ─────────────────────────────────────────────────────────── */
+
+.profiles-color-picker {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.profiles-color-swatch {
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  cursor: pointer;
+  border: 2px solid transparent;
+  transition:
+    transform var(--transition),
+    border-color var(--transition);
+}
+
+.profiles-color-swatch:hover {
+  transform: scale(1.15);
+}
+
+.profiles-color-swatch.selected {
+  border-color: var(--text-primary);
+}
+
+/* ── Section ──────────────────────────────────────────────────────────────── */
+
+.profiles-section-title {
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-muted);
+  margin-bottom: var(--spacing-sm);
+}
+
+/* ── Credential rows ──────────────────────────────────────────────────────── */
+
+.profiles-cred-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-xs);
+}
+
+.profiles-cred-row {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-sm);
+  padding: var(--spacing-xs) var(--spacing-sm);
+  background: var(--bg-secondary);
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  min-height: 36px;
+}
+
+.profiles-cred-label {
+  flex: 0 0 200px;
+  font-size: var(--font-size-sm);
+  color: var(--text-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.profiles-cred-status {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-xs);
+}
+
+.profiles-cred-badge {
+  font-size: 11px;
+  padding: 2px 7px;
+  border-radius: var(--radius-sm);
+  font-weight: 500;
+}
+
+.profiles-cred-badge.set {
+  background: rgba(16, 185, 129, 0.15);
+  color: #10b981;
+}
+
+.profiles-cred-badge.unset {
+  background: var(--bg-tertiary);
+  color: var(--text-muted);
+}
+
+.profiles-cred-input-row {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-xs);
+}
+
+.profiles-cred-input {
+  flex: 1;
+  background: var(--bg-primary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text-primary);
+  font-size: var(--font-size-sm);
+  padding: 3px var(--spacing-sm);
+  font-family: monospace;
+}
+
+.profiles-cred-input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.profiles-cred-actions {
+  display: flex;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+/* ── Footer ───────────────────────────────────────────────────────────────── */
+
+.profiles-detail-footer {
+  border-top: 1px solid var(--border);
+  padding: var(--spacing-sm) var(--spacing-lg);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+/* ── Profile badge (workspace header) ────────────────────────────────────── */
+
+.profile-badge {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px var(--spacing-sm);
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: var(--bg-secondary);
+  cursor: pointer;
+  font-size: var(--font-size-xs);
+  color: var(--text-secondary);
+  transition:
+    background var(--transition),
+    border-color var(--transition);
+  white-space: nowrap;
+}
+
+.profile-badge:hover {
+  background: var(--bg-tertiary);
+  border-color: var(--accent);
+  color: var(--text-primary);
+}
+
+.profile-badge-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+/* ── Profile selector (assign profile to project) ─────────────────────────── */
+
+.profile-selector {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-xs);
+  max-height: 240px;
+  overflow-y: auto;
+}
+
+.profile-selector-item {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-sm);
+  padding: var(--spacing-xs) var(--spacing-sm);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  border: 1px solid transparent;
+  background: var(--bg-secondary);
+  transition: background var(--transition);
+}
+
+.profile-selector-item:hover {
+  background: var(--bg-tertiary);
+}
+
+.profile-selector-item.active {
+  border-color: var(--accent);
+  background: var(--bg-tertiary);
+}
+
+.profile-selector-item-name {
+  font-size: var(--font-size-sm);
+  color: var(--text-primary);
+}

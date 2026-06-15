@@ -455,6 +455,16 @@ pub fn run() {
             commands::settings::set_slack_cta_hidden,
             commands::settings::get_terminal_gpu_enabled,
             commands::settings::set_terminal_gpu_enabled,
+            // Profiles
+            commands::profiles::list_profiles,
+            commands::profiles::create_profile,
+            commands::profiles::update_profile,
+            commands::profiles::delete_profile,
+            commands::profiles::get_project_profile_id,
+            commands::profiles::set_project_profile_id,
+            commands::profiles::get_profile_credential_status,
+            commands::profiles::set_profile_credential,
+            commands::profiles::clear_profile_credential,
             // AI generation
             commands::ai::generate_pr_description,
             // Claude integration

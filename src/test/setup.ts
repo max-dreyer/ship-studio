@@ -144,6 +144,31 @@ vi.mock('@tauri-apps/plugin-process', () => ({
   relaunch: vi.fn(),
 }));
 
+// Provide a functional localStorage for test environments where jsdom's built-in
+// Storage may be unavailable (e.g. when --localstorage-file is unresolvable).
+if (typeof localStorage === 'undefined' || typeof localStorage.clear !== 'function') {
+  let _store: Record<string, string> = {};
+  Object.defineProperty(globalThis, 'localStorage', {
+    configurable: true,
+    value: {
+      getItem: (k: string) => _store[k] ?? null,
+      setItem: (k: string, v: string) => {
+        _store[k] = String(v);
+      },
+      removeItem: (k: string) => {
+        delete _store[k];
+      },
+      clear: () => {
+        _store = {};
+      },
+      get length() {
+        return Object.keys(_store).length;
+      },
+      key: (i: number) => Object.keys(_store)[i] ?? null,
+    },
+  });
+}
+
 // Reset mocks before each test
 beforeEach(() => {
   vi.clearAllMocks();
