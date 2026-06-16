@@ -5,6 +5,9 @@
 
 use super::{is_force_onboarding_mode, is_mock_installed, is_mock_mode, read_app_state};
 use crate::agent::ALL_AGENTS;
+use crate::commands::accounts::{
+    agent_auth_dir, get_active_account_id, get_env_vars_for_account, DEFAULT_ACCOUNT_ID,
+};
 use crate::commands::claude::find_binary_by_name;
 use crate::commands::github::get_gh_command;
 use crate::types::{FullSetupStatus, OptionalAuths, SetupItemInfo, SetupItemStatus};
@@ -312,6 +315,7 @@ pub async fn get_full_setup_status() -> FullSetupStatus {
 
     // 6-7. Agent CLIs and Auth — check ALL agents
     let mut detected_agents = Vec::new();
+    let active_account_id = get_active_account_id().unwrap_or_else(|_| "default".to_string());
 
     for agent in ALL_AGENTS {
         let agent_path = find_binary_by_name(agent.binary_name);
@@ -344,15 +348,11 @@ pub async fn get_full_setup_status() -> FullSetupStatus {
 
         // Agent Auth
         let agent_auth = if binary_ready {
-            if let Some(home) = dirs::home_dir() {
-                let agent_dir = home.join(agent.auth_config_dir);
-                agent.auth_indicators.iter().any(|indicator| {
-                    let path = agent_dir.join(indicator);
-                    path.exists()
-                })
-            } else {
-                false
-            }
+            let agent_dir = agent_auth_dir(&active_account_id, agent);
+            agent.auth_indicators.iter().any(|indicator| {
+                let path = agent_dir.join(indicator);
+                path.exists()
+            })
         } else {
             false
         };
@@ -371,7 +371,23 @@ pub async fn get_full_setup_status() -> FullSetupStatus {
             error_message: None,
         });
 
-        if binary_ready && agent_auth {
+        // Onboarding completeness ("is at least one agent installed and
+        // authenticated on this machine") is a global concern independent of
+        // which Workspace is active — otherwise switching to a fresh
+        // Workspace that hasn't signed into any agent yet would force the
+        // user back into the onboarding wizard. Check the Default account's
+        // (real, global) auth dir for this purpose.
+        let agent_auth_global = if binary_ready {
+            let agent_dir = agent_auth_dir(crate::commands::accounts::DEFAULT_ACCOUNT_ID, agent);
+            agent
+                .auth_indicators
+                .iter()
+                .any(|indicator| agent_dir.join(indicator).exists())
+        } else {
+            false
+        };
+
+        if binary_ready && agent_auth_global {
             detected_agents.push(agent.id.to_string());
         }
     }
@@ -404,37 +420,44 @@ pub async fn get_full_setup_status() -> FullSetupStatus {
         error_message: None,
     });
 
-    // 9. Vercel Auth
-    let vercel_auth = if vercel_path.is_some() {
-        find_executable("vercel")
-            .map(|p| {
-                create_command(&p)
-                    .args(["whoami"])
-                    .output()
-                    .map(|o| o.status.success())
-                    .unwrap_or(false)
-            })
-            .unwrap_or(false)
-    } else {
-        false
+    // 9. Vercel Auth — per-workspace:
+    //    • Non-default accounts: only authed if VERCEL_TOKEN is in the
+    //      account's keychain (browser-based `vercel login` stores a global
+    //      session that would bleed across workspaces — require an explicit
+    //      token instead so each workspace is fully isolated).
+    //    • Default account: existing global `vercel whoami` behaviour
+    //      (preserves logins from before Workspace isolation existed).
+    let account_vercel_token = get_env_vars_for_account(&active_account_id).remove("VERCEL_TOKEN");
+    let run_vercel_whoami = |token: Option<&str>| -> Option<String> {
+        let p = find_executable("vercel")?;
+        let mut cmd = create_command(&p);
+        cmd.args(["whoami"]);
+        if let Some(t) = token {
+            cmd.env("VERCEL_TOKEN", t);
+        }
+        let out = cmd.output().ok()?;
+        if out.status.success() {
+            Some(String::from_utf8_lossy(&out.stdout).trim().to_string())
+        } else {
+            None
+        }
     };
-    let vercel_username = if vercel_auth {
-        find_executable("vercel").and_then(|p| {
-            create_command(&p)
-                .args(["whoami"])
-                .output()
-                .ok()
-                .and_then(|o| {
-                    if o.status.success() {
-                        Some(String::from_utf8_lossy(&o.stdout).trim().to_string())
-                    } else {
-                        None
-                    }
-                })
-        })
+    let vercel_whoami_result = if vercel_path.is_some() {
+        if let Some(ref token) = account_vercel_token {
+            // Account has an explicit token → verify it and get username
+            run_vercel_whoami(Some(token))
+        } else if active_account_id == DEFAULT_ACCOUNT_ID {
+            // Default account → use global CLI session (browser-based login)
+            run_vercel_whoami(None)
+        } else {
+            // Non-default account without a token → not connected for this workspace
+            None
+        }
     } else {
         None
     };
+    let vercel_auth = vercel_whoami_result.is_some();
+    let vercel_username = vercel_whoami_result;
     items.push(SetupItemInfo {
         id: "vercel_auth".to_string(),
         friendly_name: "Vercel Account".to_string(),

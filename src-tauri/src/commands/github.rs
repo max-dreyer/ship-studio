@@ -49,6 +49,7 @@ pub fn get_gh_command() -> Command {
         create_command("gh")
     };
     cmd.env("PATH", get_extended_path());
+    cmd.envs(crate::commands::accounts::get_env_vars_for_active_account());
     cmd
 }
 

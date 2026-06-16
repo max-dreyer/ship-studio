@@ -25,16 +25,16 @@ use crate::utils::{create_command, get_extended_path};
 #[tauri::command]
 #[tracing::instrument(skip(project_path, session_id), fields(project = %project_path, session_id = %session_id))]
 pub fn claude_session_exists(project_path: String, session_id: String) -> bool {
-    let Some(home) = dirs::home_dir() else {
-        return false;
-    };
+    let active_account_id = crate::commands::accounts::get_active_account_id()
+        .unwrap_or_else(|_| "default".to_string());
+    let claude_dir = crate::commands::accounts::claude_config_dir(&active_account_id);
     // Claude CLI's path sanitization: replace path separators with `-`.
     // The leading `/` also becomes `-`, hence the leading dash in directory names.
     let sanitized: String = project_path
         .chars()
         .map(|c| if c == '/' || c == '\\' { '-' } else { c })
         .collect();
-    let project_dir = home.join(".claude").join("projects").join(&sanitized);
+    let project_dir = claude_dir.join("projects").join(&sanitized);
     if !project_dir.is_dir() {
         return false;
     }

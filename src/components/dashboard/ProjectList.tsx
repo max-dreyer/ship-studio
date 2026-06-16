@@ -50,6 +50,7 @@ import { RenameProjectModal } from './RenameProjectModal';
 import { SearchAndSort } from './SearchAndSort';
 import { FolderBreadcrumb } from './FolderBreadcrumb';
 import { MoveFolderModal } from './MoveFolderModal';
+import { MoveWorkspaceModal } from './MoveWorkspaceModal';
 import { SettingsModal } from './SettingsModal';
 import { ModalFrame } from '../primitives/ModalFrame';
 import { Button } from '../primitives/Button';
@@ -62,6 +63,7 @@ import {
   getSlackCtaHidden,
   setSlackCtaHidden as persistSlackCtaHidden,
 } from '../../lib/settings';
+import { moveProjectToAccount, getProjectAccountId } from '../../lib/accounts';
 import { SlackIcon, SettingsIcon, EyeOffIcon, ChevronRightIcon, HistoryIcon } from '../icons';
 
 /** Basic project info for selection callback */
@@ -149,6 +151,10 @@ export function ProjectList({
   // Move to folder modal state
   const [moveProject, setMoveProject] = useState<DashboardProject | null>(null);
   const [moveProjectFolderId, setMoveProjectFolderId] = useState<string | null>(null);
+
+  // Move to workspace modal state
+  const [moveWorkspaceProject, setMoveWorkspaceProject] = useState<DashboardProject | null>(null);
+  const [moveWorkspaceCurrentId, setMoveWorkspaceCurrentId] = useState<string | null>(null);
 
   // Settings / Changelog modal state
   const [showSettings, setShowSettings] = useState(false);
@@ -454,6 +460,21 @@ export function ProjectList({
     await Promise.all([loadProjects(), loadFolders()]);
   };
 
+  const handleMoveProjectToWorkspace = async (accountId: string) => {
+    if (!moveWorkspaceProject) return;
+    await moveProjectToAccount(moveWorkspaceProject.path, accountId);
+    void trackEvent('project_moved_to_workspace', { $screen_name: 'Dashboard' });
+    setMoveWorkspaceProject(null);
+    setMoveWorkspaceCurrentId(null);
+    await loadProjects();
+  };
+
+  const handleOpenMoveWorkspaceModal = async (project: DashboardProject) => {
+    const currentId = await getProjectAccountId(project.path);
+    setMoveWorkspaceCurrentId(currentId);
+    setMoveWorkspaceProject(project);
+  };
+
   const handleOpenMoveModal = async (project: DashboardProject) => {
     // Check if project is currently in a folder
     const paths = await getFiledProjectPaths();
@@ -595,6 +616,7 @@ export function ProjectList({
             void handleToggleMainBranchWarning(path, hidden)
           }
           onOpenMoveModal={(project) => void handleOpenMoveModal(project)}
+          onOpenMoveWorkspaceModal={(project) => void handleOpenMoveWorkspaceModal(project)}
           onExportAsTemplate={(path) => void handleExportAsTemplate(path)}
           onUploadThumbnail={(project) => handleUploadThumbnail(project)}
           onRemoveExternal={(project) => void handleRemoveExternal(project)}
@@ -704,6 +726,18 @@ export function ProjectList({
           onSelect={handleMoveProject}
           projectName={moveProject?.name || ''}
           currentFolderId={moveProjectFolderId}
+        />
+
+        {/* Move to Workspace Modal */}
+        <MoveWorkspaceModal
+          isOpen={moveWorkspaceProject !== null}
+          onClose={() => {
+            setMoveWorkspaceProject(null);
+            setMoveWorkspaceCurrentId(null);
+          }}
+          onSelect={handleMoveProjectToWorkspace}
+          projectName={moveWorkspaceProject?.name || ''}
+          currentAccountId={moveWorkspaceCurrentId}
         />
 
         {/* Rename Project Modal */}

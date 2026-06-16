@@ -345,6 +345,8 @@ export interface WorkspaceViewProps {
   onGoHome: () => void;
   /** Open the project picker modal. */
   onOpenProjectPicker: () => void;
+  /** Open the "Switch Workspace" picker from the sidebar footer. */
+  onSwitchAccount: () => void;
   /** Predicate: is a dev server currently tracked for the given project path?
    *  Used by the sidebar to populate background projects' Commands section. */
   isProjectDevServerRunning: (projectPath: string) => boolean;
@@ -373,6 +375,7 @@ export const WorkspaceView = memo(function WorkspaceView({
   onCloseProject,
   onSelectProjectTab,
   onGoHome,
+  onSwitchAccount,
   onOpenProjectPicker,
   isProjectDevServerRunning,
 }: WorkspaceViewProps) {
@@ -981,6 +984,7 @@ export const WorkspaceView = memo(function WorkspaceView({
                 isWebProject && devServerPort > 0 ? `http://localhost:${devServerPort}` : undefined
               }
               isProjectDevServerRunning={isProjectDevServerRunning}
+              onSwitchAccount={onSwitchAccount}
             />
             <div className="workspace-main">
               {header.toolbar}

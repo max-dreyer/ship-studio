@@ -387,6 +387,8 @@ pub fn run() {
             commands::edit::is_tailwind_active,
             commands::projects::get_terminal_state,
             commands::projects::set_terminal_state,
+            commands::projects::move_project_to_account,
+            commands::projects::get_project_account_id,
             commands::projects::extract_template_zip,
             commands::projects::export_project_as_template,
             commands::projects::open_project_in_new_window,
@@ -455,6 +457,18 @@ pub fn run() {
             commands::settings::set_slack_cta_hidden,
             commands::settings::get_terminal_gpu_enabled,
             commands::settings::set_terminal_gpu_enabled,
+            // Accounts (Workspaces)
+            commands::accounts::list_accounts,
+            commands::accounts::create_account,
+            commands::accounts::update_account,
+            commands::accounts::delete_account,
+            commands::accounts::get_active_account_id,
+            commands::accounts::set_active_account_id,
+            commands::accounts::get_account_credential_status,
+            commands::accounts::set_account_credential,
+            commands::accounts::clear_account_credential,
+            commands::accounts::get_active_account_env_vars,
+            commands::accounts::get_account_env_vars,
             // AI generation
             commands::ai::generate_pr_description,
             // Claude integration

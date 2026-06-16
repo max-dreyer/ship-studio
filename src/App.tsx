@@ -41,6 +41,7 @@ import { useNotifications } from './hooks/useNotifications';
 import { useProjectLifecycle } from './hooks/useProjectLifecycle';
 import { useAppSetup } from './hooks/useAppSetup';
 import { ProjectsView } from './components/dashboard/ProjectsView';
+import { AccountSelectScreen } from './components/accounts/AccountSelectScreen';
 import { WorkspaceView } from './components/workspace/WorkspaceView';
 import { WorkspaceSidebar } from './components/workspace/WorkspaceSidebar';
 import { useProjectRail } from './hooks/useProjectRail';
@@ -1059,9 +1060,9 @@ function AppContents({ initialProjectPath }: AppProps) {
       initDefaultAgent(defaultAgent);
       // Persist that setup is complete so future launches are fast
       await markSetupComplete();
-      // Refresh CLI states and go to projects directly (don't re-enter onboarding)
+      // Refresh CLI states and go to the workspace picker (don't re-enter onboarding)
       await refreshAllCliStatuses();
-      setView('projects');
+      setView('account-select');
     };
 
     return (
@@ -1072,6 +1073,32 @@ function AppContents({ initialProjectPath }: AppProps) {
         </div>
         {quitConfirmModal}
       </>
+    );
+  }
+
+  if (view === 'account-select') {
+    return (
+      <ToastContext.Provider value={toastsProps}>
+        <div className="app">
+          <AccountSelectScreen onContinue={() => setView('projects')} />
+        </div>
+        {toasts.length > 0 && (
+          <div className="toast-container">
+            {toasts.map((t) => (
+              <div key={t.id} className={`toast toast-${t.type}`}>
+                <span className="toast-icon">
+                  {t.type === 'success' ? <SuccessIcon size={16} /> : <InfoIcon size={16} />}
+                </span>
+                <span className="toast-message">{t.message}</span>
+                <button className="toast-close" onClick={() => dismissToast(t.id)}>
+                  <CloseIcon size={14} />
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+        {quitConfirmModal}
+      </ToastContext.Provider>
     );
   }
 
@@ -1105,6 +1132,7 @@ function AppContents({ initialProjectPath }: AppProps) {
               isRestartingDevServer={false}
               devServerRunning={false}
               isProjectDevServerRunning={isServerRunning}
+              onSwitchAccount={() => setView('account-select')}
             />
           )}
           <ProjectsView
@@ -1194,6 +1222,7 @@ function AppContents({ initialProjectPath }: AppProps) {
             isRestartingDevServer={false}
             devServerRunning={false}
             isProjectDevServerRunning={isServerRunning}
+            onSwitchAccount={() => setView('account-select')}
           />
           <div className="project-loading-body">
             {loadingSpinner}
@@ -1240,6 +1269,7 @@ function AppContents({ initialProjectPath }: AppProps) {
         onSelectProjectTab={handleSelectProjectTab}
         onGoHome={handleBackToProjects}
         onOpenProjectPicker={openProjectPicker}
+        onSwitchAccount={() => setView('account-select')}
         isProjectDevServerRunning={isServerRunning}
       />
       {quitConfirmModal}

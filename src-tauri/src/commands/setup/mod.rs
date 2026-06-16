@@ -85,13 +85,43 @@ const TOOL_ITEMS: &[&str] = &[
 /// Read the persisted app state
 pub fn read_app_state() -> AppState {
     let path = state::get_app_state_path();
-    if path.exists() {
-        std::fs::read_to_string(&path)
-            .ok()
-            .and_then(|s| serde_json::from_str(&s).ok())
-            .unwrap_or_default()
-    } else {
-        AppState::default()
+    if !path.exists() {
+        return AppState::default();
+    }
+
+    let raw = match std::fs::read_to_string(&path) {
+        Ok(s) => s,
+        Err(e) => {
+            tracing::error!("Failed to read app state file: {e}");
+            return AppState::default();
+        }
+    };
+
+    match serde_json::from_str::<AppState>(&raw) {
+        Ok(state) => state,
+        Err(e) => {
+            // Log the parse failure so it's visible in ~/Library/Logs/ShipStudio/
+            // rather than silently resetting all data (including saved Workspaces).
+            tracing::error!("Failed to parse app state — keeping defaults. Error: {e}. Raw: {raw}");
+            // Attempt a best-effort partial recovery: pull the accounts array out
+            // of the raw JSON even if other fields fail to parse. This prevents
+            // a one-time schema evolution from wiping all workspaces.
+            if let Ok(raw_value) = serde_json::from_str::<serde_json::Value>(&raw) {
+                let mut state = AppState::default();
+                if let Some(accounts_val) = raw_value.get("accounts") {
+                    if let Ok(accounts) =
+                        serde_json::from_value::<Vec<crate::types::Account>>(accounts_val.clone())
+                    {
+                        state.accounts = accounts;
+                    }
+                }
+                if let Some(id) = raw_value.get("activeAccountId").and_then(|v| v.as_str()) {
+                    state.active_account_id = Some(id.to_string());
+                }
+                return state;
+            }
+            AppState::default()
+        }
     }
 }
 

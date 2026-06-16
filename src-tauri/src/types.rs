@@ -230,6 +230,12 @@ pub struct ProjectMetadata {
     /// connects a store via the preview-pane setup flow.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub shopify_store: Option<String>,
+    /// ID of the Workspace (Account) this project belongs to — set the first
+    /// time the project is opened. `None` for projects opened before the
+    /// Workspace picker existed; these are treated as belonging to the
+    /// built-in "Default" account.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub account_id: Option<String>,
     /// Keys this app version doesn't know about, preserved verbatim across
     /// read-modify-write cycles — an older build must never silently drop
     /// fields written by a newer one.
@@ -261,6 +267,7 @@ impl Default for ProjectMetadata {
             workspace_subpath: None,
             assets_root: None,
             shopify_store: None,
+            account_id: None,
             extra: serde_json::Map::new(),
         }
     }
@@ -756,6 +763,44 @@ pub struct AppState {
     /// macOS beta / GPU-driver combinations).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub terminal_gpu_enabled: Option<bool>,
+    /// Workspaces (org/client accounts) with isolated Claude/GitHub config and credentials
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub accounts: Vec<Account>,
+    /// The currently active workspace/account ID for this session
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub active_account_id: Option<String>,
+}
+
+// ============ Accounts (Workspaces) ============
+
+/// A "Workspace" in the UI - an isolated org/client context with its own
+/// Claude Code login, GitHub CLI login, and credential vault.
+#[derive(Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct Account {
+    pub id: String,
+    pub name: String,
+    /// Hex color used for the avatar, e.g. "#6b7280"
+    pub color: String,
+    /// The built-in "Default" account - cannot be deleted
+    pub is_default: bool,
+    /// Unix ms timestamp of creation
+    pub created_at: u64,
+}
+
+/// Credential/auth status for an account's isolated config, used to populate
+/// the account settings modal without exposing secret values.
+#[derive(Serialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct AccountCredentialStatus {
+    pub claude_auth_email: Option<String>,
+    pub github_auth_email: Option<String>,
+    pub has_anthropic_base_url: bool,
+    pub has_vercel_token: bool,
+    pub has_figma_token: bool,
+    pub has_openai_api_key: bool,
+    pub has_git_name: bool,
+    pub has_git_email: bool,
 }
 
 // ============ Compact Mode ============

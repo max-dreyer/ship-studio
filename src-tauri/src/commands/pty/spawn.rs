@@ -63,6 +63,7 @@ pub async fn spawn_pty(
                 .args(&cmd_args)
                 .current_dir(&options.cwd)
                 .env("PATH", get_extended_path())
+                .envs(crate::commands::accounts::get_env_vars_for_active_account())
                 .stdout(Stdio::piped())
                 .stderr(Stdio::piped())
                 .spawn()

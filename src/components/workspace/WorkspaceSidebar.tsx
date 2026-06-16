@@ -17,6 +17,8 @@ import { useOpenPalette } from '../CommandPalette/paletteContext';
 import { ALL_AGENTS, TERMINAL, getAgentById, type AgentConfig } from '../../lib/agent';
 import type { TerminalTab } from '../../hooks/useTerminalManagement';
 import type { PinnedProjectRow } from '../../hooks/usePinnedProjects';
+import { useActiveAccount } from '../../hooks/useActiveAccount';
+import '../../styles/features/account-select.css';
 import {
   sessionRegistry,
   type SessionSnapshot,
@@ -106,6 +108,10 @@ interface Props {
    *  Used for background (non-current) project rows so their Commands section
    *  can reflect the live state. Evaluated on each render. */
   isProjectDevServerRunning?: (projectPath: string) => boolean;
+
+  /** Open the "Switch Workspace" picker. When omitted, the footer button
+   *  showing the active Workspace is not rendered. */
+  onSwitchAccount?: () => void;
 }
 
 const SECTION_STORAGE_KEY = 'ship-studio:workspace-sidebar:collapsed';
@@ -239,7 +245,9 @@ export const WorkspaceSidebar = memo(function WorkspaceSidebar({
   onRestartDevServer,
   devServerUrl,
   isProjectDevServerRunning,
+  onSwitchAccount,
 }: Props) {
+  const { activeAccount } = useActiveAccount(currentProjectPath);
   // Filter state retained as a constant — the sidebar used to own a
   // text-filter input, but the ⌘K palette now takes over search. The
   // filter helpers below all short-circuit when the string is empty,
@@ -557,29 +565,45 @@ export const WorkspaceSidebar = memo(function WorkspaceSidebar({
 
   return (
     <aside className="workspace-sidebar" aria-label="Processes">
-      <button
-        type="button"
-        className={`workspace-sidebar-home ${isHomeActive ? 'is-active' : ''}`}
-        onClick={onGoHome}
-        aria-current={isHomeActive ? 'page' : undefined}
-      >
-        <span className="workspace-sidebar-home-icon" aria-hidden="true">
-          <svg
-            width="12"
-            height="12"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="2"
-            strokeLinecap="round"
-            strokeLinejoin="round"
+      <div className="workspace-sidebar-top-row">
+        <button
+          type="button"
+          className={`workspace-sidebar-home ${isHomeActive ? 'is-active' : ''}`}
+          onClick={onGoHome}
+          aria-current={isHomeActive ? 'page' : undefined}
+        >
+          <span className="workspace-sidebar-home-icon" aria-hidden="true">
+            <svg
+              width="12"
+              height="12"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            >
+              <path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
+              <polyline points="9 22 9 12 15 12 15 22" />
+            </svg>
+          </span>
+          <span>Home</span>
+        </button>
+        {onSwitchAccount && activeAccount && (
+          <button
+            type="button"
+            className="workspace-sidebar-ws-btn"
+            onClick={onSwitchAccount}
+            title={`Switch Workspace (${activeAccount.name})`}
+            aria-label="Switch Workspace"
           >
-            <path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
-            <polyline points="9 22 9 12 15 12 15 22" />
-          </svg>
-        </span>
-        <span>Home</span>
-      </button>
+            <span
+              className="workspace-switch-account-dot"
+              style={{ background: activeAccount.color }}
+            />
+          </button>
+        )}
+      </div>
 
       <button
         type="button"
@@ -632,6 +656,20 @@ export const WorkspaceSidebar = memo(function WorkspaceSidebar({
           <span className="workspace-sidebar-add-icon">+</span>
           <span>Open project</span>
         </Button>
+        {onSwitchAccount && activeAccount && (
+          <button
+            type="button"
+            className="workspace-switch-account"
+            onClick={onSwitchAccount}
+            title="Switch Workspace"
+          >
+            <span
+              className="workspace-switch-account-dot"
+              style={{ background: activeAccount.color }}
+            />
+            <span className="workspace-switch-account-name">{activeAccount.name}</span>
+          </button>
+        )}
       </div>
     </aside>
   );

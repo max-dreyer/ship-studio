@@ -4,6 +4,7 @@
 //! last-opened timestamp, branch prefix preference, hide-main-branch-warning,
 //! auto-accept mode, and terminal tab state.
 
+use crate::commands::accounts::{get_active_account_id, DEFAULT_ACCOUNT_ID};
 use crate::errors::CommandError;
 use crate::types::{ProjectMetadata, TerminalState};
 use crate::utils::validate_project_path;
@@ -30,6 +31,14 @@ pub async fn mark_project_opened(project_path: String) -> Result<(), CommandErro
         .map(|d| d.as_millis() as u64)
         .unwrap_or(0);
     metadata.last_opened = Some(now);
+
+    // Stamp the project with the Workspace (Account) it was first opened in,
+    // so the dashboard can scope project visibility per Workspace.
+    if metadata.account_id.is_none() {
+        if let Ok(active_account_id) = crate::commands::accounts::get_active_account_id() {
+            metadata.account_id = Some(active_account_id);
+        }
+    }
 
     if !shipstudio_dir.exists() {
         std::fs::create_dir_all(&shipstudio_dir)
@@ -258,4 +267,72 @@ pub async fn set_terminal_state(
         .map_err(|e| format!("Failed to write project metadata: {e}"))?;
 
     Ok(())
+}
+
+/// Reassigns a project to a different Workspace (Account) by updating
+/// `account_id` in `.shipstudio/project.json`. The project folder is not
+/// moved on disk — only the metadata tag changes.
+///
+/// Passing `account_id = "default"` moves the project to the Default
+/// workspace; the stored value is set to `None` so that legacy projects
+/// (which have no `account_id`) remain naturally visible in Default.
+#[tauri::command]
+#[tracing::instrument(fields(project = %project_path, account = %account_id))]
+pub async fn move_project_to_account(
+    project_path: String,
+    account_id: String,
+) -> Result<(), CommandError> {
+    let project = validate_project_path(&project_path)?;
+    let shipstudio_dir = project.join(".shipstudio");
+    let metadata_path = shipstudio_dir.join("project.json");
+
+    let mut metadata = if metadata_path.exists() {
+        std::fs::read_to_string(&metadata_path)
+            .ok()
+            .and_then(|contents| serde_json::from_str::<ProjectMetadata>(&contents).ok())
+            .unwrap_or_default()
+    } else {
+        ProjectMetadata::default()
+    };
+
+    // Default workspace uses None so legacy projects remain visible there.
+    metadata.account_id = if account_id == DEFAULT_ACCOUNT_ID {
+        None
+    } else {
+        Some(account_id)
+    };
+
+    if !shipstudio_dir.exists() {
+        std::fs::create_dir_all(&shipstudio_dir)
+            .map_err(|e| format!("Failed to create .shipstudio directory: {e}"))?;
+    }
+
+    let contents = serde_json::to_string_pretty(&metadata)
+        .map_err(|e| format!("Failed to serialize project metadata: {e}"))?;
+    std::fs::write(&metadata_path, contents)
+        .map_err(|e| format!("Failed to write project metadata: {e}"))?;
+
+    Ok(())
+}
+
+/// Returns the Workspace (Account) id the current project belongs to.
+/// Falls back to the active account id if the project has no `account_id`.
+#[tauri::command]
+#[tracing::instrument(fields(project = %project_path))]
+pub async fn get_project_account_id(project_path: String) -> Result<String, CommandError> {
+    let project = validate_project_path(&project_path)?;
+    let metadata_path = project.join(".shipstudio").join("project.json");
+
+    if metadata_path.exists() {
+        if let Ok(contents) = std::fs::read_to_string(&metadata_path) {
+            if let Ok(metadata) = serde_json::from_str::<ProjectMetadata>(&contents) {
+                if let Some(id) = metadata.account_id {
+                    return Ok(id);
+                }
+            }
+        }
+    }
+
+    // No explicit account_id → belongs to Default
+    Ok(get_active_account_id().unwrap_or_else(|_| DEFAULT_ACCOUNT_ID.to_string()))
 }

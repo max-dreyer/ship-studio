@@ -26,15 +26,23 @@ export function useToast() {
 }
 
 /**
+ * Stable no-op fallback for `useOptionalToast` outside a provider. Must be a
+ * module-level singleton — a fresh object/function on every render would
+ * break referential equality for any `useCallback`/`useEffect` that depends
+ * on `showToast`, causing infinite re-render loops.
+ */
+const NOOP_TOAST = {
+  showToast: () => {
+    /* no provider in scope — silently drop */
+  },
+};
+
+/**
  * Optional variant for code paths that may render outside the provider (tests, isolated
  * stories). Returns a no-op `showToast` so call sites don't need to special-case absence.
  */
 export function useOptionalToast(): { showToast: (message: string, type?: ToastType) => void } {
   const ctx = useContext(ToastContext);
   if (ctx) return ctx;
-  return {
-    showToast: () => {
-      /* no provider in scope — silently drop */
-    },
-  };
+  return NOOP_TOAST;
 }

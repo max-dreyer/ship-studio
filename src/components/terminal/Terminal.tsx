@@ -552,6 +552,22 @@ export const Terminal = forwardRef<TerminalHandle, TerminalProps>(function Termi
             SHELL: '/bin/zsh',
           };
         }
+        // Inject per-workspace isolation vars (CLAUDE_CONFIG_DIR, GH_CONFIG_DIR,
+        // CODEX_HOME, XDG_DATA_HOME, credential tokens) for THIS project's
+        // workspace — not the globally active one — so each open project's agent
+        // uses its own Claude/GitHub auth. Falls back to the active account's
+        // env if the project's account can't be resolved.
+        const accountEnv = await invoke<string>('get_project_account_id', {
+          projectPath,
+        })
+          .then((accountId) =>
+            invoke<Record<string, string>>('get_account_env_vars', { accountId })
+          )
+          .catch(() =>
+            invoke<Record<string, string>>('get_active_account_env_vars').catch(() => ({}))
+          );
+        Object.assign(env, accountEnv);
+
         // The PTY merges this env over the app's own, so npm/pnpm "invocation
         // directory" vars leak through when Ship Studio runs under `pnpm tauri
         // dev`. Tools the agent runs (e.g. `shopify theme dev`) trust INIT_CWD

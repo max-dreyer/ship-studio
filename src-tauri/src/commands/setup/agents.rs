@@ -4,6 +4,7 @@
 //! installed/auth status, signing out, uninstalling.
 
 use crate::agent::{get_agent_by_id, ALL_AGENTS};
+use crate::commands::accounts::{agent_auth_dir, get_active_account_id};
 use crate::commands::claude::find_binary_by_name;
 use crate::errors::CommandError;
 use crate::utils::create_command;
@@ -32,6 +33,7 @@ pub async fn get_agents_status() -> Vec<AgentStatus> {
     let default_id = super::read_app_state()
         .default_agent_id
         .unwrap_or_else(|| "claude-code".to_string());
+    let active_account_id = get_active_account_id().unwrap_or_else(|_| "default".to_string());
 
     ALL_AGENTS
         .iter()
@@ -55,14 +57,12 @@ pub async fn get_agents_status() -> Vec<AgentStatus> {
 
             let authed = if !installed {
                 false
-            } else if let Some(home) = dirs::home_dir() {
-                let dir = home.join(agent.auth_config_dir);
+            } else {
+                let dir = agent_auth_dir(&active_account_id, agent);
                 agent
                     .auth_indicators
                     .iter()
                     .any(|indicator| dir.join(indicator).exists())
-            } else {
-                false
             };
 
             #[cfg(windows)]
@@ -102,8 +102,8 @@ pub async fn sign_out_agent(agent_id: String) -> Result<(), CommandError> {
         return Err((format!("Unknown agent: {agent_id}")).into());
     }
 
-    let home = dirs::home_dir().ok_or("Could not resolve home directory")?;
-    let dir = home.join(agent.auth_config_dir);
+    let active_account_id = get_active_account_id().unwrap_or_else(|_| "default".to_string());
+    let dir = agent_auth_dir(&active_account_id, agent);
 
     if !dir.exists() {
         // Already signed out

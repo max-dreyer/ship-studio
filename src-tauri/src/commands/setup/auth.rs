@@ -5,6 +5,9 @@
 
 use super::{is_mock_installed, is_mock_mode, mock_install, AUTH_PIDS};
 use crate::agent::{get_active_agent, get_agent_by_id};
+use crate::commands::accounts::{
+    agent_auth_dir, get_active_account_id, get_env_vars_for_active_account,
+};
 use crate::commands::claude::find_binary_by_name;
 use crate::errors::CommandError;
 use crate::utils::{create_command, find_executable};
@@ -39,6 +42,7 @@ pub async fn start_github_auth(app: tauri::AppHandle) -> Result<String, CommandE
             "https",
             "--clipboard",
         ])
+        .envs(get_env_vars_for_active_account())
         .spawn()
         .map_err(|e| format!("Failed to start GitHub auth: {e}"))?;
 
@@ -90,6 +94,7 @@ pub async fn start_claude_auth(
 
     let child = create_command(&agent_path)
         .args(agent.auth_trigger_args)
+        .envs(get_env_vars_for_active_account())
         .spawn()
         .map_err(|e| format!("Failed to start {} auth: {}", agent.display_name, e))?;
 
@@ -131,15 +136,12 @@ pub async fn check_claude_auth_status(agent_id: Option<String>) -> bool {
         return false;
     }
 
-    if let Some(home) = dirs::home_dir() {
-        let agent_dir = home.join(agent.auth_config_dir);
-        return agent.auth_indicators.iter().any(|indicator| {
-            let path = agent_dir.join(indicator);
-            path.exists()
-        });
-    }
-
-    false
+    let active_account_id = get_active_account_id().unwrap_or_else(|_| "default".to_string());
+    let agent_dir = agent_auth_dir(&active_account_id, agent);
+    agent.auth_indicators.iter().any(|indicator| {
+        let path = agent_dir.join(indicator);
+        path.exists()
+    })
 }
 
 /// Kill all tracked auth processes (synchronous helper).

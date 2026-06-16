@@ -88,6 +88,7 @@ pub async fn generate_pr_description(
     let mut cmd = create_command(&agent_path);
     cmd.args(&args)
         .env("PATH", get_extended_path())
+        .envs(crate::commands::accounts::get_env_vars_for_active_account())
         .current_dir(&validated_path);
     let tokio_cmd = tokio::process::Command::from(cmd);
     let output = run_with_timeout(

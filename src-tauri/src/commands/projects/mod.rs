@@ -110,6 +110,19 @@ fn is_valid_project(path: &std::path::Path) -> bool {
             || path.join(".git").exists())
 }
 
+/// Whether a project should be shown on the dashboard for the given active
+/// Workspace (Account). Projects opened before the Workspace picker existed
+/// have no `account_id` and are treated as belonging to the "Default" account.
+fn project_visible_for_account(
+    metadata: Option<&ProjectMetadata>,
+    active_account_id: &str,
+) -> bool {
+    match metadata.and_then(|m| m.account_id.as_deref()) {
+        Some(account_id) => account_id == active_account_id,
+        None => active_account_id == crate::commands::accounts::DEFAULT_ACCOUNT_ID,
+    }
+}
+
 // ============ Tauri Commands ============
 
 #[tauri::command]
@@ -117,6 +130,7 @@ fn is_valid_project(path: &std::path::Path) -> bool {
 pub async fn list_projects() -> Result<Vec<ProjectInfo>, CommandError> {
     let home = dirs::home_dir().ok_or("Could not find home directory")?;
     let shipstudio_dir = home.join("ShipStudio");
+    let active_account_id = crate::commands::accounts::get_active_account_id()?;
 
     if !shipstudio_dir.exists() {
         return Ok(Vec::new());
@@ -137,14 +151,19 @@ pub async fn list_projects() -> Result<Vec<ProjectInfo>, CommandError> {
             };
 
             let metadata_path = path.join(".shipstudio").join("project.json");
-            let last_opened = if metadata_path.exists() {
+            let metadata = if metadata_path.exists() {
                 std::fs::read_to_string(&metadata_path)
                     .ok()
                     .and_then(|contents| serde_json::from_str::<ProjectMetadata>(&contents).ok())
-                    .and_then(|m| m.last_opened)
             } else {
                 None
             };
+
+            if !project_visible_for_account(metadata.as_ref(), &active_account_id) {
+                continue;
+            }
+
+            let last_opened = metadata.as_ref().and_then(|m| m.last_opened);
 
             projects.push(ProjectInfo {
                 name: entry.file_name().to_string_lossy().to_string(),
@@ -173,16 +192,21 @@ pub async fn list_projects() -> Result<Vec<ProjectInfo>, CommandError> {
                 };
 
                 let metadata_path = ext_path.join(".shipstudio").join("project.json");
-                let last_opened = if metadata_path.exists() {
+                let metadata = if metadata_path.exists() {
                     std::fs::read_to_string(&metadata_path)
                         .ok()
                         .and_then(|contents| {
                             serde_json::from_str::<ProjectMetadata>(&contents).ok()
                         })
-                        .and_then(|m| m.last_opened)
                 } else {
                     None
                 };
+
+                if !project_visible_for_account(metadata.as_ref(), &active_account_id) {
+                    continue;
+                }
+
+                let last_opened = metadata.as_ref().and_then(|m| m.last_opened);
 
                 projects.push(ProjectInfo {
                     name,
@@ -210,6 +234,7 @@ pub async fn list_projects() -> Result<Vec<ProjectInfo>, CommandError> {
 pub async fn get_dashboard_projects() -> Result<Vec<DashboardProject>, CommandError> {
     let home = dirs::home_dir().ok_or("Could not find home directory")?;
     let shipstudio_dir = home.join("ShipStudio");
+    let active_account_id = crate::commands::accounts::get_active_account_id()?;
 
     if !shipstudio_dir.exists() {
         return Ok(Vec::new());
@@ -237,6 +262,11 @@ pub async fn get_dashboard_projects() -> Result<Vec<DashboardProject>, CommandEr
             } else {
                 None
             };
+
+            if !project_visible_for_account(metadata.as_ref(), &active_account_id) {
+                continue;
+            }
+
             let last_opened = metadata.as_ref().and_then(|m| m.last_opened);
             let auto_accept_mode = metadata.as_ref().and_then(|m| m.auto_accept_mode);
             let hide_main_branch_warning =
@@ -292,6 +322,11 @@ pub async fn get_dashboard_projects() -> Result<Vec<DashboardProject>, CommandEr
                 } else {
                     None
                 };
+
+                if !project_visible_for_account(metadata.as_ref(), &active_account_id) {
+                    continue;
+                }
+
                 let last_opened = metadata.as_ref().and_then(|m| m.last_opened);
                 let auto_accept_mode = metadata.as_ref().and_then(|m| m.auto_accept_mode);
                 let hide_main_branch_warning =

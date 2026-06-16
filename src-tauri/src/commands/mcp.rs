@@ -240,7 +240,8 @@ pub async fn list_mcp_servers(
         get_cmd
             .args(["mcp", "get", &server.name])
             .env("PATH", get_extended_path())
-            .env("HOME", &home);
+            .env("HOME", &home)
+            .envs(crate::commands::accounts::get_env_vars_for_active_account());
 
         if agent.id == "claude-code" {
             get_cmd.env_remove("CLAUDECODE");

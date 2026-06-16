@@ -78,6 +78,7 @@ pub async fn create_pull_request(
     // Push the branch to the remote first (gh pr create requires this)
     let push_output = create_command("git")
         .args(["push", "-u", "origin", "HEAD"])
+        .envs(crate::commands::accounts::get_env_vars_for_active_account())
         .current_dir(&validated_path)
         .output()
         .map_err(|e| format!("Failed to push branch: {e}"))?;

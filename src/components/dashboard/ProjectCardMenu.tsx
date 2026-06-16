@@ -17,6 +17,7 @@ import {
   CloseIcon,
   ImageIcon,
   EditIcon,
+  LayersIcon,
 } from '../icons';
 import { Dropdown, DropdownItem, DropdownDivider } from '../primitives/Dropdown';
 
@@ -30,6 +31,8 @@ interface ProjectCardMenuProps {
   onRename?: () => void;
   /** Callback to move project to a folder */
   onMoveToFolder?: () => void;
+  /** Callback to move project to a different workspace */
+  onMoveToWorkspace?: () => void;
   /** Callback to export project as a template zip */
   onExportAsTemplate?: () => void;
   /** Callback to upload a custom thumbnail image. When set, shows the
@@ -53,6 +56,7 @@ export function ProjectCardMenu({
   onToggleMainBranchWarning,
   onRename,
   onMoveToFolder,
+  onMoveToWorkspace,
   onExportAsTemplate,
   onUploadThumbnail,
   onDelete,
@@ -93,6 +97,11 @@ export function ProjectCardMenu({
         {onMoveToFolder && (
           <DropdownItem icon={<FolderIcon size={14} />} onSelect={onMoveToFolder}>
             <span>Move to folder</span>
+          </DropdownItem>
+        )}
+        {onMoveToWorkspace && (
+          <DropdownItem icon={<LayersIcon size={14} />} onSelect={onMoveToWorkspace}>
+            <span>Move to workspace</span>
           </DropdownItem>
         )}
         {onExportAsTemplate && (

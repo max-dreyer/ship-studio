@@ -130,13 +130,13 @@ pub fn list_claude_skills(
         .map(crate::agent::get_agent_by_id)
         .unwrap_or_else(crate::agent::get_active_agent);
 
-    let Some(home) = dirs::home_dir() else {
-        return all_skills;
-    };
+    let active_account_id = crate::commands::accounts::get_active_account_id()
+        .unwrap_or_else(|_| "default".to_string());
+    let agent_config_dir = crate::commands::accounts::agent_auth_dir(&active_account_id, agent);
 
     // 1. Check ~/{auth_config_dir}/skills/ for skills installed via skills CLI (user scope)
     let skills_dir_name = agent.skills_dir_name.unwrap_or("skills");
-    let skills_dir = home.join(agent.auth_config_dir).join(skills_dir_name);
+    let skills_dir = agent_config_dir.join(skills_dir_name);
     if skills_dir.exists() && skills_dir.is_dir() {
         if let Ok(entries) = fs::read_dir(&skills_dir) {
             for entry in entries.flatten() {
@@ -200,8 +200,7 @@ pub fn list_claude_skills(
     }
 
     // 3. Check installed_plugins.json for legacy plugin-based skills
-    let plugins_json = home
-        .join(agent.auth_config_dir)
+    let plugins_json = agent_config_dir
         .join("plugins")
         .join("installed_plugins.json");
 

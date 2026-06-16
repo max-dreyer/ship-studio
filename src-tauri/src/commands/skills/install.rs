@@ -40,6 +40,7 @@ pub async fn install_skill(
     ])
     .env("PATH", get_extended_path())
     .env("HOME", &home)
+    .envs(crate::commands::accounts::get_env_vars_for_active_account())
     .env_remove("npm_config__jsr-registry")
     .env_remove("npm_config_npm-globalconfig")
     .env_remove("npm_config_verify-deps-before-run");
@@ -108,6 +109,7 @@ pub async fn remove_skill(
     ])
     .env("PATH", get_extended_path())
     .env("HOME", &home)
+    .envs(crate::commands::accounts::get_env_vars_for_active_account())
     .env_remove("npm_config__jsr-registry")
     .env_remove("npm_config_npm-globalconfig")
     .env_remove("npm_config_verify-deps-before-run");

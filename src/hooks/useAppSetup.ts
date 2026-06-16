@@ -83,15 +83,20 @@ export function useAppSetup({
       const defaultAgent = await fetchDefaultAgentId();
       initDefaultAgent(defaultAgent);
 
+      // Secondary project windows (multi-window) already have an active
+      // account from the main window and should skip the picker entirely
+      // so the auto-open effect can take over once view reaches 'projects'.
+      const postSetupView: AppView = initialProjectPath ? 'projects' : 'account-select';
+
       // Fast path: if setup was previously completed, try quick check first
       if (!forceFullCheck) {
         const quickCheck = await quickSetupCheck();
         if (quickCheck.setupCompleteCached && quickCheck.allPresent) {
           // Setup was completed before and all binaries still exist
-          // Show projects immediately, verify auth in background
+          // Show projects/account picker immediately, verify auth in background
           // Use functional update to avoid overwriting HMR recovery's 'workspace' view
           setView((currentView) =>
-            currentView === 'loading' || currentView === 'onboarding' ? 'projects' : currentView
+            currentView === 'loading' || currentView === 'onboarding' ? postSetupView : currentView
           );
           void verifySetupInBackground();
           return;
@@ -111,7 +116,7 @@ export function useAppSetup({
         void markSetupComplete();
         // Use functional update to avoid overwriting HMR recovery's 'workspace' view
         setView((currentView) =>
-          currentView === 'loading' || currentView === 'onboarding' ? 'projects' : currentView
+          currentView === 'loading' || currentView === 'onboarding' ? postSetupView : currentView
         );
       } else {
         setView('onboarding');

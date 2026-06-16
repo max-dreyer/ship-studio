@@ -38,6 +38,34 @@
   padding-top: 32px;
 }
 
+/* Top row — wraps the Home button and workspace switcher dot side-by-side.
+ * The row owns the border-bottom so neither child duplicates it. */
+.workspace-sidebar-top-row {
+  display: flex;
+  align-items: stretch;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+/* Workspace indicator dot button — sits at the right edge of the Home row.
+ * Clicking it opens the workspace picker. */
+.workspace-sidebar-ws-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  flex-shrink: 0;
+  border: none;
+  border-left: 1px solid var(--border);
+  background: var(--bg-secondary);
+  cursor: pointer;
+  transition: background var(--transition-fast);
+}
+
+.workspace-sidebar-ws-btn:hover {
+  background: var(--bg-tertiary);
+}
+
 /* Home row — height matches the editor's primary action toolbar so the
  * sidebar's top band lines up with the Learn Mode / workspace header row. */
 .workspace-sidebar-home {
@@ -48,14 +76,14 @@
   padding: 0 var(--spacing-md);
   background: var(--bg-secondary);
   border: none;
-  border-bottom: 1px solid var(--border);
+  border-bottom: none;
   color: var(--text-primary);
   cursor: pointer;
   font: inherit;
   font-size: var(--font-size-base);
   font-weight: 600;
   text-align: left;
-  flex-shrink: 0;
+  flex: 1;
   border-left: 2px solid transparent;
   transition: background var(--transition-fast);
 }

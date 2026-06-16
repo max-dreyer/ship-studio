@@ -29,6 +29,8 @@ interface ProjectCardProps {
   onRename?: () => void;
   /** Callback to move project to a folder */
   onMoveToFolder?: () => void;
+  /** Callback to move project to a different workspace */
+  onMoveToWorkspace?: () => void;
   /** Callback to export project as a template zip */
   onExportAsTemplate?: () => void;
   /** Callback to upload a custom thumbnail. Parent owns the file picker. */
@@ -51,6 +53,7 @@ export const ProjectCard = memo(function ProjectCard({
   onToggleMainBranchWarning,
   onRename,
   onMoveToFolder,
+  onMoveToWorkspace,
   onExportAsTemplate,
   onUploadThumbnail,
   isExternal,
@@ -111,6 +114,7 @@ export const ProjectCard = memo(function ProjectCard({
           onToggleMainBranchWarning={onToggleMainBranchWarning}
           onRename={onRename}
           onMoveToFolder={onMoveToFolder}
+          onMoveToWorkspace={onMoveToWorkspace}
           onExportAsTemplate={onExportAsTemplate}
           onUploadThumbnail={onUploadThumbnail}
           onDelete={onDelete}

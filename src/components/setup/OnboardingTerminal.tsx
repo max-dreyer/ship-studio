@@ -222,6 +222,14 @@ export function OnboardingTerminal({ command, args, cwd, onExit }: OnboardingTer
           const systemPaths = '/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin';
           const fullPath = `${userPaths.join(':')}:${systemPaths}`;
 
+          // Fetch per-workspace env vars (CLAUDE_CONFIG_DIR, CODEX_HOME,
+          // XDG_DATA_HOME, GH_CONFIG_DIR, tokens, etc.) so that auth commands
+          // run in this terminal write credentials to the active workspace's
+          // isolated config dir, not the global ~/.claude / ~/.codex / etc.
+          const accountEnv = await invoke<Record<string, string>>(
+            'get_active_account_env_vars'
+          ).catch(() => ({}));
+
           env = {
             PATH: fullPath,
             HOME: homeNormalized.slice(0, -1),
@@ -229,6 +237,7 @@ export function OnboardingTerminal({ command, args, cwd, onExit }: OnboardingTer
             TERM: 'xterm-256color',
             LANG: 'en_US.UTF-8',
             SHELL: '/bin/zsh',
+            ...accountEnv,
           };
 
           spawnCmd = command;
