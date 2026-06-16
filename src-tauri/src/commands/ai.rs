@@ -76,7 +76,12 @@ pub async fn generate_pr_description(
     let mut cmd = create_command(&agent_path);
     cmd.args(&args)
         .env("PATH", get_extended_path())
-        .envs(crate::commands::accounts::get_env_vars_for_active_account())
+        // Use the project's workspace creds (Anthropic base URL / API key), not
+        // whichever workspace is globally active, so AI generation for a
+        // project bills/authenticates against that project's workspace.
+        .envs(crate::commands::accounts::get_env_vars_for_project(
+            &validated_path,
+        ))
         .current_dir(&validated_path);
     let tokio_cmd = tokio::process::Command::from(cmd);
     let output = run_with_timeout(

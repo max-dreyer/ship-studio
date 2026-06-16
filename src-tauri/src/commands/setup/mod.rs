@@ -138,7 +138,17 @@ pub fn write_app_state(state: &AppState) -> Result<(), String> {
     let json = serde_json::to_string_pretty(state)
         .map_err(|e| format!("Failed to serialize app state: {e}"))?;
 
-    std::fs::write(&path, json).map_err(|e| format!("Failed to write app state: {e}"))
+    // Atomic write: write to a temp file in the same directory, then rename over
+    // the real file. `rename` is atomic on the same filesystem, so a reader can
+    // never observe a half-written file and — critically — if the process is
+    // killed mid-write (e.g. a dev-server relaunch, a crash, or the OS), the
+    // real `app_state.json` is left intact rather than truncated. A truncated
+    // state file is unparseable and silently resets to defaults, which is how a
+    // freshly-created Workspace could vanish on the next launch.
+    let tmp_path = path.with_extension("json.tmp");
+    std::fs::write(&tmp_path, &json)
+        .map_err(|e| format!("Failed to write app state temp file: {e}"))?;
+    std::fs::rename(&tmp_path, &path).map_err(|e| format!("Failed to persist app state: {e}"))
 }
 
 // ============ Mock Mode ============

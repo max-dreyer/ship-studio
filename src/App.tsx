@@ -1060,9 +1060,12 @@ function AppContents({ initialProjectPath }: AppProps) {
       initDefaultAgent(defaultAgent);
       // Persist that setup is complete so future launches are fast
       await markSetupComplete();
-      // Refresh CLI states and go to the workspace picker (don't re-enter onboarding)
+      // Refresh CLI states and go straight to projects (don't re-enter
+      // onboarding). A first-time user only has the Default workspace, so the
+      // picker would just be a dead-end click — it's reachable later via
+      // "Switch Workspace" once they actually create a second workspace.
       await refreshAllCliStatuses();
-      setView('account-select');
+      setView('projects');
     };
 
     return (

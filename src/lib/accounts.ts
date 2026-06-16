@@ -91,20 +91,37 @@ export const ACCOUNT_COLORS = [
   '#06b6d4', // cyan
 ];
 
+/**
+ * Event fired on the window whenever the set of Workspaces (or the active one)
+ * changes — create / update / delete / switch. `useActiveAccount` listens for
+ * it so every workspace indicator (sidebar footer button, ⌘K command, etc.)
+ * refreshes live instead of going stale until the next remount.
+ */
+export const ACCOUNTS_CHANGED_EVENT = 'shipstudio:accounts-changed';
+
+function notifyAccountsChanged(): void {
+  window.dispatchEvent(new Event(ACCOUNTS_CHANGED_EVENT));
+}
+
 export async function listAccounts(): Promise<Account[]> {
   return invoke<Account[]>('list_accounts');
 }
 
 export async function createAccount(name: string, color: string): Promise<Account> {
-  return invoke<Account>('create_account', { name, color });
+  const account = await invoke<Account>('create_account', { name, color });
+  notifyAccountsChanged();
+  return account;
 }
 
 export async function updateAccount(id: string, name: string, color: string): Promise<Account> {
-  return invoke<Account>('update_account', { id, name, color });
+  const account = await invoke<Account>('update_account', { id, name, color });
+  notifyAccountsChanged();
+  return account;
 }
 
 export async function deleteAccount(id: string): Promise<void> {
-  return invoke('delete_account', { id });
+  await invoke('delete_account', { id });
+  notifyAccountsChanged();
 }
 
 export async function getActiveAccountId(): Promise<string> {
@@ -112,7 +129,8 @@ export async function getActiveAccountId(): Promise<string> {
 }
 
 export async function setActiveAccountId(id: string): Promise<void> {
-  return invoke('set_active_account_id', { id });
+  await invoke('set_active_account_id', { id });
+  notifyAccountsChanged();
 }
 
 export async function getAccountCredentialStatus(id: string): Promise<AccountCredentialStatus> {

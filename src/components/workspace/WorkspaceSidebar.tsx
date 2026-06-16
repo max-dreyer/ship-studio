@@ -18,6 +18,7 @@ import { ALL_AGENTS, TERMINAL, getAgentById, type AgentConfig } from '../../lib/
 import type { TerminalTab } from '../../hooks/useTerminalManagement';
 import type { PinnedProjectRow } from '../../hooks/usePinnedProjects';
 import { useActiveAccount } from '../../hooks/useActiveAccount';
+import { useCommands } from '../../commands/useCommands';
 import '../../styles/features/account-select.css';
 import {
   sessionRegistry,
@@ -247,7 +248,30 @@ export const WorkspaceSidebar = memo(function WorkspaceSidebar({
   isProjectDevServerRunning,
   onSwitchAccount,
 }: Props) {
-  const { activeAccount } = useActiveAccount(currentProjectPath);
+  const { activeAccount, accounts } = useActiveAccount(currentProjectPath);
+  // The Workspaces feature is invisible until you actually have more than one.
+  // For the ~80% single-workspace users the footer switcher stays hidden; the
+  // picker is still reachable any time via the ⌘K command below.
+  const hasMultipleWorkspaces = accounts.length > 1;
+
+  // Keep the workspace picker discoverable from the palette even when the
+  // footer switcher is hidden (single-workspace case) — otherwise a user with
+  // one workspace would have no way to ever create a second.
+  useCommands(
+    () =>
+      onSwitchAccount
+        ? [
+            {
+              id: 'workspace.switch',
+              title: hasMultipleWorkspaces ? 'Switch workspace…' : 'New workspace…',
+              category: 'action' as const,
+              keywords: ['workspace', 'account', 'switch', 'new workspace', 'profile', 'org'],
+              run: () => onSwitchAccount(),
+            },
+          ]
+        : [],
+    [onSwitchAccount, hasMultipleWorkspaces]
+  );
   // Filter state retained as a constant — the sidebar used to own a
   // text-filter input, but the ⌘K palette now takes over search. The
   // filter helpers below all short-circuit when the string is empty,
@@ -589,20 +613,6 @@ export const WorkspaceSidebar = memo(function WorkspaceSidebar({
           </span>
           <span>Home</span>
         </button>
-        {onSwitchAccount && activeAccount && (
-          <button
-            type="button"
-            className="workspace-sidebar-ws-btn"
-            onClick={onSwitchAccount}
-            title={`Switch Workspace (${activeAccount.name})`}
-            aria-label="Switch Workspace"
-          >
-            <span
-              className="workspace-switch-account-dot"
-              style={{ background: activeAccount.color }}
-            />
-          </button>
-        )}
       </div>
 
       <button
@@ -656,19 +666,23 @@ export const WorkspaceSidebar = memo(function WorkspaceSidebar({
           <span className="workspace-sidebar-add-icon">+</span>
           <span>Open project</span>
         </Button>
-        {onSwitchAccount && activeAccount && (
-          <button
-            type="button"
-            className="workspace-switch-account"
-            onClick={onSwitchAccount}
-            title="Switch Workspace"
-          >
-            <span
-              className="workspace-switch-account-dot"
-              style={{ background: activeAccount.color }}
-            />
-            <span className="workspace-switch-account-name">{activeAccount.name}</span>
-          </button>
+        {onSwitchAccount && activeAccount && hasMultipleWorkspaces && (
+          <>
+            <div className="workspace-sidebar-footer-divider" />
+            <Button
+              variant="ghost"
+              block
+              className="workspace-sidebar-ws-switch"
+              onClick={onSwitchAccount}
+              title={`Switch workspace (${activeAccount.name})`}
+            >
+              <span
+                className="workspace-switch-account-dot"
+                style={{ background: activeAccount.color }}
+              />
+              <span className="workspace-switch-account-name">{activeAccount.name}</span>
+            </Button>
+          </>
         )}
       </div>
     </aside>

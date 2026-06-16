@@ -83,10 +83,13 @@ export function useAppSetup({
       const defaultAgent = await fetchDefaultAgentId();
       initDefaultAgent(defaultAgent);
 
-      // Secondary project windows (multi-window) already have an active
-      // account from the main window and should skip the picker entirely
-      // so the auto-open effect can take over once view reaches 'projects'.
-      const postSetupView: AppView = initialProjectPath ? 'projects' : 'account-select';
+      // Always boot straight into the projects view — and, because the active
+      // account is persisted, into the user's last-used workspace. The picker
+      // is never forced at startup; it's reachable on demand via "Switch
+      // Workspace". This keeps launch identical to the pre-Workspaces flow for
+      // the ~80% of users who only ever have the Default workspace, and gives
+      // multi-workspace users Slack-style "open where you left off" behavior.
+      const postSetupView: AppView = 'projects';
 
       // Fast path: if setup was previously completed, try quick check first
       if (!forceFullCheck) {

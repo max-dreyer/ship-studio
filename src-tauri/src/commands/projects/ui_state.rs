@@ -315,24 +315,30 @@ pub async fn move_project_to_account(
     Ok(())
 }
 
+/// Synchronous resolver for the Workspace (Account) id a project belongs to:
+/// reads `.shipstudio/project.json`'s `account_id`, falling back to the active
+/// account when the project isn't tagged. Shared by the async command below and
+/// by env-injection call sites (terminal spawn, git push, PR create, AI gen)
+/// that need it off the async path so they inherit the *project's* workspace
+/// credentials rather than whichever workspace is globally active.
+pub fn project_account_id_sync(project_path: &std::path::Path) -> String {
+    let metadata_path = project_path.join(".shipstudio").join("project.json");
+    if let Ok(contents) = std::fs::read_to_string(&metadata_path) {
+        if let Ok(metadata) = serde_json::from_str::<ProjectMetadata>(&contents) {
+            if let Some(id) = metadata.account_id {
+                return id;
+            }
+        }
+    }
+    // No explicit account_id → belongs to Default (the active account).
+    get_active_account_id().unwrap_or_else(|_| DEFAULT_ACCOUNT_ID.to_string())
+}
+
 /// Returns the Workspace (Account) id the current project belongs to.
 /// Falls back to the active account id if the project has no `account_id`.
 #[tauri::command]
 #[tracing::instrument(fields(project = %project_path))]
 pub async fn get_project_account_id(project_path: String) -> Result<String, CommandError> {
     let project = validate_project_path(&project_path)?;
-    let metadata_path = project.join(".shipstudio").join("project.json");
-
-    if metadata_path.exists() {
-        if let Ok(contents) = std::fs::read_to_string(&metadata_path) {
-            if let Ok(metadata) = serde_json::from_str::<ProjectMetadata>(&contents) {
-                if let Some(id) = metadata.account_id {
-                    return Ok(id);
-                }
-            }
-        }
-    }
-
-    // No explicit account_id → belongs to Default
-    Ok(get_active_account_id().unwrap_or_else(|_| DEFAULT_ACCOUNT_ID.to_string()))
+    Ok(project_account_id_sync(&project))
 }

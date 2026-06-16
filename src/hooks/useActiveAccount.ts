@@ -14,15 +14,18 @@ import {
   listAccounts,
   getActiveAccountId,
   getProjectAccountId,
+  ACCOUNTS_CHANGED_EVENT,
   type Account,
 } from '../lib/accounts';
 
 export function useActiveAccount(projectPath?: string | null) {
   const [activeAccount, setActiveAccount] = useState<Account | null>(null);
+  const [accounts, setAccounts] = useState<Account[]>([]);
 
   const refresh = useCallback(async () => {
     try {
-      const accounts = await listAccounts();
+      const all = await listAccounts();
+      setAccounts(all);
       // Prefer the open project's workspace; fall back to the active account.
       let accountId: string | null = null;
       if (projectPath) {
@@ -31,16 +34,23 @@ export function useActiveAccount(projectPath?: string | null) {
       if (!accountId) {
         accountId = await getActiveAccountId();
       }
-      setActiveAccount(accounts.find((a) => a.id === accountId) ?? accounts[0] ?? null);
+      setActiveAccount(all.find((a) => a.id === accountId) ?? all[0] ?? null);
     } catch {
       setActiveAccount(null);
+      setAccounts([]);
     }
   }, [projectPath]);
 
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect -- intentional: fetch the workspace on mount / when projectPath changes
     void refresh();
+    // Re-fetch whenever a workspace is created/renamed/deleted/switched so the
+    // indicator never goes stale (e.g. the footer switcher appearing the moment
+    // a second workspace exists).
+    const onAccountsChanged = () => void refresh();
+    window.addEventListener(ACCOUNTS_CHANGED_EVENT, onAccountsChanged);
+    return () => window.removeEventListener(ACCOUNTS_CHANGED_EVENT, onAccountsChanged);
   }, [refresh]);
 
-  return { activeAccount, refresh };
+  return { activeAccount, accounts, refresh };
 }

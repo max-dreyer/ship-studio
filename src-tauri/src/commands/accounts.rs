@@ -252,6 +252,18 @@ pub fn get_env_vars_for_active_account() -> HashMap<String, String> {
     get_env_vars_for_account(&account_id)
 }
 
+/// Env vars for the account a *project* belongs to — its tagged workspace,
+/// falling back to the active account when the project is untagged. Operations
+/// that act on a specific project (terminal spawn, git push, PR create, AI
+/// generation) use this instead of `get_env_vars_for_active_account` so they
+/// inherit the project's workspace credentials rather than whichever workspace
+/// happens to be globally active — letting you work two projects in two
+/// different workspaces at once without their logins crossing.
+pub fn get_env_vars_for_project(project_path: &std::path::Path) -> HashMap<String, String> {
+    let account_id = crate::commands::projects::project_account_id_sync(project_path);
+    get_env_vars_for_account(&account_id)
+}
+
 /// Returns env vars to inject for a specific account: isolated Claude/GitHub
 /// config dirs, plus any credentials stored in the keychain for that account.
 pub fn get_env_vars_for_account(account_id: &str) -> HashMap<String, String> {

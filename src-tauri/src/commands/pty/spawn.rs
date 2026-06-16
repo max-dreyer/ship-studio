@@ -63,7 +63,17 @@ pub async fn spawn_pty(
                 .args(&cmd_args)
                 .current_dir(&options.cwd)
                 .env("PATH", get_extended_path())
-                .envs(crate::commands::accounts::get_env_vars_for_active_account())
+                // Inject the *project's* workspace env (its Claude/GitHub/Codex
+                // config dirs + credentials), falling back to the active
+                // workspace when this PTY isn't tied to a project. This keeps a
+                // terminal opened in a Beta-workspace project on Beta's logins
+                // even if the globally-active workspace is Acme.
+                .envs(match project_path.as_deref() {
+                    Some(p) => {
+                        crate::commands::accounts::get_env_vars_for_project(std::path::Path::new(p))
+                    }
+                    None => crate::commands::accounts::get_env_vars_for_active_account(),
+                })
                 .stdout(Stdio::piped())
                 .stderr(Stdio::piped())
                 .spawn()

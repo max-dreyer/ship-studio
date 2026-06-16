@@ -47,25 +47,6 @@
   flex-shrink: 0;
 }
 
-/* Workspace indicator dot button — sits at the right edge of the Home row.
- * Clicking it opens the workspace picker. */
-.workspace-sidebar-ws-btn {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 36px;
-  flex-shrink: 0;
-  border: none;
-  border-left: 1px solid var(--border);
-  background: var(--bg-secondary);
-  cursor: pointer;
-  transition: background var(--transition-fast);
-}
-
-.workspace-sidebar-ws-btn:hover {
-  background: var(--bg-tertiary);
-}
-
 /* Home row — height matches the editor's primary action toolbar so the
  * sidebar's top band lines up with the Learn Mode / workspace header row. */
 .workspace-sidebar-home {
@@ -873,6 +854,20 @@
 .workspace-sidebar-add-project {
   height: 44px;
   font-size: var(--font-size-base);
+}
+
+/* Workspace switcher — same full-bleed ghost button as "Open project",
+ * stacked directly below it (separated by a hairline). Only rendered when
+ * the user has 2+ workspaces; shows the active workspace's color + name. */
+.workspace-sidebar-footer-divider {
+  height: 1px;
+  background: var(--border);
+}
+
+.workspace-sidebar-ws-switch {
+  height: 44px;
+  font-size: var(--font-size-base);
+  gap: var(--spacing-sm);
 }
 
 .workspace-sidebar-add-icon {

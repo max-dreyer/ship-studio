@@ -41,7 +41,10 @@ async fn run_command_with_timeout(
     run_with_timeout(tokio_cmd, "gh", timeout_secs).await
 }
 
-/// Returns a Command for gh with extended PATH set
+/// Returns a Command for gh with extended PATH set, scoped to the globally
+/// active workspace. Use this for gh operations with no project context
+/// (e.g. `gh auth status`). For operations that act on a specific project,
+/// prefer [`get_gh_command_for_project`] so the project's workspace auth is used.
 pub fn get_gh_command() -> Command {
     let mut cmd = if let Some(path) = find_executable("gh") {
         create_command(path)
@@ -50,6 +53,24 @@ pub fn get_gh_command() -> Command {
     };
     cmd.env("PATH", get_extended_path());
     cmd.envs(crate::commands::accounts::get_env_vars_for_active_account());
+    cmd
+}
+
+/// Like [`get_gh_command`], but scoped to the workspace the given project
+/// belongs to (falling back to the active workspace when untagged). This is how
+/// `gh pr create/list/merge/...` use the *project's* GitHub login rather than
+/// whichever workspace is globally active — so a PR opened from a Beta-workspace
+/// project authenticates as Beta even while Acme is the active workspace.
+pub fn get_gh_command_for_project(project_path: &std::path::Path) -> Command {
+    let mut cmd = if let Some(path) = find_executable("gh") {
+        create_command(path)
+    } else {
+        create_command("gh")
+    };
+    cmd.env("PATH", get_extended_path());
+    cmd.envs(crate::commands::accounts::get_env_vars_for_project(
+        project_path,
+    ));
     cmd
 }
 
