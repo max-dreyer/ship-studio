@@ -326,11 +326,20 @@ pub fn project_account_id_sync(project_path: &std::path::Path) -> String {
     if let Ok(contents) = std::fs::read_to_string(&metadata_path) {
         if let Ok(metadata) = serde_json::from_str::<ProjectMetadata>(&contents) {
             if let Some(id) = metadata.account_id {
-                return id;
+                // Only honor the tag if that workspace still exists. When a
+                // workspace is deleted, its projects keep a now-dangling
+                // account_id on disk; treating it as the active/Default account
+                // keeps the UI indicator and the injected credentials in sync
+                // (otherwise the sidebar shows "Default" while terminals quietly
+                // use the deleted workspace's orphaned config dir).
+                let state = crate::commands::setup::read_app_state();
+                if state.accounts.iter().any(|a| a.id == id) {
+                    return id;
+                }
             }
         }
     }
-    // No explicit account_id → belongs to Default (the active account).
+    // No tag, or the tagged workspace was deleted → Default (the active account).
     get_active_account_id().unwrap_or_else(|_| DEFAULT_ACCOUNT_ID.to_string())
 }
 

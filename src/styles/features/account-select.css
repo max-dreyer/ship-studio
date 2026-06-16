@@ -69,8 +69,14 @@
   display: flex;
   flex-direction: column;
   align-items: center;
+  /* Center content vertically too: cards stretch to equal height in the grid,
+     so without this the non-current cards (which lack the "Current" badge)
+     top-pack their avatar/name and leave dead space below — reading as
+     off-centre next to the taller current card. */
+  justify-content: center;
   gap: 12px;
   padding: 28px 16px;
+  min-height: 188px;
   background: var(--bg-secondary);
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
@@ -287,18 +293,25 @@
 .account-cred-list {
   display: flex;
   flex-direction: column;
-  gap: var(--spacing-xs);
+  /* One grouped card with hairline dividers between rows, instead of a stack
+     of individually-bordered boxes (which read as visual noise). */
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  overflow: hidden;
 }
 
 .account-cred-row {
   display: flex;
   align-items: center;
   gap: var(--spacing-sm);
-  padding: var(--spacing-xs) var(--spacing-sm);
-  background: var(--bg-secondary);
-  border-radius: var(--radius-sm);
-  border: 1px solid var(--border);
-  min-height: 36px;
+  padding: var(--spacing-sm) var(--spacing-md);
+  border-bottom: 1px solid var(--border);
+  min-height: 44px;
+}
+
+.account-cred-row:last-child {
+  border-bottom: none;
 }
 
 .account-cred-label {
@@ -314,7 +327,9 @@
   flex: 1;
   display: flex;
   align-items: center;
+  justify-content: flex-end;
   gap: var(--spacing-xs);
+  min-width: 0;
 }
 
 .account-cred-badge {
@@ -330,26 +345,56 @@
 }
 
 .account-cred-badge.unset {
-  background: var(--bg-tertiary);
+  background: transparent;
   color: var(--text-muted);
+  padding: 0;
 }
 
 .account-cred-input-row {
   flex: 1;
   display: flex;
-  align-items: center;
+  /* Stretch so the input and Show button match the Save/Cancel button height. */
+  align-items: stretch;
   gap: var(--spacing-xs);
+  min-width: 0;
+}
+
+/* Keep Save/Cancel at their natural button height inside the stretched row. */
+.account-cred-input-row .account-cred-actions {
+  align-items: center;
 }
 
 .account-cred-input {
   flex: 1;
+  min-width: 0;
   background: var(--bg-primary);
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   color: var(--text-primary);
   font-size: var(--font-size-sm);
-  padding: 3px var(--spacing-sm);
+  padding: 5px var(--spacing-sm);
   font-family: var(--font-mono);
+}
+
+/* Show/Hide toggle for sensitive credential values in the edit row. */
+.account-cred-reveal {
+  flex-shrink: 0;
+  padding: 4px var(--spacing-sm);
+  font-size: var(--font-size-xs);
+  font-weight: 500;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition:
+    color var(--transition),
+    border-color var(--transition);
+}
+
+.account-cred-reveal:hover {
+  color: var(--text-primary);
+  border-color: var(--text-muted);
 }
 
 .account-cred-input:focus {

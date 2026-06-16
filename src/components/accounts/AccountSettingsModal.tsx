@@ -94,7 +94,9 @@ export function AccountSettingsModal({
 
   const handleDelete = async () => {
     const confirmed = window.confirm(
-      `Delete workspace "${account.name}"? Its stored credentials will be removed.`
+      `Delete workspace "${account.name}"?\n\n` +
+        `Its stored credentials will be removed. Any projects in this workspace ` +
+        `will move to Default (your files are not touched).`
     );
     if (!confirmed) return;
     try {
@@ -234,53 +236,49 @@ export function AccountSettingsModal({
                   const revealed = showValues.has(key);
 
                   return (
-                    <div key={key} className="account-cred-row">
-                      <span className="account-cred-label">{CREDENTIAL_LABELS[key]}</span>
-                      <div className="account-cred-status">
-                        {isEditing ? (
-                          <div className="account-cred-input-row">
-                            <input
-                              className="account-cred-input"
-                              type={isSensitive && !revealed ? 'password' : 'text'}
-                              value={editingCred.value}
-                              onChange={(e) => setEditingCred({ key, value: e.target.value })}
-                              onKeyDown={(e) => {
-                                if (e.key === 'Enter') void handleSaveCred();
-                                if (e.key === 'Escape') setEditingCred(null);
-                              }}
-                              autoFocus
-                              placeholder={isSensitive ? '••••••••' : ''}
-                            />
-                            {isSensitive && (
-                              <button
-                                className="toolbar-icon-btn"
-                                style={{ padding: '2px 6px', fontSize: 11 }}
-                                onClick={() => toggleShowValue(key)}
-                                title={revealed ? 'Hide' : 'Show'}
-                              >
-                                {revealed ? 'Hide' : 'Show'}
-                              </button>
-                            )}
-                            <div className="account-cred-actions">
-                              <Button
-                                variant="primary"
-                                size="sm"
-                                onClick={() => void handleSaveCred()}
-                                disabled={!editingCred.value.trim() || isSavingCred}
-                              >
-                                {isSavingCred ? <Spinner size="sm" /> : 'Save'}
-                              </Button>
-                              <Button
-                                variant="ghost"
-                                size="sm"
-                                onClick={() => setEditingCred(null)}
-                              >
-                                Cancel
-                              </Button>
-                            </div>
+                    <div key={key} className={`account-cred-row${isEditing ? ' is-editing' : ''}`}>
+                      {isEditing ? (
+                        <div className="account-cred-input-row">
+                          <input
+                            className="account-cred-input"
+                            type={isSensitive && !revealed ? 'password' : 'text'}
+                            value={editingCred.value}
+                            onChange={(e) => setEditingCred({ key, value: e.target.value })}
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter') void handleSaveCred();
+                              if (e.key === 'Escape') setEditingCred(null);
+                            }}
+                            autoFocus
+                            placeholder={isSensitive ? '••••••••' : CREDENTIAL_LABELS[key]}
+                          />
+                          {isSensitive && (
+                            <button
+                              type="button"
+                              className="account-cred-reveal"
+                              onClick={() => toggleShowValue(key)}
+                              title={revealed ? 'Hide' : 'Show'}
+                            >
+                              {revealed ? 'Hide' : 'Show'}
+                            </button>
+                          )}
+                          <div className="account-cred-actions">
+                            <Button
+                              variant="primary"
+                              size="sm"
+                              onClick={() => void handleSaveCred()}
+                              disabled={!editingCred.value.trim() || isSavingCred}
+                            >
+                              {isSavingCred ? <Spinner size="sm" /> : 'Save'}
+                            </Button>
+                            <Button variant="ghost" size="sm" onClick={() => setEditingCred(null)}>
+                              Cancel
+                            </Button>
                           </div>
-                        ) : (
-                          <>
+                        </div>
+                      ) : (
+                        <>
+                          <span className="account-cred-label">{CREDENTIAL_LABELS[key]}</span>
+                          <div className="account-cred-status">
                             <span className={`account-cred-badge ${isSet ? 'set' : 'unset'}`}>
                               {isSet ? 'Set' : 'Not set'}
                             </span>
@@ -302,9 +300,9 @@ export function AccountSettingsModal({
                                 </Button>
                               )}
                             </div>
-                          </>
-                        )}
-                      </div>
+                          </div>
+                        </>
+                      )}
                     </div>
                   );
                 })}

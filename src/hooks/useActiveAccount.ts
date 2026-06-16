@@ -18,13 +18,23 @@ import {
   type Account,
 } from '../lib/accounts';
 
+// Module-level cache of the last successful fetch. The sidebar remounts on
+// every view change (e.g. switching workspaces routes through the picker view
+// and back), which would otherwise reset the hook's state to empty and hide the
+// footer switcher for a frame until the async fetch resolves — a visible
+// flicker. Seeding initial state from this cache keeps the indicator stable
+// across remounts; the fetch then refreshes it.
+let cachedAccounts: Account[] = [];
+let cachedActiveAccount: Account | null = null;
+
 export function useActiveAccount(projectPath?: string | null) {
-  const [activeAccount, setActiveAccount] = useState<Account | null>(null);
-  const [accounts, setAccounts] = useState<Account[]>([]);
+  const [activeAccount, setActiveAccount] = useState<Account | null>(cachedActiveAccount);
+  const [accounts, setAccounts] = useState<Account[]>(cachedAccounts);
 
   const refresh = useCallback(async () => {
     try {
       const all = await listAccounts();
+      cachedAccounts = all;
       setAccounts(all);
       // Prefer the open project's workspace; fall back to the active account.
       let accountId: string | null = null;
@@ -34,10 +44,14 @@ export function useActiveAccount(projectPath?: string | null) {
       if (!accountId) {
         accountId = await getActiveAccountId();
       }
-      setActiveAccount(all.find((a) => a.id === accountId) ?? all[0] ?? null);
+      const resolved = all.find((a) => a.id === accountId) ?? all[0] ?? null;
+      cachedActiveAccount = resolved;
+      setActiveAccount(resolved);
     } catch {
-      setActiveAccount(null);
-      setAccounts([]);
+      // Keep the last-known values rather than blanking the indicator on a
+      // transient fetch error.
+      setAccounts(cachedAccounts);
+      setActiveAccount(cachedActiveAccount);
     }
   }, [projectPath]);
 
@@ -46,10 +60,18 @@ export function useActiveAccount(projectPath?: string | null) {
     void refresh();
     // Re-fetch whenever a workspace is created/renamed/deleted/switched so the
     // indicator never goes stale (e.g. the footer switcher appearing the moment
-    // a second workspace exists).
+    // a second workspace exists). Also re-fetch when the window regains focus
+    // or visibility, as a safety net for any change made out of band (another
+    // window, a prior session) that didn't fire the in-app event.
     const onAccountsChanged = () => void refresh();
     window.addEventListener(ACCOUNTS_CHANGED_EVENT, onAccountsChanged);
-    return () => window.removeEventListener(ACCOUNTS_CHANGED_EVENT, onAccountsChanged);
+    window.addEventListener('focus', onAccountsChanged);
+    document.addEventListener('visibilitychange', onAccountsChanged);
+    return () => {
+      window.removeEventListener(ACCOUNTS_CHANGED_EVENT, onAccountsChanged);
+      window.removeEventListener('focus', onAccountsChanged);
+      document.removeEventListener('visibilitychange', onAccountsChanged);
+    };
   }, [refresh]);
 
   return { activeAccount, accounts, refresh };

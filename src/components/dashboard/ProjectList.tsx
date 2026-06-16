@@ -63,7 +63,11 @@ import {
   getSlackCtaHidden,
   setSlackCtaHidden as persistSlackCtaHidden,
 } from '../../lib/settings';
-import { moveProjectToAccount, getProjectAccountId } from '../../lib/accounts';
+import {
+  moveProjectToAccount,
+  getProjectAccountId,
+  ACCOUNTS_CHANGED_EVENT,
+} from '../../lib/accounts';
 import { SlackIcon, SettingsIcon, EyeOffIcon, ChevronRightIcon, HistoryIcon } from '../icons';
 
 /** Basic project info for selection callback */
@@ -185,7 +189,12 @@ export function ProjectList({
   const [searchQuery] = useState('');
   const [sortBy, setSortBy] = useState<SortOption>('last_opened');
 
-  const loadProjects = async () => {
+  // Monotonic token so a superseded load (e.g. the list fetched for the old
+  // workspace right before a switch) neither applies its stale results nor
+  // clears the loading state — preventing an empty-state flash mid-switch.
+  const loadSeqRef = useRef(0);
+
+  const loadProjects = async (seq: number = ++loadSeqRef.current) => {
     try {
       const projectList = await getDashboardProjects();
 
@@ -207,7 +216,8 @@ export function ProjectList({
         })
       );
 
-      setProjects(projectsWithThumbnails);
+      // Ignore results from a load that's been superseded by a newer one.
+      if (seq === loadSeqRef.current) setProjects(projectsWithThumbnails);
     } catch (error) {
       logger.error('Failed to load projects', {
         error: error instanceof Error ? error.message : String(error),
@@ -230,9 +240,12 @@ export function ProjectList({
   };
 
   const loadAll = useCallback(async () => {
+    const seq = ++loadSeqRef.current;
     setLoading(true);
-    await Promise.all([loadProjects(), loadFolders()]);
-    setLoading(false);
+    await Promise.all([loadProjects(seq), loadFolders()]);
+    // Only the latest load clears the spinner — a superseded load keeps it up
+    // so the list stays in its loading state until the current fetch resolves.
+    if (seq === loadSeqRef.current) setLoading(false);
   }, []);
 
   // Notify parent when loading state changes
@@ -257,6 +270,16 @@ export function ProjectList({
 
   useEffect(() => {
     void loadAll();
+  }, [loadAll]);
+
+  // Reload when the active workspace changes — `list_projects` is scoped to the
+  // active workspace server-side, so switching changes which projects come back.
+  // Without this the list goes stale (e.g. switching away and back to Default
+  // would keep showing the other workspace's empty result until a manual reload).
+  useEffect(() => {
+    const onAccountsChanged = () => void loadAll();
+    window.addEventListener(ACCOUNTS_CHANGED_EVENT, onAccountsChanged);
+    return () => window.removeEventListener(ACCOUNTS_CHANGED_EVENT, onAccountsChanged);
   }, [loadAll]);
 
   // Get projects to display based on current folder
