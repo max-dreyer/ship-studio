@@ -63,11 +63,8 @@ import {
   getSlackCtaHidden,
   setSlackCtaHidden as persistSlackCtaHidden,
 } from '../../lib/settings';
-import {
-  moveProjectToAccount,
-  getProjectAccountId,
-  ACCOUNTS_CHANGED_EVENT,
-} from '../../lib/accounts';
+import { moveProjectToAccount, getProjectAccountId } from '../../lib/accounts';
+import { useActiveAccount } from '../../hooks/useActiveAccount';
 import { SlackIcon, SettingsIcon, EyeOffIcon, ChevronRightIcon, HistoryIcon } from '../icons';
 
 /** Basic project info for selection callback */
@@ -137,6 +134,9 @@ export function ProjectList({
   const [folders, setFolders] = useState<FolderInfo[]>([]);
   const [filedPaths, setFiledPaths] = useState<Set<string>>(new Set());
   const [loading, setLoading] = useState(true);
+  // Drives a reload whenever the active workspace changes (see the load effect).
+  const { activeAccount } = useActiveAccount();
+  const activeAccountId = activeAccount?.id;
   const [deleteConfirm, setDeleteConfirm] = useState<DashboardProject | null>(null);
   const [deleting, setDeleting] = useState(false);
   const [renameTarget, setRenameTarget] = useState<DashboardProject | null>(null);
@@ -189,12 +189,14 @@ export function ProjectList({
   const [searchQuery] = useState('');
   const [sortBy, setSortBy] = useState<SortOption>('last_opened');
 
-  // Monotonic token so a superseded load (e.g. the list fetched for the old
-  // workspace right before a switch) neither applies its stale results nor
+  // Monotonic token so a superseded loadAll() (e.g. the list fetched for the
+  // old workspace right before a switch) neither applies its stale results nor
   // clears the loading state — preventing an empty-state flash mid-switch.
+  // Only loadAll() passes a seq; bare loadProjects() refreshes apply
+  // unconditionally and intentionally don't touch the token or the spinner.
   const loadSeqRef = useRef(0);
 
-  const loadProjects = async (seq: number = ++loadSeqRef.current) => {
+  const loadProjects = async (seq?: number) => {
     try {
       const projectList = await getDashboardProjects();
 
@@ -216,8 +218,11 @@ export function ProjectList({
         })
       );
 
-      // Ignore results from a load that's been superseded by a newer one.
-      if (seq === loadSeqRef.current) setProjects(projectsWithThumbnails);
+      // A seq'd load (from loadAll) is ignored if a newer one superseded it;
+      // a bare refresh (no seq) always applies.
+      if (seq === undefined || seq === loadSeqRef.current) {
+        setProjects(projectsWithThumbnails);
+      }
     } catch (error) {
       logger.error('Failed to load projects', {
         error: error instanceof Error ? error.message : String(error),
@@ -268,19 +273,14 @@ export function ProjectList({
     }
   }, [currentFolderId]);
 
+  // Load on mount AND whenever the active workspace changes. get_dashboard_projects
+  // is scoped to the active workspace server-side, so a switch changes the result
+  // set. Keying on the resolved active-account id (rather than a fired event) is
+  // deterministic — it reloads even when the switch happened while this list was
+  // unmounted (the picker is a separate view), which an event listener would miss.
   useEffect(() => {
     void loadAll();
-  }, [loadAll]);
-
-  // Reload when the active workspace changes — `list_projects` is scoped to the
-  // active workspace server-side, so switching changes which projects come back.
-  // Without this the list goes stale (e.g. switching away and back to Default
-  // would keep showing the other workspace's empty result until a manual reload).
-  useEffect(() => {
-    const onAccountsChanged = () => void loadAll();
-    window.addEventListener(ACCOUNTS_CHANGED_EVENT, onAccountsChanged);
-    return () => window.removeEventListener(ACCOUNTS_CHANGED_EVENT, onAccountsChanged);
-  }, [loadAll]);
+  }, [loadAll, activeAccountId]);
 
   // Get projects to display based on current folder
   const displayedProjects = useMemo(() => {

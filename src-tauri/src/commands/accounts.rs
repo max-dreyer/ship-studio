@@ -334,8 +334,13 @@ fn parse_gh_auth_status(success: bool, stdout: &str, stderr: &str) -> Option<Str
 #[tracing::instrument]
 pub fn list_accounts() -> Result<Vec<Account>, CommandError> {
     let mut state = read_app_state();
+    // Ensure the built-in Default exists in the returned list, but DON'T persist
+    // here — this is a read-path getter called very frequently (every workspace
+    // indicator refresh, focus, etc.). Writing on read created an unguarded
+    // read-modify-write race that clobbered concurrent set_active_account_id /
+    // create_account writes (the "switch didn't stick / wrong active workspace"
+    // bug). The Default account is persisted lazily by the next real mutation.
     ensure_default_account(&mut state);
-    write_app_state(&state)?;
     Ok(state.accounts)
 }
 
@@ -427,9 +432,11 @@ pub fn delete_account(id: String) -> Result<(), CommandError> {
 #[tauri::command]
 #[tracing::instrument]
 pub fn get_active_account_id() -> Result<String, CommandError> {
+    // Read-only getter: do NOT write here. It's called on every dashboard
+    // refresh, env injection, and indicator update; persisting on read raced
+    // with set_active_account_id and silently reverted workspace switches.
     let mut state = read_app_state();
     ensure_default_account(&mut state);
-    write_app_state(&state)?;
     Ok(state
         .active_account_id
         .unwrap_or_else(|| DEFAULT_ACCOUNT_ID.to_string()))
