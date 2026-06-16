@@ -51,6 +51,8 @@ export function AccountSettingsModal({
   const [editName, setEditName] = useState(account.name);
   const [editColor, setEditColor] = useState(account.color);
   const [isSaving, setIsSaving] = useState(false);
+  const [confirmingDelete, setConfirmingDelete] = useState(false);
+  const [isDeleting, setIsDeleting] = useState(false);
 
   const [credStatus, setCredStatus] = useState<AccountCredentialStatus | null>(null);
   const [isLoadingCreds, setIsLoadingCreds] = useState(false);
@@ -92,19 +94,18 @@ export function AccountSettingsModal({
     }
   };
 
+  // No window.confirm — in Tauri's WebKit it doesn't block (returns a truthy
+  // promise), so the delete fired before the user answered. Confirmation is an
+  // inline two-step in the footer instead.
   const handleDelete = async () => {
-    const confirmed = window.confirm(
-      `Delete workspace "${account.name}"?\n\n` +
-        `Its stored credentials will be removed. Any projects in this workspace ` +
-        `will move to Default (your files are not touched).`
-    );
-    if (!confirmed) return;
+    setIsDeleting(true);
     try {
       await deleteAccount(account.id);
       onDeleted(account.id);
       showToast('Workspace deleted', 'success');
     } catch (e) {
       showToast(`Failed to delete: ${String(e)}`, 'error');
+      setIsDeleting(false);
     }
   };
 
@@ -316,20 +317,45 @@ export function AccountSettingsModal({
             <span style={{ fontSize: 'var(--font-size-xs)', color: 'var(--text-muted)' }}>
               The Default workspace cannot be renamed or deleted.
             </span>
+          ) : confirmingDelete ? (
+            <div className="account-delete-confirm">
+              <span className="account-delete-confirm-text">
+                Delete “{account.name}”? Its stored credentials are removed and any projects in it
+                move to Default — your files aren’t touched.
+              </span>
+              <div className="account-delete-confirm-actions">
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => setConfirmingDelete(false)}
+                  disabled={isDeleting}
+                >
+                  Cancel
+                </Button>
+                <Button
+                  variant="danger"
+                  size="sm"
+                  onClick={() => void handleDelete()}
+                  disabled={isDeleting}
+                >
+                  {isDeleting ? <Spinner size="sm" /> : 'Delete'}
+                </Button>
+              </div>
+            </div>
           ) : (
-            <Button variant="danger" size="sm" onClick={() => void handleDelete()}>
-              Delete Workspace
-            </Button>
-          )}
-          {!account.isDefault && (
-            <Button
-              variant="primary"
-              size="sm"
-              onClick={() => void handleSave()}
-              disabled={!editName.trim() || isSaving}
-            >
-              {isSaving ? <Spinner size="sm" /> : 'Save Changes'}
-            </Button>
+            <>
+              <Button variant="danger" size="sm" onClick={() => setConfirmingDelete(true)}>
+                Delete Workspace
+              </Button>
+              <Button
+                variant="primary"
+                size="sm"
+                onClick={() => void handleSave()}
+                disabled={!editName.trim() || isSaving}
+              >
+                {isSaving ? <Spinner size="sm" /> : 'Save Changes'}
+              </Button>
+            </>
           )}
         </div>
       </div>

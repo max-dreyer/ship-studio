@@ -224,6 +224,27 @@
   align-items: center;
 }
 
+/* Inline delete confirmation (replaces a non-blocking window.confirm). */
+.account-delete-confirm {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--spacing-md);
+  width: 100%;
+}
+
+.account-delete-confirm-text {
+  font-size: var(--font-size-xs);
+  color: var(--text-secondary);
+  min-width: 0;
+}
+
+.account-delete-confirm-actions {
+  display: flex;
+  gap: var(--spacing-sm);
+  flex-shrink: 0;
+}
+
 .account-section-title {
   font-size: var(--font-size-xs);
   font-weight: 600;
