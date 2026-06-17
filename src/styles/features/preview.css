@@ -19,12 +19,7 @@
   --handle-size: 8px;
   flex: 1;
   display: grid;
-  /* minmax(0, 1fr) — NOT bare 1fr — for the canvas row: bare 1fr is
-     minmax(auto, 1fr), whose `auto` minimum lets a tall grid item (the pinned
-     edit panel, which spans this row) grow the track past the viewport so its
-     body never scrolls. Forcing the minimum to 0 keeps the row at the flexible
-     height and lets the panel's own overflow handle the scroll. */
-  grid-template-rows: auto minmax(0, 1fr) 0;
+  grid-template-rows: auto 1fr 0;
   min-height: 0;
   overflow: hidden;
   position: relative;

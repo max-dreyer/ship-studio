@@ -119,16 +119,8 @@
   color: var(--text-primary);
 }
 
-/* Fixed context bar (breakpoint + edit target) — never scrolls, so you can
-   always see which breakpoint and class you're editing. */
-.ss-edit-panel__context {
-  flex: 0 0 auto;
-  display: flex;
-  flex-direction: column;
-  gap: var(--spacing-md);
-  padding: var(--spacing-md);
-  border-bottom: 1px solid var(--border);
-}
+/* The fixed context bar (breakpoint + edit target) lives in
+   visual-editor-classes.css. */
 
 .ss-edit-panel__body {
   flex: 1 1 auto;
@@ -1405,62 +1397,4 @@
   border-radius: var(--radius-sm);
   padding: var(--spacing-sm);
   word-break: break-word;
-}
-
-/* ── Custom-class control (reuses the panel's ss-enum dropdown) ────────────── */
-.ss-classedit__sep {
-  height: 1px;
-  margin: var(--spacing-xs) 0;
-  background: var(--border);
-}
-/* Action items (apply / create / remove) read one notch quieter than the
-   target options above the separator. */
-.ss-classedit__muted {
-  color: var(--text-muted);
-}
-.ss-classedit__muted:hover:not(:disabled) {
-  color: var(--text-primary);
-  background: color-mix(in srgb, var(--text-primary) 8%, transparent);
-}
-.ss-classedit__muted:disabled {
-  opacity: 0.45;
-  cursor: default;
-}
-
-/* Inline "create from styles" editor — sits in the control's value slot. */
-.ss-classedit__create {
-  display: inline-flex;
-  gap: var(--spacing-xs);
-  align-items: center;
-}
-.ss-classedit__input {
-  width: 110px;
-  height: 22px;
-  padding: 0 var(--spacing-sm);
-  font-size: var(--font-size-sm);
-  color: var(--text-primary);
-  background: var(--bg-tertiary);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-}
-.ss-classedit__input:focus {
-  outline: none;
-  border-color: var(--accent);
-}
-.ss-classedit__go {
-  height: 22px;
-  padding: 0 var(--spacing-sm);
-  font-size: var(--font-size-sm);
-  color: var(--action-text);
-  background: var(--action);
-  border: none;
-  border-radius: var(--radius-sm);
-  cursor: pointer;
-}
-.ss-classedit__go:hover:not(:disabled) {
-  background: var(--action-hover);
-}
-.ss-classedit__go:disabled {
-  opacity: 0.45;
-  cursor: default;
 }
