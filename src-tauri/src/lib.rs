@@ -385,6 +385,8 @@ pub fn run() {
             commands::edit::find_component_usage,
             commands::edit::detect_breakpoints,
             commands::edit::is_tailwind_active,
+            commands::custom_classes::detect_tailwind_setup,
+            commands::custom_classes::list_custom_classes,
             commands::projects::get_terminal_state,
             commands::projects::set_terminal_state,
             commands::projects::extract_template_zip,
