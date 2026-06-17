@@ -92,7 +92,77 @@ export function ClassBar({
 
   return (
     <div className="ss-classbar">
-      <span className="ss-classbar__label">Editing</span>
+      <div className="ss-classbar__head">
+        <span className="ss-classbar__label">Editing</span>
+        <div className="ss-classbar__add" ref={popoverRef}>
+          <button
+            type="button"
+            className={`ss-classbar__addbtn${open ? ' is-open' : ''}`}
+            title="Create or apply a custom class"
+            aria-expanded={open}
+            onClick={() => setOpen((v) => !v)}
+          >
+            <PlusIcon size={11} />
+            Class
+          </button>
+          {open && (
+            <div className="ss-classbar__popover" role="dialog">
+              <div className="ss-classbar__poplabel">New class from these styles</div>
+              <div className="ss-classbar__create">
+                <input
+                  type="text"
+                  className="ss-classbar__input"
+                  placeholder="class-name"
+                  value={name}
+                  spellCheck={false}
+                  autoFocus
+                  onChange={(e) => setName(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') submitCreate();
+                    if (e.key === 'Escape') setOpen(false);
+                  }}
+                />
+                <button
+                  type="button"
+                  className="ss-classbar__createbtn"
+                  disabled={!nameValid || !hasUtilities}
+                  title={
+                    !hasUtilities
+                      ? 'This element has no utility classes to extract'
+                      : !NAME_RE.test(name)
+                        ? 'Enter a valid class name'
+                        : byName.has(name)
+                          ? 'A class with this name already exists'
+                          : 'Move these styles into a reusable class'
+                  }
+                  onClick={submitCreate}
+                >
+                  Create
+                </button>
+              </div>
+              {available.length > 0 && (
+                <div className="ss-classbar__existing">
+                  <div className="ss-classbar__poplabel">Apply existing</div>
+                  {available.map((c) => (
+                    <button
+                      key={c.name}
+                      type="button"
+                      className="ss-classbar__existing-item"
+                      onClick={() => {
+                        onApplyExisting(c.name);
+                        setOpen(false);
+                      }}
+                    >
+                      .{c.name}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      </div>
+
       <div className="ss-classbar__chips">
         {applied.map((c) => {
           const active = activeName === c.name;
@@ -122,7 +192,7 @@ export function ClassBar({
                 title={`Remove .${c.name} from this element`}
                 onClick={() => onUnapply(c.name)}
               >
-                <CloseIcon size={10} />
+                <CloseIcon size={9} />
               </button>
             </span>
           );
@@ -135,74 +205,8 @@ export function ClassBar({
           title="Edit this element's own utility classes"
           onClick={onEditElement}
         >
-          this element
+          This element
         </button>
-      </div>
-
-      <div className="ss-classbar__add" ref={popoverRef}>
-        <button
-          type="button"
-          className="ss-classbar__add-btn"
-          title="Create or apply a custom class"
-          aria-expanded={open}
-          onClick={() => setOpen((v) => !v)}
-        >
-          <PlusIcon size={12} />
-        </button>
-        {open && (
-          <div className="ss-classbar__popover" role="dialog">
-            <div className="ss-classbar__create">
-              <input
-                type="text"
-                className="ss-classbar__input"
-                placeholder="class-name"
-                value={name}
-                spellCheck={false}
-                autoFocus
-                onChange={(e) => setName(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter') submitCreate();
-                  if (e.key === 'Escape') setOpen(false);
-                }}
-              />
-              <button
-                type="button"
-                className="ss-classbar__create-btn"
-                disabled={!nameValid || !hasUtilities}
-                title={
-                  !hasUtilities
-                    ? 'This element has no utility classes to extract'
-                    : !NAME_RE.test(name)
-                      ? 'Enter a valid class name'
-                      : byName.has(name)
-                        ? 'A class with this name already exists'
-                        : 'Move these styles into a reusable class'
-                }
-                onClick={submitCreate}
-              >
-                Create from styles
-              </button>
-            </div>
-            {available.length > 0 && (
-              <div className="ss-classbar__existing">
-                <div className="ss-classbar__existing-label">Apply existing</div>
-                {available.map((c) => (
-                  <button
-                    key={c.name}
-                    type="button"
-                    className="ss-classbar__existing-item"
-                    onClick={() => {
-                      onApplyExisting(c.name);
-                      setOpen(false);
-                    }}
-                  >
-                    .{c.name}
-                  </button>
-                ))}
-              </div>
-            )}
-          </div>
-        )}
       </div>
     </div>
   );

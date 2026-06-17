@@ -639,10 +639,13 @@ export function useVisualEditor({
       } else {
         await applyClassnameEditMulti(projectPath, res.locations, res.class_name, next);
       }
-      setSelection({ ...sel, resolution: { ...res, class_name: next } });
-      if (selectedSigRef.current)
-        selectedSigRef.current = { ...selectedSigRef.current, className: next };
-      setLiveClass(next);
+      // Keep BOTH the selection signature (drives the class-bar chips) and the
+      // resolution baseline (drift guard) in sync with the element's new class.
+      const nextSig = { ...sel.signature, className: next };
+      setSelection({ ...sel, signature: nextSig, resolution: { ...res, class_name: next } });
+      selectedSigRef.current = nextSig;
+      // Reflect on the element itself (in element mode the live class is the element).
+      if (editTargetRef.current.kind === 'element') setLiveClass(next);
       post({ type: 'ss:mutate', className: next, rules: [] });
       post({ type: 'ss:commit' });
       return true;
@@ -650,33 +653,43 @@ export function useVisualEditor({
     [selection, projectPath, onToast, post, setLiveClass]
   );
 
+  /** The selected element's current className — read from the live class in
+   *  element mode, or the (kept-fresh) signature while a class is being edited.
+   *  The structural gestures below operate on THIS, never on a class's @apply. */
+  const currentElementClass = useCallback(
+    () =>
+      editTargetRef.current.kind === 'element'
+        ? currentClassRef.current
+        : (selectedSigRef.current?.className ?? ''),
+    []
+  );
+
   /** Add an existing custom class to the selected element (appends the bare name
    *  to its className) and switch the controls to editing that class. */
   const applyClass = useCallback(
     async (name: string) => {
-      const current = currentClassRef.current.split(/\s+/).filter(Boolean);
+      const cls = customClasses.find((c) => c.name === name);
+      const current = currentElementClass().split(/\s+/).filter(Boolean);
       if (current.includes(name)) {
-        const cls = customClasses.find((c) => c.name === name);
         editClass(name, cls?.tokens ?? []);
         return;
       }
       try {
         const ok = await writeElementClass([...current, name].join(' '));
         if (!ok) return;
-        const cls = customClasses.find((c) => c.name === name);
         editClass(name, cls?.tokens ?? []);
       } catch (err) {
         onToast?.(String(err), 'error');
       }
     },
-    [customClasses, writeElementClass, editClass, onToast]
+    [customClasses, currentElementClass, writeElementClass, editClass, onToast]
   );
 
   /** Remove a custom class from the selected element (unapply — the class stays
    *  defined in CSS). Returns the controls to editing the element. */
   const unapplyClass = useCallback(
     async (name: string) => {
-      const next = currentClassRef.current
+      const next = currentElementClass()
         .split(/\s+/)
         .filter((t) => t && t !== name)
         .join(' ');
@@ -687,34 +700,37 @@ export function useVisualEditor({
         onToast?.(String(err), 'error');
       }
     },
-    [writeElementClass, editElement, onToast]
+    [currentElementClass, writeElementClass, editElement, onToast]
   );
 
-  /** Webflow-style "create class from styles": move the element's current utility
-   *  tokens into a new named class, replace them on the element with the bare
-   *  class name, and switch to editing the class. (The element briefly shows
-   *  unstyled until HMR compiles the new rule's `@apply`.) */
+  /** Webflow-style "create class from styles": move the element's utility tokens
+   *  into a new named class, keeping any classes it already had, then replace the
+   *  utilities on the element with the bare class name and edit the class. (The
+   *  element briefly shows unstyled until HMR compiles the new rule's `@apply`.) */
   const createClassFromStyles = useCallback(
     async (name: string) => {
-      const tokens = currentClassRef.current.split(/\s+/).filter(Boolean);
-      if (tokens.length === 0) {
+      const elTokens = currentElementClass().split(/\s+/).filter(Boolean);
+      const classNames = new Set(customClasses.map((c) => c.name));
+      const utilities = elTokens.filter((t) => !classNames.has(t));
+      const keptClasses = elTokens.filter((t) => classNames.has(t));
+      if (utilities.length === 0) {
         onToast?.('This element has no utility classes to extract.', 'error');
         return;
       }
       try {
-        const list = await createCustomClass(projectPath, name, tokens);
+        const list = await createCustomClass(projectPath, name, utilities);
         setCustomClasses(list);
-        const ok = await writeElementClass(name);
+        const ok = await writeElementClass([...keptClasses, name].join(' '));
         if (!ok) {
           // The class was created but couldn't be applied — still let the user edit it.
           onToast?.(`Created .${name}, but couldn't update the element.`, 'error');
         }
-        editClass(name, tokens);
+        editClass(name, utilities);
       } catch (err) {
         onToast?.(String(err), 'error');
       }
     },
-    [projectPath, writeElementClass, editClass, onToast]
+    [projectPath, customClasses, currentElementClass, writeElementClass, editClass, onToast]
   );
 
   /** Delete a custom class from the project's CSS. Markup still referencing it is

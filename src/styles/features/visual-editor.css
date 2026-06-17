@@ -1395,97 +1395,123 @@
 /* ── Class bar (Webflow-style custom classes) ─────────────────────────────── */
 .ss-classbar {
   display: flex;
-  align-items: flex-start;
-  flex-wrap: wrap;
-  gap: var(--spacing-xs);
+  flex-direction: column;
+  gap: var(--spacing-sm);
   padding: var(--spacing-sm);
   background: var(--bg-tertiary);
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-md);
+  font-size: var(--font-size-xs);
+}
+/* Neutralize only the size-breaking inherited bits of the global `button` rule
+   (padding + font-size). Backgrounds/borders are set per-button below at class
+   specificity, which beats the bare `button` rule without fighting this reset. */
+.ss-classbar button {
+  font: inherit;
+  padding: 0;
+  margin: 0;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.ss-classbar__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--spacing-sm);
 }
 .ss-classbar__label {
   font-size: var(--font-size-xs);
   color: var(--text-muted);
   text-transform: uppercase;
-  letter-spacing: 0.04em;
-  padding-top: 3px;
-  margin-right: var(--spacing-xs);
+  letter-spacing: 0.05em;
 }
+
+/* Chips: applied custom classes + the "this element" target. */
 .ss-classbar__chips {
   display: flex;
   flex-wrap: wrap;
   gap: var(--spacing-xs);
-  flex: 1;
-  min-width: 0;
 }
 .ss-classbar__chip {
   display: inline-flex;
   align-items: center;
-  gap: 2px;
-  height: 22px;
-  padding: 0 var(--spacing-xs);
+  gap: 4px;
+  height: 24px;
+  padding: 0 var(--spacing-sm);
   font-size: var(--font-size-xs);
   color: var(--text-secondary);
   background: var(--bg-secondary);
   border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  cursor: pointer;
+  border-radius: 999px;
   max-width: 100%;
 }
 .ss-classbar__chip.is-active {
   color: var(--text-primary);
   border-color: var(--accent);
-  box-shadow: inset 0 0 0 1px var(--accent);
+  background: var(--bg-primary);
 }
 .ss-classbar__chip.is-locked {
-  opacity: 0.6;
+  opacity: 0.55;
 }
 .ss-classbar__chip--element {
   color: var(--text-muted);
 }
+.ss-classbar__chip--element.is-active {
+  color: var(--text-primary);
+}
 .ss-classbar__chip-name {
-  background: none;
-  border: none;
-  padding: 0;
-  font: inherit;
-  color: inherit;
-  cursor: pointer;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  font-variant-ligatures: none;
+  background: none;
+  color: inherit;
 }
 .ss-classbar__chip-name:disabled {
-  cursor: not-allowed;
+  cursor: default;
+}
+/* Override the global `button:hover` background that would otherwise box the name. */
+.ss-classbar__chip-name:hover {
+  background: none;
+}
+.ss-classbar__chip--element:hover {
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
 }
 .ss-classbar__chip-x {
   display: inline-flex;
   align-items: center;
   justify-content: center;
+  width: 14px;
+  height: 14px;
+  border-radius: var(--radius-full);
   background: none;
-  border: none;
-  padding: 0;
   color: var(--text-muted);
-  cursor: pointer;
-  border-radius: var(--radius-sm);
 }
 .ss-classbar__chip-x:hover {
   color: var(--text-primary);
+  background: var(--bg-tertiary);
 }
+
+/* Add / create-or-apply popover. */
 .ss-classbar__add {
   position: relative;
+  flex: none;
 }
-.ss-classbar__add-btn {
+.ss-classbar__addbtn {
   display: inline-flex;
   align-items: center;
-  justify-content: center;
-  width: 22px;
+  gap: 4px;
   height: 22px;
+  padding: 0 var(--spacing-sm);
+  font-size: var(--font-size-xs);
   color: var(--text-secondary);
   background: var(--bg-secondary);
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
-  cursor: pointer;
 }
-.ss-classbar__add-btn:hover {
+.ss-classbar__addbtn:hover,
+.ss-classbar__addbtn.is-open {
   color: var(--text-primary);
   border-color: var(--accent);
 }
@@ -1494,21 +1520,28 @@
   top: calc(100% + var(--spacing-xs));
   right: 0;
   z-index: var(--z-dropdown);
-  width: 220px;
+  width: 210px;
   padding: var(--spacing-sm);
   background: var(--bg-secondary);
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
   box-shadow: var(--shadow-md);
 }
+.ss-classbar__poplabel {
+  font-size: var(--font-size-xs);
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  margin-bottom: var(--spacing-xs);
+}
 .ss-classbar__create {
   display: flex;
-  flex-direction: column;
   gap: var(--spacing-xs);
 }
 .ss-classbar__input {
-  width: 100%;
-  height: 28px;
+  flex: 1;
+  min-width: 0;
+  height: 26px;
   padding: 0 var(--spacing-sm);
   font-size: var(--font-size-sm);
   color: var(--text-primary);
@@ -1520,33 +1553,26 @@
   outline: none;
   border-color: var(--accent);
 }
-.ss-classbar__create-btn {
-  height: 28px;
+.ss-classbar__createbtn {
+  flex: none;
+  height: 26px;
+  padding: 0 var(--spacing-sm);
   font-size: var(--font-size-sm);
-  color: var(--text-primary);
-  background: var(--bg-tertiary);
-  border: 1px solid var(--border);
+  color: var(--action-text);
+  background: var(--action);
   border-radius: var(--radius-sm);
-  cursor: pointer;
 }
-.ss-classbar__create-btn:hover:not(:disabled) {
-  border-color: var(--accent);
+.ss-classbar__createbtn:hover:not(:disabled) {
+  background: var(--action-hover);
 }
-.ss-classbar__create-btn:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
+.ss-classbar__createbtn:disabled {
+  opacity: 0.45;
+  cursor: default;
 }
 .ss-classbar__existing {
   margin-top: var(--spacing-sm);
   padding-top: var(--spacing-sm);
   border-top: 1px solid var(--border);
-}
-.ss-classbar__existing-label {
-  font-size: var(--font-size-xs);
-  color: var(--text-muted);
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-  margin-bottom: var(--spacing-xs);
 }
 .ss-classbar__existing-item {
   display: block;
@@ -1557,9 +1583,7 @@
   font-size: var(--font-size-sm);
   color: var(--text-secondary);
   background: none;
-  border: none;
   border-radius: var(--radius-sm);
-  cursor: pointer;
 }
 .ss-classbar__existing-item:hover {
   color: var(--text-primary);
