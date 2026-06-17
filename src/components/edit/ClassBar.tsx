@@ -25,6 +25,9 @@ interface Props {
   /** The selected element's current className string. */
   elementClass: string;
   editTarget: EditTarget;
+  /** False when the project has no writable Tailwind entry stylesheet — creating
+   *  a class isn't possible, so the create affordance is disabled with a hint. */
+  canCreate?: boolean;
   onEditElement: () => void;
   onEditClass: (name: string, tokens: string[]) => void;
   onApplyExisting: (name: string) => void | Promise<void>;
@@ -47,6 +50,7 @@ export function ClassBar({
   customClasses,
   elementClass,
   editTarget,
+  canCreate: canCreateClasses = true,
   onEditElement,
   onEditClass,
   onApplyExisting,
@@ -182,7 +186,7 @@ export function ClassBar({
               onChange={(e) => setQuery(e.target.value)}
               onKeyDown={(e) => {
                 if (e.key === 'Escape') close();
-                if (e.key === 'Enter' && canCreate && hasUtilities) {
+                if (e.key === 'Enter' && canCreate && hasUtilities && canCreateClasses) {
                   onCreate(trimmed);
                   close();
                 }
@@ -267,11 +271,13 @@ export function ClassBar({
                 type="button"
                 role="menuitem"
                 className="ss-classedit__createrow"
-                disabled={!hasUtilities}
+                disabled={!hasUtilities || !canCreateClasses}
                 title={
-                  hasUtilities
-                    ? `Create .${trimmed} from this element's current styles`
-                    : 'This element has no utility classes to extract'
+                  !canCreateClasses
+                    ? 'No Tailwind stylesheet found in this project to add the class to'
+                    : hasUtilities
+                      ? `Create .${trimmed} from this element's current styles`
+                      : 'This element has no utility classes to extract'
                 }
                 onClick={() => {
                   onCreate(trimmed);

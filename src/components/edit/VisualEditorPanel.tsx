@@ -282,6 +282,9 @@ interface Props {
    *  panel can be rendered standalone (e.g. in tests) without the class wiring. */
   editTarget?: EditTarget;
   customClasses?: CustomClass[];
+  /** False when the project has no writable Tailwind entry stylesheet — disables
+   *  "create class". */
+  canCreateClass?: boolean;
   onEditElement?: () => void;
   onEditClass?: (name: string, tokens: string[]) => void;
   onApplyClass?: (name: string) => void | Promise<void>;
@@ -330,6 +333,7 @@ export function VisualEditorPanel({
   onMultiTargetChange,
   editTarget = { kind: 'element' },
   customClasses = [],
+  canCreateClass = true,
   onEditElement = () => {},
   onEditClass = () => {},
   onApplyClass = () => {},
@@ -500,6 +504,7 @@ export function VisualEditorPanel({
               editTarget.kind === 'element' ? currentClass : (selection?.signature.className ?? '')
             }
             editTarget={editTarget}
+            canCreate={canCreateClass}
             onEditElement={onEditElement}
             onEditClass={onEditClass}
             onApplyExisting={onApplyClass}

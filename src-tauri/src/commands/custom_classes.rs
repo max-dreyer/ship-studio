@@ -170,8 +170,29 @@ fn rel_posix(root: &Path, abs: &Path) -> String {
         .replace('\\', "/")
 }
 
-/// True if any code-level `@import` statement references `tailwindcss` (the v4
-/// entry signal). Bracket/quote forms both work since we just scan the statement.
+/// The first quoted string literal in `s` (single or double quotes), if any.
+fn first_quoted(s: &str) -> Option<&str> {
+    let b = s.as_bytes();
+    let mut i = 0;
+    while i < b.len() {
+        if b[i] == b'"' || b[i] == b'\'' {
+            let q = b[i];
+            let start = i + 1;
+            let mut j = start;
+            while j < b.len() && b[j] != q {
+                j += 1;
+            }
+            return Some(&s[start..j.min(b.len())]);
+        }
+        i += 1;
+    }
+    None
+}
+
+/// True if any code-level `@import` brings in Tailwind itself (the v4 entry
+/// signal). Matches the import SPECIFIER exactly — `tailwindcss` or
+/// `tailwindcss/...` — not a substring, so `@import "tailwindcss-animate"` (a
+/// plugin) or `@import "./my-tailwindcss.css"` don't masquerade as the entry.
 fn css_imports_tailwind(css: &str) -> bool {
     let kind = css_scan(css);
     let mut from = 0;
@@ -181,12 +202,11 @@ fn css_imports_tailwind(css: &str) -> bool {
         if kind[at] != CssKind::Code {
             continue;
         }
-        let end = css[at..]
-            .find(';')
-            .map(|e| at + e)
-            .unwrap_or_else(|| css.len());
-        if css[at..end].contains("tailwindcss") {
-            return true;
+        let end = css[at..].find(';').map(|e| at + e).unwrap_or(css.len());
+        if let Some(spec) = first_quoted(&css[at..end]) {
+            if spec == "tailwindcss" || spec.starts_with("tailwindcss/") {
+                return true;
+            }
         }
     }
     false
@@ -698,16 +718,72 @@ fn collect_utility_names(css: &str, kind: &[CssKind]) -> HashSet<String> {
     names
 }
 
-/// The bare class name a token would resolve to for `@apply` — strip the leading
-/// `!` (important) and any variant prefixes (`sm:`, `hover:`). Returns `None` for
+/// Well-known Tailwind utilities whose names are ALSO commonly authored as plain
+/// classes (resets like `.container {}`, `.flex {}`). They're always valid in
+/// `@apply` (the utility exists), so exempt them from the plain-class block to
+/// avoid false positives. Exempting a real utility is safe; the failure mode we
+/// guard against is a NON-utility plain class.
+const KNOWN_UTILITY_NAMES: &[&str] = &[
+    "container",
+    "flex",
+    "grid",
+    "block",
+    "inline",
+    "inline-block",
+    "inline-flex",
+    "inline-grid",
+    "hidden",
+    "table",
+    "contents",
+    "flow-root",
+    "list-item",
+    "group",
+    "peer",
+    "sr-only",
+    "not-sr-only",
+    "truncate",
+    "italic",
+    "underline",
+    "overline",
+    "line-through",
+    "no-underline",
+    "uppercase",
+    "lowercase",
+    "capitalize",
+    "normal-case",
+    "isolate",
+    "static",
+    "fixed",
+    "absolute",
+    "relative",
+    "sticky",
+    "visible",
+    "invisible",
+    "collapse",
+    "antialiased",
+];
+
+/// The bare class name a token would resolve to for `@apply` — strip any variant
+/// prefixes (`sm:`, `hover:`) and the `!` important marker. Returns `None` for
 /// arbitrary-value tokens (`text-[…]`), which never name a plain class.
 fn apply_base_name(token: &str) -> Option<&str> {
-    let bare = token.trim_start_matches('!');
-    let name = bare.rsplit(':').next().unwrap_or(bare);
+    let name = token
+        .rsplit(':')
+        .next()
+        .unwrap_or(token)
+        .trim_start_matches('!');
     if name.is_empty() || name.contains(['[', ']', '(', ')']) {
         return None;
     }
     Some(name)
+}
+
+/// Whether a single token would break `@apply`: its base name is defined as a
+/// plain class, isn't also an `@utility`, and isn't a known built-in utility.
+fn token_is_unsafe(token: &str, plains: &HashSet<String>, utils: &HashSet<String>) -> bool {
+    apply_base_name(token)
+        .map(|n| plains.contains(n) && !utils.contains(n) && !KNOWN_UTILITY_NAMES.contains(&n))
+        .unwrap_or(false)
 }
 
 /// Tokens that would break `@apply`: defined as a plain class in this stylesheet
@@ -717,11 +793,7 @@ fn unsafe_apply_tokens(css: &str, kind: &[CssKind], tokens: &[String]) -> Vec<St
     let utils = collect_utility_names(css, kind);
     tokens
         .iter()
-        .filter(|t| {
-            apply_base_name(t)
-                .map(|n| plains.contains(n) && !utils.contains(n))
-                .unwrap_or(false)
-        })
+        .filter(|t| token_is_unsafe(t, &plains, &utils))
         .cloned()
         .collect()
 }
@@ -764,11 +836,7 @@ fn unsafe_tokens_against(
 ) -> Vec<String> {
     tokens
         .iter()
-        .filter(|t| {
-            apply_base_name(t)
-                .map(|n| plains.contains(n) && !utils.contains(n))
-                .unwrap_or(false)
-        })
+        .filter(|t| token_is_unsafe(t, plains, utils))
         .cloned()
         .collect()
 }
@@ -1390,6 +1458,47 @@ div.card { @apply p-4; }
         // Defined as an @utility elsewhere → valid in @apply, not flagged.
         assert!(guard_project_apply_safety(&dir, &["fancy-spin".into()]).is_ok());
         std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn import_detection_matches_the_specifier_not_a_substring() {
+        // Real Tailwind entry signals.
+        assert!(css_imports_tailwind("@import \"tailwindcss\";"));
+        assert!(css_imports_tailwind("@import 'tailwindcss';"));
+        assert!(css_imports_tailwind(
+            "@import \"tailwindcss/preflight\" layer(base);"
+        ));
+        // Plugins / unrelated files that merely CONTAIN the substring must not match.
+        assert!(!css_imports_tailwind("@import \"tailwindcss-animate\";"));
+        assert!(!css_imports_tailwind("@import \"./my-tailwindcss.css\";"));
+        assert!(!css_imports_tailwind("@import \"@my/tailwindcss-preset\";"));
+        assert!(!css_imports_tailwind("/* @import \"tailwindcss\"; */"));
+    }
+
+    #[test]
+    fn guard_exempts_known_utilities_that_collide_with_plain_classes() {
+        // A hand-written `.container {}` reset is common; `@apply container` is
+        // still valid because `container` is a real utility — don't flag it.
+        let css = ".container { max-width: 80rem; margin: 0 auto; }";
+        let kind = css_scan(css);
+        assert!(unsafe_apply_tokens(css, &kind, &["container".into(), "flex".into()]).is_empty());
+        // A genuinely non-utility plain class is still flagged.
+        assert_eq!(
+            unsafe_apply_tokens(
+                &format!("{css}\n.brandbox {{ color: red; }}"),
+                &css_scan(&format!("{css}\n.brandbox {{ color: red; }}")),
+                &["brandbox".into()]
+            ),
+            vec!["brandbox".to_string()]
+        );
+    }
+
+    #[test]
+    fn apply_base_name_strips_variant_then_important() {
+        assert_eq!(apply_base_name("hover:!flex"), Some("flex"));
+        assert_eq!(apply_base_name("!container"), Some("container"));
+        assert_eq!(apply_base_name("md:text-lg"), Some("text-lg"));
+        assert_eq!(apply_base_name("bg-[#fff]"), None);
     }
 
     #[test]

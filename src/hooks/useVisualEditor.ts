@@ -68,10 +68,10 @@ import {
   type UsageReport,
 } from '../lib/edit';
 import {
+  detectTailwindSetup,
   listCustomClasses,
   createCustomClass,
   updateCustomClass,
-  deleteCustomClass,
   classifyApplyTokens,
   type CustomClass,
 } from '../lib/customClasses';
@@ -476,10 +476,19 @@ export function useVisualEditor({
     }
   }, [projectPath]);
 
+  // Whether the project has a writable Tailwind entry stylesheet — gates the
+  // "create / edit class" affordances. Apply/edit of existing classes already
+  // degrades naturally (the class list is empty without an entry), but create
+  // must be disabled with a hint rather than failing on a raw backend error.
+  const [classEntryReady, setClassEntryReady] = useState(true);
+
   useEffect(() => {
     if (!editMode) return;
     void refreshCustomClasses();
-  }, [editMode, refreshCustomClasses]);
+    void detectTailwindSetup(projectPath)
+      .then((setup) => setClassEntryReady(setup.entryCss != null))
+      .catch(() => setClassEntryReady(false));
+  }, [editMode, projectPath, refreshCustomClasses]);
 
   /**
    * Merge a Tailwind token into the live class at the active breakpoint and
@@ -579,6 +588,10 @@ export function useVisualEditor({
           setCustomClasses(list);
           // Advance the baseline so consecutive edits (and auto-save) keep working.
           setEditTarget({ kind: 'class', name: target.name, baseline: tokens.join(' ') });
+          // Drop the live (raw-CSS, !important) preview so the freshly-compiled
+          // @apply rule is authoritative — otherwise the override can mask the
+          // real saved styles where the two diverge.
+          post({ type: 'ss:clearClassPreview', selector: `.${target.name}` });
           if (!opts?.silent) onToast?.('Class saved', 'success');
         } catch (err) {
           logger.error('[VisualEditor] class write-back failed', { error: String(err) });
@@ -591,7 +604,12 @@ export function useVisualEditor({
       const res = sel?.resolution;
       if (!res || (res.status !== 'resolved' && res.status !== 'multi')) return;
       const next = currentClassRef.current;
-      if (next === res.class_name) return; // nothing changed
+      // Use the LIVE source className (selectedSigRef) as the drift baseline, not
+      // the possibly-stale `selection` closure — a structural gesture may have
+      // advanced the source since this `commit` callback was created, and writing
+      // against a stale old-value would silently no-op at the backend.
+      const prev = selectedSigRef.current?.className ?? res.class_name;
+      if (next === prev) return; // nothing changed
       // Arm the reload-suppression window BEFORE writing: Astro's full-reload fires
       // the instant the file changes, which can beat the post-write ss:commit. Setting
       // it here means the reload our own save triggers is reliably swallowed (so the
@@ -599,13 +617,13 @@ export function useVisualEditor({
       post({ type: 'ss:suppressReload' });
       try {
         if (res.status === 'resolved') {
-          await applyClassnameEdit(projectPath, res.file, res.line, res.class_name, next);
+          await applyClassnameEdit(projectPath, res.file, res.line, prev, next);
         } else {
           // Multi: write to all matching source spots, or the one the user picked.
           const target = multiTargetRef.current;
           const edits =
             target === 'all' ? res.locations : res.locations.filter((_, i) => i === target);
-          await applyClassnameEditMulti(projectPath, edits, res.class_name, next);
+          await applyClassnameEditMulti(projectPath, edits, prev, next);
         }
         // Advance the drift baseline so consecutive edits keep working. Keep
         // selectedSigRef in lockstep — the structural gestures use it as the live
@@ -647,7 +665,10 @@ export function useVisualEditor({
       if (res.status === 'resolved') {
         await applyClassnameEdit(projectPath, res.file, res.line, prev, next);
       } else {
-        await applyClassnameEditMulti(projectPath, res.locations, prev, next);
+        // Honor the user's multi-location pick ('all' vs one index), same as commit().
+        const mt = multiTargetRef.current;
+        const edits = mt === 'all' ? res.locations : res.locations.filter((_, i) => i === mt);
+        await applyClassnameEditMulti(projectPath, edits, prev, next);
       }
       // Keep BOTH the selection signature (drives the class-bar chips) and the
       // resolution baseline (drift guard) in sync with the element's new class.
@@ -749,23 +770,10 @@ export function useVisualEditor({
     [projectPath, customClasses, currentElementClass, writeElementClass, editClass, onToast]
   );
 
-  /** Delete a custom class from the project's CSS. Markup still referencing it is
-   *  left as-is (the class becomes a plain unstyled name) — the caller warns. */
-  const deleteClass = useCallback(
-    async (name: string) => {
-      try {
-        const list = await deleteCustomClass(projectPath, name);
-        setCustomClasses(list);
-        if (editTargetRef.current.kind === 'class' && editTargetRef.current.name === name) {
-          editElement();
-        }
-        onToast?.(`Deleted .${name}`, 'success');
-      } catch (err) {
-        onToast?.(String(err), 'error');
-      }
-    },
-    [projectPath, editElement, onToast]
-  );
+  // NOTE: deleting a custom class (delete_custom_class backend command) is a
+  // Phase-2 follow-up — it needs a confirmation flow in the bar since it removes
+  // shared styles and leaves orphan class names in markup. Intentionally not
+  // wired to UI yet (rather than shipped as a dead, unconfirmed action).
 
   /**
    * Replace the selected image's src in source (immediate write, like a text
@@ -877,13 +885,13 @@ export function useVisualEditor({
     editClass,
     /** The project's custom classes (for the class bar + apply menu). */
     customClasses,
+    /** Whether a writable Tailwind entry stylesheet exists (gates create). */
+    classEntryReady,
     /** Append an existing custom class to the element and edit it. */
     applyClass,
     /** Remove a custom class from the element (keeps it defined in CSS). */
     unapplyClass,
     /** Extract the element's utilities into a new named class and edit it. */
     createClassFromStyles,
-    /** Delete a custom class from the project's CSS. */
-    deleteClass,
   };
 }

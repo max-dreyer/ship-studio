@@ -11,16 +11,23 @@ import { renderHook, act } from '@testing-library/react';
 
 vi.mock('../lib/edit', async (importActual) => {
   const actual = await importActual<typeof import('../lib/edit')>();
-  return { ...actual, resolveClassnameSource: vi.fn(), applyClassnameEdit: vi.fn() };
+  return {
+    ...actual,
+    resolveClassnameSource: vi.fn(),
+    applyClassnameEdit: vi.fn(),
+    applyClassnameEditMulti: vi.fn(),
+  };
 });
 
 // The hook lists custom classes on edit-mode entry; stub it so the test doesn't
 // reach for a real Tauri IPC (the focus here is the element auto-save path).
 vi.mock('../lib/customClasses', () => ({
+  detectTailwindSetup: vi
+    .fn()
+    .mockResolvedValue({ version: 'v4', entryCss: 'app.css', componentsLayer: false }),
   listCustomClasses: vi.fn().mockResolvedValue([]),
   createCustomClass: vi.fn(),
   updateCustomClass: vi.fn(),
-  deleteCustomClass: vi.fn(),
   classifyApplyTokens: vi.fn().mockResolvedValue([]),
 }));
 
@@ -28,13 +35,14 @@ import { useVisualEditor } from './useVisualEditor';
 import {
   resolveClassnameSource,
   applyClassnameEdit,
+  applyClassnameEditMulti,
   BASE_BREAKPOINT,
   DEFAULT_BREAKPOINTS,
 } from '../lib/edit';
 import {
+  detectTailwindSetup,
   updateCustomClass,
   createCustomClass,
-  deleteCustomClass,
   classifyApplyTokens,
   listCustomClasses,
 } from '../lib/customClasses';
@@ -100,6 +108,15 @@ async function select(className: string, source: MessageEventSource) {
 
 beforeEach(() => {
   vi.clearAllMocks(); // isolate call history between tests (no global clearMocks)
+  // clearAllMocks also drops the factory's resolved values — re-establish the
+  // defaults the hook awaits on edit-mode entry.
+  (detectTailwindSetup as ReturnType<typeof vi.fn>).mockResolvedValue({
+    version: 'v4',
+    entryCss: 'app.css',
+    componentsLayer: false,
+  });
+  (listCustomClasses as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+  (classifyApplyTokens as ReturnType<typeof vi.fn>).mockResolvedValue([]);
   vi.useFakeTimers({ shouldAdvanceTime: true });
   (resolveClassnameSource as ReturnType<typeof vi.fn>).mockImplementation(
     (_p: string, sig: { className: string }) =>
@@ -208,6 +225,11 @@ describe('useVisualEditor custom classes', () => {
     expect(proj).toBe('/proj');
     expect(name).toBe('btn');
     expect(tokens).toContain('px-8');
+    // …and the live class preview is dropped so the compiled @apply is authoritative.
+    const cleared = (post.mock.calls as Array<[{ type?: string; selector?: string }]>).find(
+      (c) => c[0]?.type === 'ss:clearClassPreview'
+    );
+    expect(cleared?.[0].selector).toBe('.btn');
   });
 
   it('returning to the element edits its className again', async () => {
@@ -340,20 +362,33 @@ describe('useVisualEditor class gestures (apply / unapply / extract / delete)', 
     expect(result.current.editTarget).toMatchObject({ kind: 'class', name: 'hero' });
   });
 
-  it('deleteClass removes the class and switches off it when it was the edit target', async () => {
-    (deleteCustomClass as Fn).mockResolvedValue([]);
+  it('applyClass honors a single-occurrence multiTarget for a multi-location element', async () => {
+    (resolveClassnameSource as Fn).mockResolvedValue({
+      status: 'multi',
+      locations: [
+        { file: 'a.tsx', line: 1, column: 1 },
+        { file: 'b.tsx', line: 2, column: 1 },
+      ],
+      class_name: 'p-3',
+    });
+    (applyClassnameEditMulti as Fn).mockResolvedValue(1);
     const { result } = await withSelection(
       [{ name: 'card', tokens: ['rounded'], editable: true }],
-      'p-3 card'
+      'p-3'
     );
-    act(() => result.current.editClass('card', ['rounded']));
-    expect(result.current.editTarget).toMatchObject({ kind: 'class', name: 'card' });
+    act(() => result.current.setMultiTarget(1)); // only the 2nd occurrence
 
     await act(async () => {
-      await result.current.deleteClass('card');
+      await result.current.applyClass('card');
     });
 
-    expect(deleteCustomClass).toHaveBeenCalledWith('/proj', 'card');
-    expect(result.current.editTarget).toEqual({ kind: 'element' });
+    const call = (applyClassnameEditMulti as Fn).mock.calls[0] as [
+      string,
+      { file: string; line: number; column: number }[],
+      string,
+      string,
+    ];
+    expect(call[1]).toEqual([{ file: 'b.tsx', line: 2, column: 1 }]); // only index 1
+    expect(call[3]).toBe('p-3 card');
   });
 });

@@ -1082,6 +1082,7 @@ export const Preview = forwardRef<PreviewHandle, PreviewProps>(function Preview(
               onMultiTargetChange={editor.setMultiTarget}
               editTarget={editor.editTarget}
               customClasses={editor.customClasses}
+              canCreateClass={editor.classEntryReady}
               onEditElement={editor.editElement}
               onEditClass={editor.editClass}
               onApplyClass={(name) => editor.applyClass(name)}

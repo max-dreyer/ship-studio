@@ -87,4 +87,15 @@ describe('ClassBar', () => {
       screen.getByRole('menuitem', { name: /create .*fresh-name.* from styles/i })
     ).toBeEnabled();
   });
+
+  it('disables create when the project has no writable Tailwind stylesheet', () => {
+    renderBar({ elementClass: 'p-3 flex', canCreate: false });
+    fireEvent.click(screen.getByRole('button'));
+    fireEvent.change(screen.getByPlaceholderText(/search or name a new class/i), {
+      target: { value: 'fresh-name' },
+    });
+    expect(
+      screen.getByRole('menuitem', { name: /create .*fresh-name.* from styles/i })
+    ).toBeDisabled();
+  });
 });
