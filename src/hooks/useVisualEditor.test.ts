@@ -242,7 +242,7 @@ describe('useVisualEditor class gestures (apply / unapply / extract / delete)', 
     return env;
   }
 
-  it('applyClass appends the bare class to the element and edits that class', async () => {
+  it('applyClass appends the bare class to the element without switching the edit target', async () => {
     const { result } = await withSelection(
       [{ name: 'card', tokens: ['rounded', 'shadow'], editable: true }],
       'p-3'
@@ -261,11 +261,36 @@ describe('useVisualEditor class gestures (apply / unapply / extract / delete)', 
     ];
     expect(call[3]).toBe('p-3'); // old className (drift baseline)
     expect(call[4]).toBe('p-3 card'); // new className — class appended
-    expect(result.current.editTarget).toEqual({
-      kind: 'class',
-      name: 'card',
-      baseline: 'rounded shadow',
+    // Stays on the element so several classes can be added in a row.
+    expect(result.current.editTarget).toEqual({ kind: 'element' });
+  });
+
+  it('applyClass can add a second class in a row (drift baseline tracks the live className)', async () => {
+    const { result } = await withSelection(
+      [
+        { name: 'card', tokens: ['rounded'], editable: true },
+        { name: 'featured', tokens: ['ring'], editable: true },
+      ],
+      'p-3'
+    );
+
+    await act(async () => {
+      await result.current.applyClass('card');
     });
+    await act(async () => {
+      await result.current.applyClass('featured');
+    });
+
+    // The second write builds on the first — no dropped class, correct old value.
+    const second = (applyClassnameEdit as Fn).mock.calls[1] as [
+      string,
+      string,
+      number,
+      string,
+      string,
+    ];
+    expect(second[3]).toBe('p-3 card'); // old = live className after the first apply
+    expect(second[4]).toBe('p-3 card featured');
   });
 
   it('unapplyClass removes the class from the element and returns to element editing', async () => {

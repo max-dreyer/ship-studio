@@ -284,8 +284,8 @@ interface Props {
   customClasses?: CustomClass[];
   onEditElement?: () => void;
   onEditClass?: (name: string, tokens: string[]) => void;
-  onApplyClass?: (name: string) => void;
-  onUnapplyClass?: (name: string) => void;
+  onApplyClass?: (name: string) => void | Promise<void>;
+  onUnapplyClass?: (name: string) => void | Promise<void>;
   onCreateClass?: (name: string) => void;
   /** Where the selected element's component is used project-wide (scope hint). */
   usage: UsageReport | null;

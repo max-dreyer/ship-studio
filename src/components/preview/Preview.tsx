@@ -1084,8 +1084,8 @@ export const Preview = forwardRef<PreviewHandle, PreviewProps>(function Preview(
               customClasses={editor.customClasses}
               onEditElement={editor.editElement}
               onEditClass={editor.editClass}
-              onApplyClass={(name) => void editor.applyClass(name)}
-              onUnapplyClass={(name) => void editor.unapplyClass(name)}
+              onApplyClass={(name) => editor.applyClass(name)}
+              onUnapplyClass={(name) => editor.unapplyClass(name)}
               onCreateClass={(name) => void editor.createClassFromStyles(name)}
               usage={editor.usage}
               onOpenInCode={onOpenInCode}

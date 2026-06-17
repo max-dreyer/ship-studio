@@ -2,15 +2,21 @@
  * Custom-class control for the visual editor.
  *
  * Renders as a standard panel control row (like "Breakpoint") whose dropdown
- * picks the *edit target*: "This element" (its own utilities) or one of the
- * custom classes applied to it (editing the shared `@apply` rule updates every
- * instance). The same menu applies an existing class, creates one from the
- * current styles, or removes the active class from the element. Styling reuses
- * the panel's native dropdown (`ss-enum__*`) so it matches the rest of the panel.
+ * picks the *edit target* — "This element" or one of the custom classes applied
+ * to it (editing the shared `@apply` rule updates every instance) — and manages
+ * which classes are on the element.
+ *
+ * The menu is searchable (essential past a handful of classes), names truncate
+ * rather than wrap, and the "Add to element" rows apply without closing the menu
+ * so several classes can be added in a row. Applies/unapplies are serialized
+ * (one in-flight at a time) so a rapid burst can't drop or mis-order writes.
+ * The search field doubles as the name for "create from styles".
  */
 
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
+import { PlusIcon } from '../icons/utility';
+import { CloseIcon } from '../icons/common';
 import type { CustomClass } from '../../lib/customClasses';
 import type { EditTarget } from '../../hooks/useVisualEditor';
 
@@ -21,8 +27,8 @@ interface Props {
   editTarget: EditTarget;
   onEditElement: () => void;
   onEditClass: (name: string, tokens: string[]) => void;
-  onApplyExisting: (name: string) => void;
-  onUnapply: (name: string) => void;
+  onApplyExisting: (name: string) => void | Promise<void>;
+  onUnapply: (name: string) => void | Promise<void>;
   onCreate: (name: string) => void;
 }
 
@@ -58,29 +64,32 @@ export function ClassBar({
     () => tokens.map((t) => byName.get(t)).filter((c): c is CustomClass => !!c),
     [tokens, byName]
   );
+  const appliedNames = useMemo(() => new Set(applied.map((c) => c.name)), [applied]);
   const hasUtilities = useMemo(() => tokens.some((t) => !byName.has(t)), [tokens, byName]);
   const available = useMemo(
-    () => customClasses.filter((c) => !tokens.includes(c.name)),
-    [customClasses, tokens]
+    () => customClasses.filter((c) => !appliedNames.has(c.name)),
+    [customClasses, appliedNames]
   );
-
-  const activeName = editTarget.kind === 'class' ? editTarget.name : null;
-  const triggerLabel = activeName ? `.${activeName}` : 'This element';
 
   const [open, setOpen] = useState(false);
-  const [creating, setCreating] = useState(false);
-  const [name, setName] = useState('');
-  const [menuRect, setMenuRect] = useState<{ top: number; left: number; width: number } | null>(
-    null
-  );
+  const [query, setQuery] = useState('');
+  // True while an apply/unapply write is in flight — disables the toggle rows so a
+  // rapid burst can't race (each write must land before the next starts).
+  const [busy, setBusy] = useState(false);
+  const [menuRect, setMenuRect] = useState<{ top: number; left: number } | null>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
+
+  const close = useCallback(() => {
+    setOpen(false);
+    setQuery('');
+  }, []);
 
   const reposition = useCallback(() => {
     const el = triggerRef.current;
     if (!el) return;
     const r = el.getBoundingClientRect();
-    setMenuRect({ top: r.bottom + 4, left: r.left, width: r.width });
+    setMenuRect({ top: r.bottom + 4, left: r.left });
   }, []);
 
   useLayoutEffect(() => {
@@ -99,158 +108,180 @@ export function ClassBar({
     const onDown = (e: PointerEvent) => {
       const t = e.target as Node;
       if (triggerRef.current?.contains(t) || menuRef.current?.contains(t)) return;
-      setOpen(false);
+      close();
     };
-    const onKey = (e: KeyboardEvent) => e.key === 'Escape' && setOpen(false);
+    const onKey = (e: KeyboardEvent) => e.key === 'Escape' && close();
     document.addEventListener('pointerdown', onDown, true);
     document.addEventListener('keydown', onKey);
     return () => {
       document.removeEventListener('pointerdown', onDown, true);
       document.removeEventListener('keydown', onKey);
     };
-  }, [open]);
+  }, [open, close]);
 
-  const nameValid = NAME_RE.test(name) && !byName.has(name);
-  const submitCreate = () => {
-    if (!nameValid || !hasUtilities) return;
-    onCreate(name.trim());
-    setName('');
-    setCreating(false);
-  };
-  const cancelCreate = () => {
-    setName('');
-    setCreating(false);
-  };
+  const q = query.trim().toLowerCase();
+  const matchedApplied = useMemo(
+    () => applied.filter((c) => c.name.toLowerCase().includes(q)),
+    [applied, q]
+  );
+  const matchedAvailable = useMemo(
+    () => available.filter((c) => c.name.toLowerCase().includes(q)),
+    [available, q]
+  );
+  const trimmed = query.trim();
+  const canCreate = NAME_RE.test(trimmed) && !byName.has(trimmed);
+  const showElementRow = q === '' || 'this element'.includes(q);
+
+  const activeName = editTarget.kind === 'class' ? editTarget.name : null;
+  const triggerLabel = activeName ? `.${activeName}` : 'This element';
+
+  // Apply/unapply keep the menu open; serialize so a burst can't race.
+  const toggle = useCallback(async (fn: () => void | Promise<void>) => {
+    setBusy(true);
+    try {
+      await fn();
+    } finally {
+      setBusy(false);
+    }
+  }, []);
+
+  const noMatches =
+    q !== '' && matchedApplied.length === 0 && matchedAvailable.length === 0 && !canCreate;
 
   return (
     <div className="ss-edit-panel__control">
       <span className="ss-edit-panel__label">Editing</span>
-
-      {creating ? (
-        <span className="ss-classedit__create">
-          <input
-            type="text"
-            className="ss-classedit__input"
-            placeholder="class-name"
-            value={name}
-            spellCheck={false}
-            autoFocus
-            onChange={(e) => setName(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter') submitCreate();
-              if (e.key === 'Escape') cancelCreate();
-            }}
-            onBlur={() => !name && cancelCreate()}
-          />
-          <button
-            type="button"
-            className="ss-classedit__go"
-            disabled={!nameValid || !hasUtilities}
-            title={
-              !hasUtilities
-                ? 'This element has no utility classes to extract'
-                : !NAME_RE.test(name)
-                  ? 'Enter a valid class name'
-                  : byName.has(name)
-                    ? 'A class with this name already exists'
-                    : 'Create the class from these styles'
-            }
-            onClick={submitCreate}
-          >
-            Create
-          </button>
-        </span>
-      ) : (
-        <button
-          ref={triggerRef}
-          type="button"
-          className="ss-enum__trigger"
-          aria-haspopup="menu"
-          aria-expanded={open}
-          onClick={() => setOpen((v) => !v)}
-        >
-          <span>{triggerLabel}</span>
-          <Chevron />
-        </button>
-      )}
+      <button
+        ref={triggerRef}
+        type="button"
+        className="ss-enum__trigger ss-classedit__trigger"
+        aria-haspopup="menu"
+        aria-expanded={open}
+        onClick={() => setOpen((v) => !v)}
+      >
+        <span className="ss-classedit__name">{triggerLabel}</span>
+        <Chevron />
+      </button>
 
       {open &&
         menuRect &&
         createPortal(
           <div
             ref={menuRef}
-            className="ss-enum__menu"
+            className="ss-enum__menu ss-classedit__menu"
             role="menu"
-            style={{ top: menuRect.top, left: menuRect.left, minWidth: menuRect.width }}
+            style={{ top: menuRect.top, left: menuRect.left }}
           >
-            <button
-              type="button"
-              role="menuitem"
-              className={`ss-enum__item${editTarget.kind === 'element' ? ' is-active' : ''}`}
-              onClick={() => {
-                onEditElement();
-                setOpen(false);
+            <input
+              type="text"
+              className="ss-classedit__search"
+              placeholder="Search or name a new class…"
+              value={query}
+              spellCheck={false}
+              autoFocus
+              onChange={(e) => setQuery(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Escape') close();
+                if (e.key === 'Enter' && canCreate && hasUtilities) {
+                  onCreate(trimmed);
+                  close();
+                }
               }}
-            >
-              This element
-            </button>
-            {applied.map((c) => (
-              <button
-                key={c.name}
-                type="button"
-                role="menuitem"
-                className={`ss-enum__item${activeName === c.name ? ' is-active' : ''}`}
-                title={c.editable ? undefined : `.${c.name} mixes custom CSS — edit it in code`}
-                disabled={!c.editable}
-                onClick={() => {
-                  onEditClass(c.name, c.tokens);
-                  setOpen(false);
-                }}
-              >
-                .{c.name}
-              </button>
-            ))}
+            />
 
-            <div className="ss-classedit__sep" role="separator" />
+            <div className="ss-classedit__scroll">
+              {showElementRow && (
+                <button
+                  type="button"
+                  role="menuitem"
+                  className={`ss-classedit__item${editTarget.kind === 'element' ? ' is-active' : ''}`}
+                  onClick={() => {
+                    onEditElement();
+                    close();
+                  }}
+                >
+                  <span className="ss-classedit__name">This element</span>
+                </button>
+              )}
 
-            {available.map((c) => (
+              {matchedApplied.map((c) => (
+                <div
+                  key={c.name}
+                  className={`ss-classedit__row${activeName === c.name ? ' is-active' : ''}`}
+                >
+                  <button
+                    type="button"
+                    role="menuitem"
+                    className="ss-classedit__pick"
+                    disabled={!c.editable}
+                    title={
+                      c.editable
+                        ? `Edit .${c.name} — updates every element using it`
+                        : `.${c.name} mixes custom CSS — edit it in code`
+                    }
+                    onClick={() => {
+                      if (!c.editable) return;
+                      onEditClass(c.name, c.tokens);
+                      close();
+                    }}
+                  >
+                    <span className="ss-classedit__name">.{c.name}</span>
+                  </button>
+                  <button
+                    type="button"
+                    className="ss-classedit__x"
+                    disabled={busy}
+                    title={`Remove .${c.name} from this element`}
+                    onClick={() => void toggle(() => onUnapply(c.name))}
+                  >
+                    <CloseIcon size={11} />
+                  </button>
+                </div>
+              ))}
+
+              {matchedAvailable.length > 0 && (
+                <div className="ss-classedit__group">Add to element</div>
+              )}
+              {matchedAvailable.map((c) => (
+                <button
+                  key={c.name}
+                  type="button"
+                  role="menuitem"
+                  className="ss-classedit__item ss-classedit__item--add"
+                  disabled={busy}
+                  title={`Apply .${c.name} to this element`}
+                  onClick={() => void toggle(() => onApplyExisting(c.name))}
+                >
+                  <PlusIcon size={11} />
+                  <span className="ss-classedit__name">.{c.name}</span>
+                </button>
+              ))}
+
+              {noMatches && (
+                <div className="ss-classedit__empty">No classes match “{trimmed}”.</div>
+              )}
+            </div>
+
+            {canCreate && (
               <button
-                key={c.name}
                 type="button"
                 role="menuitem"
-                className="ss-enum__item ss-classedit__muted"
+                className="ss-classedit__createrow"
+                disabled={!hasUtilities}
+                title={
+                  hasUtilities
+                    ? `Create .${trimmed} from this element's current styles`
+                    : 'This element has no utility classes to extract'
+                }
                 onClick={() => {
-                  onApplyExisting(c.name);
-                  setOpen(false);
+                  onCreate(trimmed);
+                  close();
                 }}
               >
-                Apply .{c.name}
-              </button>
-            ))}
-            <button
-              type="button"
-              role="menuitem"
-              className="ss-enum__item ss-classedit__muted"
-              title={hasUtilities ? undefined : 'This element has no utility classes to extract'}
-              disabled={!hasUtilities}
-              onClick={() => {
-                setOpen(false);
-                setCreating(true);
-              }}
-            >
-              + New class from styles…
-            </button>
-            {activeName && (
-              <button
-                type="button"
-                role="menuitem"
-                className="ss-enum__item ss-classedit__muted"
-                onClick={() => {
-                  onUnapply(activeName);
-                  setOpen(false);
-                }}
-              >
-                Remove .{activeName} from element
+                <PlusIcon size={11} />
+                <span className="ss-classedit__name">
+                  Create <b>.{trimmed}</b> from styles
+                </span>
               </button>
             )}
           </div>,

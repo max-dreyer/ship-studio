@@ -607,8 +607,13 @@ export function useVisualEditor({
             target === 'all' ? res.locations : res.locations.filter((_, i) => i === target);
           await applyClassnameEditMulti(projectPath, edits, res.class_name, next);
         }
-        // Advance the drift baseline so consecutive edits keep working.
+        // Advance the drift baseline so consecutive edits keep working. Keep
+        // selectedSigRef in lockstep — the structural gestures use it as the live
+        // source-className baseline, so it must reflect saved style edits too.
         setSelection({ ...sel, resolution: { ...res, class_name: next } });
+        if (selectedSigRef.current) {
+          selectedSigRef.current = { ...selectedSigRef.current, className: next };
+        }
         // Tell the in-iframe script this live state is now the saved baseline, so
         // deactivating (closing the panel) doesn't revert the just-saved edit
         // before HMR re-renders it from source.
@@ -633,12 +638,16 @@ export function useVisualEditor({
         onToast?.('Select an element whose source can be resolved first.', 'error');
         return false;
       }
-      if (next === res.class_name) return true;
+      // Drift baseline = the LIVE source className (selectedSigRef), not the
+      // possibly-stale `selection` state — so a burst of applies/unapplies before
+      // React re-renders each still writes against the right old value.
+      const prev = selectedSigRef.current?.className ?? res.class_name;
+      if (next === prev) return true;
       post({ type: 'ss:suppressReload' });
       if (res.status === 'resolved') {
-        await applyClassnameEdit(projectPath, res.file, res.line, res.class_name, next);
+        await applyClassnameEdit(projectPath, res.file, res.line, prev, next);
       } else {
-        await applyClassnameEditMulti(projectPath, res.locations, res.class_name, next);
+        await applyClassnameEditMulti(projectPath, res.locations, prev, next);
       }
       // Keep BOTH the selection signature (drives the class-bar chips) and the
       // resolution baseline (drift guard) in sync with the element's new class.
@@ -665,38 +674,36 @@ export function useVisualEditor({
     []
   );
 
-  /** Add an existing custom class to the selected element (appends the bare name
-   *  to its className) and switch the controls to editing that class. */
+  /** Append an existing custom class to the selected element. Does NOT switch the
+   *  edit target — so several classes can be added in a row without the panel
+   *  yanking you into editing each one. */
   const applyClass = useCallback(
     async (name: string) => {
-      const cls = customClasses.find((c) => c.name === name);
       const current = currentElementClass().split(/\s+/).filter(Boolean);
-      if (current.includes(name)) {
-        editClass(name, cls?.tokens ?? []);
-        return;
-      }
+      if (current.includes(name)) return; // already on the element
       try {
-        const ok = await writeElementClass([...current, name].join(' '));
-        if (!ok) return;
-        editClass(name, cls?.tokens ?? []);
+        await writeElementClass([...current, name].join(' '));
       } catch (err) {
         onToast?.(String(err), 'error');
       }
     },
-    [customClasses, currentElementClass, writeElementClass, editClass, onToast]
+    [currentElementClass, writeElementClass, onToast]
   );
 
-  /** Remove a custom class from the selected element (unapply — the class stays
-   *  defined in CSS). Returns the controls to editing the element. */
+  /** Remove a custom class from the selected element (the class stays defined in
+   *  CSS). Falls back to editing the element only if the removed class was the
+   *  active edit target. */
   const unapplyClass = useCallback(
     async (name: string) => {
       const next = currentElementClass()
         .split(/\s+/)
         .filter((t) => t && t !== name)
         .join(' ');
+      const wasEditing =
+        editTargetRef.current.kind === 'class' && editTargetRef.current.name === name;
       try {
         const ok = await writeElementClass(next);
-        if (ok) editElement();
+        if (ok && wasEditing) editElement();
       } catch (err) {
         onToast?.(String(err), 'error');
       }

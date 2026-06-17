@@ -3,7 +3,8 @@
 
    The context bar is the fixed sub-header that always shows which breakpoint and
    which target (element vs. a shared custom class) you're editing; the control
-   itself reuses the panel's native ss-enum dropdown (see ClassBar.tsx). */
+   itself is a searchable dropdown built on the panel's ss-enum menu shell
+   (see ClassBar.tsx). */
 
 /* Fixed context bar (breakpoint + edit target) — never scrolls, so you can
    always see which breakpoint and class you're editing. */
@@ -16,34 +17,27 @@
   border-bottom: 1px solid var(--border);
 }
 
-.ss-classedit__sep {
-  height: 1px;
-  margin: var(--spacing-xs) 0;
-  background: var(--border);
-}
-/* Action items (apply / create / remove) read one notch quieter than the
-   target options above the separator. */
-.ss-classedit__muted {
-  color: var(--text-muted);
-}
-.ss-classedit__muted:hover:not(:disabled) {
-  color: var(--text-primary);
-  background: color-mix(in srgb, var(--text-primary) 8%, transparent);
-}
-.ss-classedit__muted:disabled {
-  opacity: 0.45;
-  cursor: default;
+/* Trigger truncates a long active class name rather than overflowing the row. */
+.ss-classedit__trigger {
+  max-width: 170px;
 }
 
-/* Inline "create from styles" editor — sits in the control's value slot. */
-.ss-classedit__create {
-  display: inline-flex;
+/* Wider than the default enum menu so class names have room; a fixed shell with
+   a fixed search field on top and a scrolling list below. Overrides the
+   ss-enum__menu defaults (loaded earlier, same specificity). */
+.ss-classedit__menu {
+  display: flex;
+  flex-direction: column;
   gap: var(--spacing-xs);
-  align-items: center;
+  width: 248px;
+  max-width: calc(100vw - var(--spacing-md) * 2);
+  max-height: 340px;
+  overflow: hidden;
 }
-.ss-classedit__input {
-  width: 110px;
-  height: 22px;
+.ss-classedit__search {
+  flex: 0 0 auto;
+  width: 100%;
+  height: 28px;
   padding: 0 var(--spacing-sm);
   font-size: var(--font-size-sm);
   color: var(--text-primary);
@@ -51,24 +45,143 @@
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
 }
-.ss-classedit__input:focus {
+.ss-classedit__search:focus {
   outline: none;
   border-color: var(--accent);
 }
-.ss-classedit__go {
-  height: 22px;
-  padding: 0 var(--spacing-sm);
-  font-size: var(--font-size-sm);
-  color: var(--action-text);
-  background: var(--action);
-  border: none;
-  border-radius: var(--radius-sm);
+.ss-classedit__scroll {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  scrollbar-width: none;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+.ss-classedit__scroll::-webkit-scrollbar {
+  width: 0;
+  height: 0;
+}
+
+/* Reset only the size-breaking bits of the global `button` rule; backgrounds and
+   borders are set per-element below at class specificity. */
+.ss-classedit__menu button {
+  font: inherit;
+  margin: 0;
+  padding: 0;
+  line-height: 1;
   cursor: pointer;
 }
-.ss-classedit__go:hover:not(:disabled) {
-  background: var(--action-hover);
+
+/* A target row (This element / an applied class) and an add row share metrics. */
+.ss-classedit__item,
+.ss-classedit__row,
+.ss-classedit__createrow {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-xs);
+  width: 100%;
+  min-width: 0;
+  border-radius: calc(var(--radius-sm) - 1px);
 }
-.ss-classedit__go:disabled {
-  opacity: 0.45;
+.ss-classedit__item,
+.ss-classedit__createrow {
+  padding: 5px var(--spacing-sm);
+  font-size: var(--font-size-sm);
+  text-align: left;
+  color: var(--text-secondary);
+  background: none;
+}
+.ss-classedit__item:hover:not(:disabled),
+.ss-classedit__row:hover,
+.ss-classedit__createrow:hover:not(:disabled) {
+  color: var(--text-primary);
+  background: color-mix(in srgb, var(--text-primary) 8%, transparent);
+}
+.ss-classedit__item.is-active,
+.ss-classedit__row.is-active {
+  color: var(--action-text);
+  background: var(--action);
+}
+.ss-classedit__item.is-active:hover,
+.ss-classedit__row.is-active:hover {
+  background: var(--action);
+}
+.ss-classedit__item:disabled {
+  opacity: 0.5;
   cursor: default;
+}
+
+/* Applied-class row: the name picks (edit) on the left, × removes on the right. */
+.ss-classedit__pick {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  padding: 5px var(--spacing-sm);
+  font-size: var(--font-size-sm);
+  text-align: left;
+  color: inherit;
+  background: none;
+}
+.ss-classedit__pick:hover {
+  background: none;
+}
+.ss-classedit__pick:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+.ss-classedit__x {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  align-self: stretch;
+  width: 24px;
+  color: inherit;
+  opacity: 0.6;
+  background: none;
+}
+.ss-classedit__x:hover:not(:disabled) {
+  opacity: 1;
+}
+.ss-classedit__x:disabled {
+  opacity: 0.3;
+  cursor: default;
+}
+
+.ss-classedit__item--add {
+  color: var(--text-muted);
+}
+.ss-classedit__createrow {
+  color: var(--text-secondary);
+  border-top: 1px solid var(--border);
+  border-radius: 0;
+  padding: var(--spacing-sm);
+}
+.ss-classedit__createrow:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+/* The label that truncates instead of wrapping. The flex parent's min-width:0
+   lets the ellipsis kick in. */
+.ss-classedit__name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+
+.ss-classedit__group {
+  padding: var(--spacing-xs) var(--spacing-sm) 2px;
+  font-size: var(--font-size-xs);
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.ss-classedit__empty {
+  padding: var(--spacing-sm);
+  font-size: var(--font-size-sm);
+  color: var(--text-muted);
 }
