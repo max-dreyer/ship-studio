@@ -321,14 +321,23 @@
 
 /* Compound selector: this file loads before visual-editor.css, so the pinned
    overrides need higher specificity than the base .ss-edit-panel rules. */
+/* The pinned panel's grid cell. The panel inside is absolutely positioned, so it
+   contributes nothing to grid track sizing — the cell is sized purely by the
+   canvas column, which is bounded. This is what finally lets the panel body
+   scroll: an in-flow panel was growing its own row past the viewport in WebKit. */
+.ss-edit-panel-dock {
+  grid-area: 2 / -2 / -1 / -1;
+  position: relative;
+  min-height: 0;
+  min-width: 0;
+  overflow: hidden;
+}
+
 .ss-edit-panel.ss-edit-panel--pinned {
   position: absolute;
   inset: 0;
   width: auto;
   min-width: 0;
-  /* Grid items default to min-height:auto; pin it to 0 so the panel can't grow
-     its grid row (the row's own minimum is also forced to 0 via minmax(0,1fr) on
-     .preview-container) and the body's overflow-y handles the scroll. */
   min-height: 0;
   max-height: none;
   border-radius: 0;
