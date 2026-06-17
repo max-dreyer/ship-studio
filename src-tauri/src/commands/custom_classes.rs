@@ -209,7 +209,12 @@ fn css_has_tailwind_directive(css: &str) -> bool {
 /// True if the stylesheet contains a `@layer components { … }` BLOCK (not just a
 /// `@layer a, components, b;` declaration list).
 fn has_components_layer(css: &str) -> bool {
-    let kind = css_scan(css);
+    components_layer_open(css, &css_scan(css)).is_some()
+}
+
+/// The index of the opening `{` of a `@layer components { … }` BLOCK (not a
+/// `@layer a, components, b;` declaration list), if one exists.
+fn components_layer_open(css: &str, kind: &[CssKind]) -> Option<usize> {
     let bytes = css.as_bytes();
     let mut from = 0;
     while let Some(rel) = css[from..].find("@layer") {
@@ -231,11 +236,11 @@ fn has_components_layer(css: &str) -> bool {
                 .split([',', ' ', '\t', '\n', '\r'])
                 .any(|n| n.trim() == "components")
             {
-                return true;
+                return Some(j);
             }
         }
     }
-    false
+    None
 }
 
 // ───────────────────────── CSS scanning (pure) ──────────────────────────────
@@ -356,9 +361,10 @@ fn code_text(s: &str, kind: &[CssKind]) -> String {
     String::from_utf8_lossy(&out).into_owned()
 }
 
-/// The selector text immediately preceding the rule body that opens at `open`
-/// (back to the previous code-level `}`, `{`, or `;`), comments stripped.
-fn selector_prelude(css: &str, kind: &[CssKind], open: usize) -> String {
+/// The start byte and (comment-stripped, trimmed) text of the selector prelude
+/// preceding the rule body that opens at `open` — back to the previous
+/// code-level `}`, `{`, or `;`.
+fn prelude_bounds(css: &str, kind: &[CssKind], open: usize) -> (usize, String) {
     let bytes = css.as_bytes();
     let mut start = open;
     while start > 0 {
@@ -368,9 +374,16 @@ fn selector_prelude(css: &str, kind: &[CssKind], open: usize) -> String {
         }
         start -= 1;
     }
-    code_text(&css[start..open], &kind[start..open])
+    let text = code_text(&css[start..open], &kind[start..open])
         .trim()
-        .to_string()
+        .to_string();
+    (start, text)
+}
+
+/// The selector text immediately preceding the rule body that opens at `open`,
+/// comments stripped.
+fn selector_prelude(css: &str, kind: &[CssKind], open: usize) -> String {
+    prelude_bounds(css, kind, open).1
 }
 
 /// If `prelude` is exactly one simple class selector (`.name`), return `name`.
@@ -477,6 +490,295 @@ fn parse_custom_classes(css: &str) -> Vec<CustomClass> {
         // Skip the rest of this rule so a second @apply inside it isn't reprocessed.
         from = close;
     }
+    out
+}
+
+// ───────────────────────── Write commands ───────────────────────────────────
+
+/// Create a new custom class from a list of Tailwind tokens. Inserted into the
+/// existing `@layer components { … }` block, or a freshly-appended one. Returns
+/// the project's updated class list. Fails (Validation) on a bad name, bad
+/// tokens, a duplicate, or a project with no Tailwind entry stylesheet.
+#[tauri::command]
+#[tracing::instrument(skip(tokens), fields(project = %project_path, name = %name))]
+pub fn create_custom_class(
+    project_path: String,
+    name: String,
+    tokens: Vec<String>,
+) -> Result<Vec<CustomClass>, CommandError> {
+    write_entry_css(&project_path, |css| {
+        create_class_in_css(css, &name, &tokens)
+    })
+}
+
+/// Replace a custom class's `@apply` token list. Refuses (Validation) if the
+/// class is missing or mixes raw declarations the editor can't safely rewrite.
+#[tauri::command]
+#[tracing::instrument(skip(tokens), fields(project = %project_path, name = %name))]
+pub fn update_custom_class(
+    project_path: String,
+    name: String,
+    tokens: Vec<String>,
+) -> Result<Vec<CustomClass>, CommandError> {
+    write_entry_css(&project_path, |css| {
+        update_class_in_css(css, &name, &tokens)
+    })
+}
+
+/// Remove a custom class rule from the entry stylesheet (cleaning up a
+/// now-empty `@layer components` block). Markup still referencing the class is
+/// left untouched — the caller warns the user, mirroring i18n removal.
+#[tauri::command]
+#[tracing::instrument(fields(project = %project_path, name = %name))]
+pub fn delete_custom_class(
+    project_path: String,
+    name: String,
+) -> Result<Vec<CustomClass>, CommandError> {
+    write_entry_css(&project_path, |css| delete_class_in_css(css, &name))
+}
+
+/// Locate the project's entry stylesheet, apply a pure string transform to it,
+/// write the result back, and return the fresh class list. Centralizes path
+/// validation, the missing-entry error, and the string-error → Validation map.
+fn write_entry_css(
+    project_path: &str,
+    edit: impl FnOnce(&str) -> Result<String, String>,
+) -> Result<Vec<CustomClass>, CommandError> {
+    let root = validate_project_path(project_path)?;
+    let entry = detect_setup_at(&root)
+        .entry_css
+        .ok_or_else(|| CommandError::Validation {
+            field: "entryCss".into(),
+            reason: "No Tailwind entry stylesheet found in this project".into(),
+        })?;
+    let abs = root.join(&entry);
+
+    // Defense in depth: the entry stylesheet must resolve inside the project.
+    let canon_root = root.canonicalize().map_err(CommandError::from)?;
+    let canon_abs = abs.canonicalize().map_err(CommandError::from)?;
+    if !canon_abs.starts_with(&canon_root) {
+        return Err(CommandError::Validation {
+            field: "entryCss".into(),
+            reason: "entry stylesheet is outside the project".into(),
+        });
+    }
+
+    let css = std::fs::read_to_string(&abs).map_err(CommandError::from)?;
+    let updated = edit(&css).map_err(|reason| CommandError::Validation {
+        field: "customClass".into(),
+        reason,
+    })?;
+    std::fs::write(&abs, &updated).map_err(CommandError::from)?;
+    Ok(parse_custom_classes(&updated))
+}
+
+// ───────────────────────── Validation ───────────────────────────────────────
+
+/// A class name we can write into a `.name { … }` selector — a CSS identifier
+/// restricted to the same charset [`single_class_name`] accepts when reading.
+fn validate_class_name(name: &str) -> Result<(), String> {
+    let Some(first) = name.chars().next() else {
+        return Err("Class name cannot be empty".into());
+    };
+    if name.len() > 64 {
+        return Err("Class name is too long".into());
+    }
+    if !(first.is_ascii_alphabetic() || first == '_' || first == '-') {
+        return Err(format!(
+            "Class name `{name}` must start with a letter, dash, or underscore"
+        ));
+    }
+    if !name
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+    {
+        return Err(format!(
+            "Class name `{name}` may only contain letters, numbers, dashes, and underscores"
+        ));
+    }
+    Ok(())
+}
+
+/// Validate a token list destined for an `@apply` statement. Beyond emptiness,
+/// this is an injection guard: tokens are interpolated into CSS, so anything
+/// that could escape the statement, rule, or a comment is rejected. Tailwind's
+/// own metacharacters (`/`, `:`, `[]`, `!`, `-`, `%`, `.`) all pass.
+fn validate_tokens(tokens: &[String]) -> Result<(), String> {
+    if tokens.is_empty() {
+        return Err("Add at least one utility class".into());
+    }
+    if tokens.len() > 200 {
+        return Err("Too many utilities (max 200)".into());
+    }
+    for t in tokens {
+        if t.is_empty() {
+            return Err("Empty utility token".into());
+        }
+        if t.chars().any(|c| c.is_whitespace()) {
+            return Err(format!("Utility `{t}` contains whitespace"));
+        }
+        if t.contains([';', '{', '}', '"', '\'']) {
+            return Err(format!("Utility `{t}` contains an illegal character"));
+        }
+        if t.contains("/*") || t.contains("*/") {
+            return Err(format!("Utility `{t}` contains a comment marker"));
+        }
+    }
+    Ok(())
+}
+
+// ───────────────────────── Pure CSS transforms ──────────────────────────────
+
+/// A `.name { … }` rule located in source.
+struct ClassRule {
+    /// Start byte of the selector prelude (for whole-rule removal).
+    prelude_start: usize,
+    /// The rule body's opening `{`.
+    open: usize,
+    /// The matching closing `}`.
+    close: usize,
+}
+
+/// Find the first `.name { … }` rule (at any nesting depth).
+fn find_class_rule(css: &str, kind: &[CssKind], name: &str) -> Option<ClassRule> {
+    let bytes = css.as_bytes();
+    // Every code-level `{` opens a block in CSS; descend through at-rule blocks
+    // (`@layer`/`@media`) so nested class rules are reachable.
+    for i in 0..bytes.len() {
+        if kind[i] != CssKind::Code || bytes[i] != b'{' {
+            continue;
+        }
+        let (prelude_start, prelude) = prelude_bounds(css, kind, i);
+        if single_class_name(&prelude).as_deref() == Some(name) {
+            if let Some(close) = match_brace(bytes, kind, i) {
+                return Some(ClassRule {
+                    prelude_start,
+                    open: i,
+                    close,
+                });
+            }
+        }
+    }
+    None
+}
+
+fn rule_text(name: &str, tokens: &[String]) -> String {
+    format!(".{} {{ @apply {}; }}", name, tokens.join(" "))
+}
+
+fn create_class_in_css(css: &str, name: &str, tokens: &[String]) -> Result<String, String> {
+    validate_class_name(name)?;
+    validate_tokens(tokens)?;
+    let kind = css_scan(css);
+    if find_class_rule(css, &kind, name).is_some() {
+        return Err(format!("A class named `.{name}` already exists"));
+    }
+    let rule = rule_text(name, tokens);
+
+    if let Some(open) = components_layer_open(css, &kind) {
+        // Insert as the first rule inside the existing components layer.
+        let mut out = String::with_capacity(css.len() + rule.len() + 4);
+        out.push_str(&css[..=open]);
+        out.push_str("\n  ");
+        out.push_str(&rule);
+        out.push_str(&css[open + 1..]);
+        Ok(out)
+    } else {
+        // Append a fresh components layer at the end of the file.
+        let mut out = css.to_string();
+        if !out.is_empty() && !out.ends_with('\n') {
+            out.push('\n');
+        }
+        out.push_str(&format!("\n@layer components {{\n  {rule}\n}}\n"));
+        Ok(out)
+    }
+}
+
+fn update_class_in_css(css: &str, name: &str, tokens: &[String]) -> Result<String, String> {
+    validate_tokens(tokens)?;
+    let kind = css_scan(css);
+    let rule =
+        find_class_rule(css, &kind, name).ok_or_else(|| format!("`.{name}` was not found"))?;
+
+    let (_, editable) = parse_rule_body(
+        &css[rule.open + 1..rule.close],
+        &kind[rule.open + 1..rule.close],
+    );
+    if !editable {
+        return Err(format!(
+            "`.{name}` has custom CSS this editor can't safely rewrite"
+        ));
+    }
+
+    let mut out = String::with_capacity(css.len());
+    out.push_str(&css[..=rule.open]);
+    out.push_str(&format!(" @apply {}; ", tokens.join(" ")));
+    out.push_str(&css[rule.close..]);
+    Ok(out)
+}
+
+fn delete_class_in_css(css: &str, name: &str) -> Result<String, String> {
+    let kind = css_scan(css);
+    let rule =
+        find_class_rule(css, &kind, name).ok_or_else(|| format!("`.{name}` was not found"))?;
+    let bytes = css.as_bytes();
+
+    // Widen the removal to the whole line(s): trim leading indentation and a
+    // single trailing newline so we don't leave a blank gap behind.
+    let mut start = rule.prelude_start;
+    while start > 0 && matches!(bytes[start - 1], b' ' | b'\t') {
+        start -= 1;
+    }
+    let mut end = rule.close + 1;
+    while end < bytes.len() && matches!(bytes[end], b' ' | b'\t') {
+        end += 1;
+    }
+    if end < bytes.len() && bytes[end] == b'\r' {
+        end += 1;
+    }
+    if end < bytes.len() && bytes[end] == b'\n' {
+        end += 1;
+    }
+
+    let mut out = String::with_capacity(css.len());
+    out.push_str(&css[..start]);
+    out.push_str(&css[end..]);
+    Ok(remove_empty_components_layer(&out))
+}
+
+/// If a `@layer components { … }` block is now whitespace-only, remove it (and
+/// its surrounding blank line) so deleting the last class doesn't leave litter.
+fn remove_empty_components_layer(css: &str) -> String {
+    let kind = css_scan(css);
+    let bytes = css.as_bytes();
+    let Some(open) = components_layer_open(css, &kind) else {
+        return css.to_string();
+    };
+    let Some(close) = match_brace(bytes, &kind, open) else {
+        return css.to_string();
+    };
+    if !css[open + 1..close].trim().is_empty() {
+        return css.to_string();
+    }
+
+    let (prelude_start, _) = prelude_bounds(css, &kind, open);
+    let mut end = close + 1;
+    while end < bytes.len() && matches!(bytes[end], b' ' | b'\t') {
+        end += 1;
+    }
+    if end < bytes.len() && bytes[end] == b'\r' {
+        end += 1;
+    }
+    if end < bytes.len() && bytes[end] == b'\n' {
+        end += 1;
+    }
+
+    let mut out = String::with_capacity(css.len());
+    out.push_str(css[..prelude_start].trim_end_matches([' ', '\t', '\n', '\r']));
+    if !out.is_empty() {
+        out.push('\n');
+    }
+    out.push_str(&css[end..]);
     out
 }
 
@@ -726,5 +1028,144 @@ div.card { @apply p-4; }
         assert_eq!(setup.version, TailwindVersion::V3);
         assert_eq!(setup.entry_css, None);
         std::fs::remove_dir_all(&dir).ok();
+    }
+
+    // ───────────── Validation ─────────────
+
+    #[test]
+    fn rejects_bad_class_names() {
+        assert!(validate_class_name("btn-primary").is_ok());
+        assert!(validate_class_name("_x").is_ok());
+        assert!(validate_class_name("").is_err());
+        assert!(validate_class_name("1btn").is_err());
+        assert!(validate_class_name("a b").is_err());
+        assert!(validate_class_name("a.b").is_err());
+        assert!(validate_class_name("a}b").is_err());
+    }
+
+    #[test]
+    fn rejects_dangerous_tokens_but_allows_tailwind_metachars() {
+        // Real Tailwind tokens with metacharacters all pass.
+        assert!(validate_tokens(&[
+            "bg-black/50".into(),
+            "w-1/2".into(),
+            "hover:bg-[#1a3c5e]".into(),
+            "[clip-path:circle(50%)]".into(),
+            "!font-bold".into(),
+        ])
+        .is_ok());
+        // Injection attempts are rejected.
+        assert!(validate_tokens(&[]).is_err());
+        assert!(validate_tokens(&["a; } .evil { color:red".into()]).is_err());
+        assert!(validate_tokens(&["a{b".into()]).is_err());
+        assert!(validate_tokens(&["a*/b".into()]).is_err());
+        assert!(validate_tokens(&["has space".into()]).is_err());
+    }
+
+    // ───────────── create_class_in_css ─────────────
+
+    #[test]
+    fn create_inserts_into_existing_components_layer() {
+        let css = "@import \"tailwindcss\";\n@layer components {\n  .card { @apply rounded; }\n}\n";
+        let out = create_class_in_css(css, "btn", &["px-4".into(), "py-2".into()]).unwrap();
+        // New rule lands inside the existing layer; both classes parse back out.
+        let names: Vec<String> = parse_custom_classes(&out)
+            .into_iter()
+            .map(|c| c.name)
+            .collect();
+        assert!(names.contains(&"btn".to_string()));
+        assert!(names.contains(&"card".to_string()));
+        assert!(out.contains("@apply px-4 py-2;"));
+        // Didn't spawn a second components layer.
+        assert_eq!(out.matches("@layer components").count(), 1);
+    }
+
+    #[test]
+    fn create_appends_a_components_layer_when_absent() {
+        let css = "@import \"tailwindcss\";\n";
+        let out = create_class_in_css(css, "btn", &["px-4".into()]).unwrap();
+        assert!(has_components_layer(&out));
+        let parsed = parse_custom_classes(&out);
+        assert_eq!(parsed.len(), 1);
+        assert_eq!(parsed[0].name, "btn");
+        assert_eq!(parsed[0].tokens, vec!["px-4"]);
+    }
+
+    #[test]
+    fn create_rejects_duplicate_and_bad_input() {
+        let css = ".btn { @apply p-2; }";
+        assert!(create_class_in_css(css, "btn", &["p-4".into()]).is_err());
+        assert!(create_class_in_css(css, "1bad", &["p-4".into()]).is_err());
+        assert!(create_class_in_css(css, "ok", &[]).is_err());
+    }
+
+    // ───────────── update_class_in_css ─────────────
+
+    #[test]
+    fn update_replaces_the_apply_list_only() {
+        let css =
+            "@layer components {\n  .btn { @apply px-4 py-2; }\n  .card { @apply rounded; }\n}\n";
+        let out = update_class_in_css(
+            css,
+            "btn",
+            &["px-8".into(), "py-4".into(), "rounded-lg".into()],
+        )
+        .unwrap();
+        let btn = parse_custom_classes(&out)
+            .into_iter()
+            .find(|c| c.name == "btn")
+            .unwrap();
+        assert_eq!(btn.tokens, vec!["px-8", "py-4", "rounded-lg"]);
+        // The sibling rule is untouched.
+        assert!(out.contains(".card { @apply rounded; }"));
+    }
+
+    #[test]
+    fn update_refuses_missing_or_unsafe_rules() {
+        assert!(update_class_in_css(".btn { @apply p-2; }", "ghost", &["p-4".into()]).is_err());
+        // Mixed raw declaration → not safe to rewrite.
+        let mixed = ".btn { @apply p-2; color: red; }";
+        assert!(update_class_in_css(mixed, "btn", &["p-4".into()]).is_err());
+    }
+
+    // ───────────── delete_class_in_css ─────────────
+
+    #[test]
+    fn delete_removes_rule_and_keeps_siblings() {
+        let css = "@layer components {\n  .btn { @apply px-4; }\n  .card { @apply rounded; }\n}\n";
+        let out = delete_class_in_css(css, "btn").unwrap();
+        let names: Vec<String> = parse_custom_classes(&out)
+            .into_iter()
+            .map(|c| c.name)
+            .collect();
+        assert_eq!(names, vec!["card"]);
+        assert!(!out.contains(".btn"));
+        // No blank line left where .btn was.
+        assert!(!out.contains("\n\n  .card"));
+    }
+
+    #[test]
+    fn delete_removes_now_empty_components_layer() {
+        let css = "@import \"tailwindcss\";\n\n@layer components {\n  .btn { @apply px-4; }\n}\n";
+        let out = delete_class_in_css(css, "btn").unwrap();
+        assert!(!has_components_layer(&out));
+        assert!(out.contains("@import \"tailwindcss\";"));
+    }
+
+    #[test]
+    fn delete_rejects_missing_rule() {
+        assert!(delete_class_in_css(".btn { @apply p-2; }", "ghost").is_err());
+    }
+
+    #[test]
+    fn create_then_update_then_delete_round_trips() {
+        let mut css = "@import \"tailwindcss\";\n".to_string();
+        css = create_class_in_css(&css, "btn", &["px-4".into(), "py-2".into()]).unwrap();
+        css = update_class_in_css(&css, "btn", &["px-6".into()]).unwrap();
+        let parsed = parse_custom_classes(&css);
+        assert_eq!(parsed.len(), 1);
+        assert_eq!(parsed[0].tokens, vec!["px-6"]);
+        css = delete_class_in_css(&css, "btn").unwrap();
+        assert!(parse_custom_classes(&css).is_empty());
     }
 }

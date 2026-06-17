@@ -46,3 +46,39 @@ export function detectTailwindSetup(projectPath: string): Promise<TailwindSetup>
 export function listCustomClasses(projectPath: string): Promise<CustomClass[]> {
   return invoke<CustomClass[]>('list_custom_classes', { projectPath });
 }
+
+/**
+ * Create a new custom class from Tailwind tokens (written as `@apply` into the
+ * entry stylesheet's `@layer components`). Rejects bad names, bad tokens,
+ * duplicates, or a project with no Tailwind entry stylesheet. Resolves to the
+ * project's updated class list.
+ */
+export function createCustomClass(
+  projectPath: string,
+  name: string,
+  tokens: string[]
+): Promise<CustomClass[]> {
+  return invoke<CustomClass[]>('create_custom_class', { projectPath, name, tokens });
+}
+
+/**
+ * Replace a custom class's `@apply` token list — updating every element that
+ * carries the class. Rejects a missing class or one mixing raw declarations the
+ * editor can't safely rewrite. Resolves to the updated class list.
+ */
+export function updateCustomClass(
+  projectPath: string,
+  name: string,
+  tokens: string[]
+): Promise<CustomClass[]> {
+  return invoke<CustomClass[]>('update_custom_class', { projectPath, name, tokens });
+}
+
+/**
+ * Remove a custom class rule from the entry stylesheet. Markup still referencing
+ * the class is left untouched (the caller should warn). Resolves to the updated
+ * class list.
+ */
+export function deleteCustomClass(projectPath: string, name: string): Promise<CustomClass[]> {
+  return invoke<CustomClass[]>('delete_custom_class', { projectPath, name });
+}

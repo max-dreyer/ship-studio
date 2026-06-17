@@ -7,7 +7,13 @@
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { TailwindSetup, CustomClass } from './customClasses';
-import { detectTailwindSetup, listCustomClasses } from './customClasses';
+import {
+  detectTailwindSetup,
+  listCustomClasses,
+  createCustomClass,
+  updateCustomClass,
+  deleteCustomClass,
+} from './customClasses';
 
 vi.mock('@tauri-apps/api/core', () => ({
   invoke: vi.fn(),
@@ -72,6 +78,54 @@ describe('lib/customClasses', () => {
     it('propagates backend errors to the caller', async () => {
       vi.mocked(core.invoke).mockRejectedValue(new Error('boom'));
       await expect(listCustomClasses('/p')).rejects.toThrow('boom');
+    });
+  });
+
+  describe('createCustomClass', () => {
+    it('invokes "create_custom_class" with name + tokens and returns the fresh list', async () => {
+      const list: CustomClass[] = [{ name: 'btn', tokens: ['px-4', 'py-2'], editable: true }];
+      vi.mocked(core.invoke).mockResolvedValue(list);
+
+      const result = await createCustomClass('/abs/project', 'btn', ['px-4', 'py-2']);
+
+      expect(core.invoke).toHaveBeenCalledWith('create_custom_class', {
+        projectPath: '/abs/project',
+        name: 'btn',
+        tokens: ['px-4', 'py-2'],
+      });
+      expect(result).toEqual(list);
+    });
+
+    it('propagates a duplicate-name rejection', async () => {
+      vi.mocked(core.invoke).mockRejectedValue(new Error('already exists'));
+      await expect(createCustomClass('/p', 'btn', ['p-2'])).rejects.toThrow('already exists');
+    });
+  });
+
+  describe('updateCustomClass', () => {
+    it('invokes "update_custom_class" with the new token list', async () => {
+      vi.mocked(core.invoke).mockResolvedValue([]);
+
+      await updateCustomClass('/abs/project', 'btn', ['px-8']);
+
+      expect(core.invoke).toHaveBeenCalledWith('update_custom_class', {
+        projectPath: '/abs/project',
+        name: 'btn',
+        tokens: ['px-8'],
+      });
+    });
+  });
+
+  describe('deleteCustomClass', () => {
+    it('invokes "delete_custom_class" with the class name', async () => {
+      vi.mocked(core.invoke).mockResolvedValue([]);
+
+      await deleteCustomClass('/abs/project', 'btn');
+
+      expect(core.invoke).toHaveBeenCalledWith('delete_custom_class', {
+        projectPath: '/abs/project',
+        name: 'btn',
+      });
     });
   });
 });
