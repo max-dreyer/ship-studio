@@ -457,59 +457,59 @@ export function VisualEditorPanel({
         </span>
       </div>
 
-      <div className="ss-edit-panel__body">
-        {controlsVisible && (
-          <>
-            {/* Breakpoint dropdown — picking one resizes the canvas; the active value
-                tracks the live preview width. Tailwind is mobile-first: edits cascade
-                up, so a value set on a breakpoint applies at that width and larger. */}
-            <div className="ss-edit-panel__control">
-              {/* The "?" reveals the mobile-first explainer — styles set on a breakpoint
-                  apply at that width AND LARGER, which surprises desktop-first users. */}
-              <label className="ss-edit-panel__label">
-                Breakpoint
-                <HelpHint text={breakpointHelp} />
-              </label>
-              <EnumDropdown
-                label="Breakpoint"
-                value={activeBreakpoint.name}
-                options={breakpoints.map((bp) => ({
-                  label: bp.minPx > 0 ? `${bp.name} · ≥${bp.minPx}px` : 'Base · all widths',
-                  token: bp.name,
-                }))}
-                onChange={(name) => {
-                  const bp = breakpoints.find((b) => b.name === name);
-                  if (bp) onSelectBreakpoint(bp);
-                }}
-              />
-            </div>
-
-            {breakpointTooWide && (
-              <p className="ss-edit-panel__bp-note" role="note">
-                Preview is too narrow to show <strong>{activeBreakpoint.name}</strong> (≥
-                {activeBreakpoint.minPx}px). Edits still apply at this breakpoint — widen the
-                preview to see them.
-              </p>
-            )}
-
-            {/* Edit target: this element's own utilities, or a shared custom class. */}
-            <ClassBar
-              customClasses={customClasses}
-              elementClass={
-                editTarget.kind === 'element'
-                  ? currentClass
-                  : (selection?.signature.className ?? '')
-              }
-              editTarget={editTarget}
-              onEditElement={onEditElement}
-              onEditClass={onEditClass}
-              onApplyExisting={onApplyClass}
-              onUnapply={onUnapplyClass}
-              onCreate={onCreateClass}
+      {/* Sticky context bar: always shows WHICH breakpoint and WHICH target you're
+          editing, while the controls below scroll. */}
+      {controlsVisible && (
+        <div className="ss-edit-panel__context">
+          {/* Breakpoint dropdown — picking one resizes the canvas; the active value
+              tracks the live preview width. Tailwind is mobile-first: edits cascade
+              up, so a value set on a breakpoint applies at that width and larger. */}
+          <div className="ss-edit-panel__control">
+            {/* The "?" reveals the mobile-first explainer — styles set on a breakpoint
+                apply at that width AND LARGER, which surprises desktop-first users. */}
+            <label className="ss-edit-panel__label">
+              Breakpoint
+              <HelpHint text={breakpointHelp} />
+            </label>
+            <EnumDropdown
+              label="Breakpoint"
+              value={activeBreakpoint.name}
+              options={breakpoints.map((bp) => ({
+                label: bp.minPx > 0 ? `${bp.name} · ≥${bp.minPx}px` : 'Base · all widths',
+                token: bp.name,
+              }))}
+              onChange={(name) => {
+                const bp = breakpoints.find((b) => b.name === name);
+                if (bp) onSelectBreakpoint(bp);
+              }}
             />
-          </>
-        )}
+          </div>
 
+          {breakpointTooWide && (
+            <p className="ss-edit-panel__bp-note" role="note">
+              Preview is too narrow to show <strong>{activeBreakpoint.name}</strong> (≥
+              {activeBreakpoint.minPx}px). Edits still apply at this breakpoint — widen the preview
+              to see them.
+            </p>
+          )}
+
+          {/* Edit target: this element's own utilities, or a shared custom class. */}
+          <ClassBar
+            customClasses={customClasses}
+            elementClass={
+              editTarget.kind === 'element' ? currentClass : (selection?.signature.className ?? '')
+            }
+            editTarget={editTarget}
+            onEditElement={onEditElement}
+            onEditClass={onEditClass}
+            onApplyExisting={onApplyClass}
+            onUnapply={onUnapplyClass}
+            onCreate={onCreateClass}
+          />
+        </div>
+      )}
+
+      <div className="ss-edit-panel__body">
         {!selection && <EditorIntro />}
 
         {textResolution?.status === 'read_only' && selection && (
