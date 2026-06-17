@@ -491,6 +491,22 @@ export function VisualEditorPanel({
                 preview to see them.
               </p>
             )}
+
+            {/* Edit target: this element's own utilities, or a shared custom class. */}
+            <ClassBar
+              customClasses={customClasses}
+              elementClass={
+                editTarget.kind === 'element'
+                  ? currentClass
+                  : (selection?.signature.className ?? '')
+              }
+              editTarget={editTarget}
+              onEditElement={onEditElement}
+              onEditClass={onEditClass}
+              onApplyExisting={onApplyClass}
+              onUnapply={onUnapplyClass}
+              onCreate={onCreateClass}
+            />
           </>
         )}
 
@@ -524,20 +540,6 @@ export function VisualEditorPanel({
 
         {controlsVisible && (
           <>
-            <ClassBar
-              customClasses={customClasses}
-              elementClass={
-                editTarget.kind === 'element'
-                  ? currentClass
-                  : (selection?.signature.className ?? '')
-              }
-              editTarget={editTarget}
-              onEditElement={onEditElement}
-              onEditClass={onEditClass}
-              onApplyExisting={onApplyClass}
-              onUnapply={onUnapplyClass}
-              onCreate={onCreateClass}
-            />
             {resolution?.status === 'resolved' && (
               <>
                 <div className="ss-edit-panel__source">

@@ -1,42 +1,41 @@
 /**
- * Webflow-style class bar for the visual editor.
+ * Custom-class control for the visual editor.
  *
- * Sits at the top of the style panel and selects the *edit target*: the chips
- * are the custom classes applied to the selected element plus a "this element"
- * chip. Whichever is active is what the controls below edit — a class chip edits
- * the shared `@apply` rule (every instance updates), "this element" edits the
- * element's own utilities. A "+ class" popover creates a class from the current
- * styles or applies an existing one.
+ * Renders as a standard panel control row (like "Breakpoint") whose dropdown
+ * picks the *edit target*: "This element" (its own utilities) or one of the
+ * custom classes applied to it (editing the shared `@apply` rule updates every
+ * instance). The same menu applies an existing class, creates one from the
+ * current styles, or removes the active class from the element. Styling reuses
+ * the panel's native dropdown (`ss-enum__*`) so it matches the rest of the panel.
  */
 
-import { useMemo, useState, useRef, useEffect } from 'react';
-import { PlusIcon } from '../icons/utility';
-import { CloseIcon } from '../icons/common';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import type { CustomClass } from '../../lib/customClasses';
 import type { EditTarget } from '../../hooks/useVisualEditor';
 
 interface Props {
-  /** All custom classes defined in the project. */
   customClasses: CustomClass[];
   /** The selected element's current className string. */
   elementClass: string;
-  /** What the controls currently edit. */
   editTarget: EditTarget;
-  /** Edit the element's own utilities. */
   onEditElement: () => void;
-  /** Edit a custom class's `@apply` list. */
   onEditClass: (name: string, tokens: string[]) => void;
-  /** Append an existing class to the element (and edit it). */
   onApplyExisting: (name: string) => void;
-  /** Remove a class from the element (keeps it defined in CSS). */
   onUnapply: (name: string) => void;
-  /** Extract the element's utilities into a new named class. */
   onCreate: (name: string) => void;
 }
 
-/** Client-side mirror of the backend's class-name rule (fast feedback only — the
- *  backend re-validates). */
+/** Client-side mirror of the backend's class-name rule (the backend re-validates). */
 const NAME_RE = /^[A-Za-z_-][A-Za-z0-9_-]*$/;
+
+function Chevron() {
+  return (
+    <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" aria-hidden>
+      <polyline points="6 9 12 15 18 9" strokeWidth="2.5" strokeLinecap="round" />
+    </svg>
+  );
+}
 
 export function ClassBar({
   customClasses,
@@ -55,7 +54,6 @@ export function ClassBar({
   }, [customClasses]);
 
   const tokens = useMemo(() => elementClass.split(/\s+/).filter(Boolean), [elementClass]);
-  // Classes applied to this element, in markup order.
   const applied = useMemo(
     () => tokens.map((t) => byName.get(t)).filter((c): c is CustomClass => !!c),
     [tokens, byName]
@@ -66,18 +64,50 @@ export function ClassBar({
     [customClasses, tokens]
   );
 
-  const [open, setOpen] = useState(false);
-  const [name, setName] = useState('');
-  const popoverRef = useRef<HTMLDivElement | null>(null);
+  const activeName = editTarget.kind === 'class' ? editTarget.name : null;
+  const triggerLabel = activeName ? `.${activeName}` : 'This element';
 
-  // Close the popover on an outside click.
+  const [open, setOpen] = useState(false);
+  const [creating, setCreating] = useState(false);
+  const [name, setName] = useState('');
+  const [menuRect, setMenuRect] = useState<{ top: number; left: number; width: number } | null>(
+    null
+  );
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
+
+  const reposition = useCallback(() => {
+    const el = triggerRef.current;
+    if (!el) return;
+    const r = el.getBoundingClientRect();
+    setMenuRect({ top: r.bottom + 4, left: r.left, width: r.width });
+  }, []);
+
+  useLayoutEffect(() => {
+    if (!open) return;
+    reposition();
+    window.addEventListener('resize', reposition);
+    window.addEventListener('scroll', reposition, true);
+    return () => {
+      window.removeEventListener('resize', reposition);
+      window.removeEventListener('scroll', reposition, true);
+    };
+  }, [open, reposition]);
+
   useEffect(() => {
     if (!open) return;
-    const onDown = (e: MouseEvent) => {
-      if (!popoverRef.current?.contains(e.target as Node)) setOpen(false);
+    const onDown = (e: PointerEvent) => {
+      const t = e.target as Node;
+      if (triggerRef.current?.contains(t) || menuRef.current?.contains(t)) return;
+      setOpen(false);
     };
-    document.addEventListener('mousedown', onDown);
-    return () => document.removeEventListener('mousedown', onDown);
+    const onKey = (e: KeyboardEvent) => e.key === 'Escape' && setOpen(false);
+    document.addEventListener('pointerdown', onDown, true);
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('pointerdown', onDown, true);
+      document.removeEventListener('keydown', onKey);
+    };
   }, [open]);
 
   const nameValid = NAME_RE.test(name) && !byName.has(name);
@@ -85,129 +115,147 @@ export function ClassBar({
     if (!nameValid || !hasUtilities) return;
     onCreate(name.trim());
     setName('');
-    setOpen(false);
+    setCreating(false);
+  };
+  const cancelCreate = () => {
+    setName('');
+    setCreating(false);
   };
 
-  const activeName = editTarget.kind === 'class' ? editTarget.name : null;
-
   return (
-    <div className="ss-classbar">
-      <div className="ss-classbar__head">
-        <span className="ss-classbar__label">Editing</span>
-        <div className="ss-classbar__add" ref={popoverRef}>
+    <div className="ss-edit-panel__control">
+      <span className="ss-edit-panel__label">Editing</span>
+
+      {creating ? (
+        <span className="ss-classedit__create">
+          <input
+            type="text"
+            className="ss-classedit__input"
+            placeholder="class-name"
+            value={name}
+            spellCheck={false}
+            autoFocus
+            onChange={(e) => setName(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') submitCreate();
+              if (e.key === 'Escape') cancelCreate();
+            }}
+            onBlur={() => !name && cancelCreate()}
+          />
           <button
             type="button"
-            className={`ss-classbar__addbtn${open ? ' is-open' : ''}`}
-            title="Create or apply a custom class"
-            aria-expanded={open}
-            onClick={() => setOpen((v) => !v)}
+            className="ss-classedit__go"
+            disabled={!nameValid || !hasUtilities}
+            title={
+              !hasUtilities
+                ? 'This element has no utility classes to extract'
+                : !NAME_RE.test(name)
+                  ? 'Enter a valid class name'
+                  : byName.has(name)
+                    ? 'A class with this name already exists'
+                    : 'Create the class from these styles'
+            }
+            onClick={submitCreate}
           >
-            <PlusIcon size={11} />
-            Class
+            Create
           </button>
-          {open && (
-            <div className="ss-classbar__popover" role="dialog">
-              <div className="ss-classbar__poplabel">New class from these styles</div>
-              <div className="ss-classbar__create">
-                <input
-                  type="text"
-                  className="ss-classbar__input"
-                  placeholder="class-name"
-                  value={name}
-                  spellCheck={false}
-                  autoFocus
-                  onChange={(e) => setName(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter') submitCreate();
-                    if (e.key === 'Escape') setOpen(false);
-                  }}
-                />
-                <button
-                  type="button"
-                  className="ss-classbar__createbtn"
-                  disabled={!nameValid || !hasUtilities}
-                  title={
-                    !hasUtilities
-                      ? 'This element has no utility classes to extract'
-                      : !NAME_RE.test(name)
-                        ? 'Enter a valid class name'
-                        : byName.has(name)
-                          ? 'A class with this name already exists'
-                          : 'Move these styles into a reusable class'
-                  }
-                  onClick={submitCreate}
-                >
-                  Create
-                </button>
-              </div>
-              {available.length > 0 && (
-                <div className="ss-classbar__existing">
-                  <div className="ss-classbar__poplabel">Apply existing</div>
-                  {available.map((c) => (
-                    <button
-                      key={c.name}
-                      type="button"
-                      className="ss-classbar__existing-item"
-                      onClick={() => {
-                        onApplyExisting(c.name);
-                        setOpen(false);
-                      }}
-                    >
-                      .{c.name}
-                    </button>
-                  ))}
-                </div>
-              )}
-            </div>
-          )}
-        </div>
-      </div>
+        </span>
+      ) : (
+        <button
+          ref={triggerRef}
+          type="button"
+          className="ss-enum__trigger"
+          aria-haspopup="menu"
+          aria-expanded={open}
+          onClick={() => setOpen((v) => !v)}
+        >
+          <span>{triggerLabel}</span>
+          <Chevron />
+        </button>
+      )}
 
-      <div className="ss-classbar__chips">
-        {applied.map((c) => {
-          const active = activeName === c.name;
-          return (
-            <span
-              key={c.name}
-              className={`ss-classbar__chip${active ? ' is-active' : ''}${
-                c.editable ? '' : ' is-locked'
-              }`}
+      {open &&
+        menuRect &&
+        createPortal(
+          <div
+            ref={menuRef}
+            className="ss-enum__menu"
+            role="menu"
+            style={{ top: menuRect.top, left: menuRect.left, minWidth: menuRect.width }}
+          >
+            <button
+              type="button"
+              role="menuitem"
+              className={`ss-enum__item${editTarget.kind === 'element' ? ' is-active' : ''}`}
+              onClick={() => {
+                onEditElement();
+                setOpen(false);
+              }}
             >
+              This element
+            </button>
+            {applied.map((c) => (
               <button
+                key={c.name}
                 type="button"
-                className="ss-classbar__chip-name"
-                title={
-                  c.editable
-                    ? `Edit .${c.name} — updates every element using it`
-                    : `.${c.name} mixes custom CSS — edit it in code`
-                }
-                onClick={() => c.editable && onEditClass(c.name, c.tokens)}
+                role="menuitem"
+                className={`ss-enum__item${activeName === c.name ? ' is-active' : ''}`}
+                title={c.editable ? undefined : `.${c.name} mixes custom CSS — edit it in code`}
                 disabled={!c.editable}
+                onClick={() => {
+                  onEditClass(c.name, c.tokens);
+                  setOpen(false);
+                }}
               >
                 .{c.name}
               </button>
+            ))}
+
+            <div className="ss-classedit__sep" role="separator" />
+
+            {available.map((c) => (
+              <button
+                key={c.name}
+                type="button"
+                role="menuitem"
+                className="ss-enum__item ss-classedit__muted"
+                onClick={() => {
+                  onApplyExisting(c.name);
+                  setOpen(false);
+                }}
+              >
+                Apply .{c.name}
+              </button>
+            ))}
+            <button
+              type="button"
+              role="menuitem"
+              className="ss-enum__item ss-classedit__muted"
+              title={hasUtilities ? undefined : 'This element has no utility classes to extract'}
+              disabled={!hasUtilities}
+              onClick={() => {
+                setOpen(false);
+                setCreating(true);
+              }}
+            >
+              + New class from styles…
+            </button>
+            {activeName && (
               <button
                 type="button"
-                className="ss-classbar__chip-x"
-                title={`Remove .${c.name} from this element`}
-                onClick={() => onUnapply(c.name)}
+                role="menuitem"
+                className="ss-enum__item ss-classedit__muted"
+                onClick={() => {
+                  onUnapply(activeName);
+                  setOpen(false);
+                }}
               >
-                <CloseIcon size={9} />
+                Remove .{activeName} from element
               </button>
-            </span>
-          );
-        })}
-        <button
-          type="button"
-          className={`ss-classbar__chip ss-classbar__chip--element${
-            editTarget.kind === 'element' ? ' is-active' : ''
-          }`}
-          title="Edit this element's own utility classes"
-          onClick={onEditElement}
-        >
-          This element
-        </button>
-      </div>
+            )}
+          </div>,
+          document.body
+        )}
     </div>
   );
 }
