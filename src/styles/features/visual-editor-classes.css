@@ -6,6 +6,18 @@
    itself is a searchable dropdown built on the panel's ss-enum menu shell
    (see ClassBar.tsx). */
 
+/* Feature-local dimensions for the class control. These are intentional one-off
+   sizes (dropdown shell, control heights) with no equivalent on the global
+   spacing scale, so they live here as named tokens rather than magic numbers. */
+:root {
+  --classedit-trigger-max-w: 170px;
+  --classedit-menu-w: 248px;
+  --classedit-menu-max-h: 340px;
+  --classedit-search-h: 28px;
+  --classedit-x-w: 24px;
+  --classedit-row-pad-y: 5px;
+}
+
 /* Fixed context bar (breakpoint + edit target) — never scrolls, so you can
    always see which breakpoint and class you're editing. */
 .ss-edit-panel__context {
@@ -19,7 +31,7 @@
 
 /* Trigger truncates a long active class name rather than overflowing the row. */
 .ss-classedit__trigger {
-  max-width: 170px;
+  max-width: var(--classedit-trigger-max-w);
 }
 
 /* Wider than the default enum menu so class names have room; a fixed shell with
@@ -29,15 +41,15 @@
   display: flex;
   flex-direction: column;
   gap: var(--spacing-xs);
-  width: 248px;
+  width: var(--classedit-menu-w);
   max-width: calc(100vw - var(--spacing-md) * 2);
-  max-height: 340px;
+  max-height: var(--classedit-menu-max-h);
   overflow: hidden;
 }
 .ss-classedit__search {
   flex: 0 0 auto;
   width: 100%;
-  height: 28px;
+  height: var(--classedit-search-h);
   padding: 0 var(--spacing-sm);
   font-size: var(--font-size-sm);
   color: var(--text-primary);
@@ -86,7 +98,7 @@
 }
 .ss-classedit__item,
 .ss-classedit__createrow {
-  padding: 5px var(--spacing-sm);
+  padding: var(--classedit-row-pad-y) var(--spacing-sm);
   font-size: var(--font-size-sm);
   text-align: left;
   color: var(--text-secondary);
@@ -118,7 +130,7 @@
   min-width: 0;
   display: flex;
   align-items: center;
-  padding: 5px var(--spacing-sm);
+  padding: var(--classedit-row-pad-y) var(--spacing-sm);
   font-size: var(--font-size-sm);
   text-align: left;
   color: inherit;
@@ -137,7 +149,7 @@
   align-items: center;
   justify-content: center;
   align-self: stretch;
-  width: 24px;
+  width: var(--classedit-x-w);
   color: inherit;
   opacity: 0.6;
   background: none;

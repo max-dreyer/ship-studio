@@ -19,6 +19,7 @@ import { PlusIcon } from '../icons/utility';
 import { CloseIcon } from '../icons/common';
 import type { CustomClass } from '../../lib/customClasses';
 import type { EditTarget } from '../../hooks/useVisualEditor';
+import { logger } from '../../lib/logger';
 
 interface Props {
   customClasses: CustomClass[];
@@ -144,6 +145,11 @@ export function ClassBar({
     setBusy(true);
     try {
       await fn();
+    } catch (err) {
+      // The handlers (applyClass/unapplyClass) already toast on failure and
+      // don't reject; guard here anyway so a throwing handler can't surface as
+      // an unhandled rejection and strand the busy state.
+      logger.error('[ClassBar] apply/unapply failed', { error: String(err) });
     } finally {
       setBusy(false);
     }
