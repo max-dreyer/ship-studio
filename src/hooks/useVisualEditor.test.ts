@@ -31,7 +31,15 @@ import {
   BASE_BREAKPOINT,
   DEFAULT_BREAKPOINTS,
 } from '../lib/edit';
-import { updateCustomClass } from '../lib/customClasses';
+import {
+  updateCustomClass,
+  createCustomClass,
+  deleteCustomClass,
+  classifyApplyTokens,
+  listCustomClasses,
+} from '../lib/customClasses';
+
+type Fn = ReturnType<typeof vi.fn>;
 
 const BREAKPOINTS = [BASE_BREAKPOINT, ...DEFAULT_BREAKPOINTS];
 
@@ -91,6 +99,7 @@ async function select(className: string, source: MessageEventSource) {
 }
 
 beforeEach(() => {
+  vi.clearAllMocks(); // isolate call history between tests (no global clearMocks)
   vi.useFakeTimers({ shouldAdvanceTime: true });
   (resolveClassnameSource as ReturnType<typeof vi.fn>).mockImplementation(
     (_p: string, sig: { className: string }) =>
@@ -216,5 +225,110 @@ describe('useVisualEditor custom classes', () => {
     expect(result.current.editTarget).toEqual({ kind: 'element' });
     // The live class is reseeded from the element, so controls read its utilities.
     expect(result.current.currentClass).toBe('btn p-3');
+  });
+});
+
+describe('useVisualEditor class gestures (apply / unapply / extract / delete)', () => {
+  /** Enter edit mode with a set of project classes loaded, then select `cls`. */
+  async function withSelection(
+    classes: { name: string; tokens: string[]; editable: boolean }[],
+    cls: string
+  ) {
+    (listCustomClasses as Fn).mockResolvedValue(classes);
+    const env = setup();
+    act(() => env.result.current.toggleEditMode());
+    await flush(); // refreshCustomClasses → customClasses state
+    await select(cls, env.iframeRef.current!.contentWindow!);
+    return env;
+  }
+
+  it('applyClass appends the bare class to the element and edits that class', async () => {
+    const { result } = await withSelection(
+      [{ name: 'card', tokens: ['rounded', 'shadow'], editable: true }],
+      'p-3'
+    );
+
+    await act(async () => {
+      await result.current.applyClass('card');
+    });
+
+    const call = (applyClassnameEdit as Fn).mock.calls[0] as [
+      string,
+      string,
+      number,
+      string,
+      string,
+    ];
+    expect(call[3]).toBe('p-3'); // old className (drift baseline)
+    expect(call[4]).toBe('p-3 card'); // new className — class appended
+    expect(result.current.editTarget).toEqual({
+      kind: 'class',
+      name: 'card',
+      baseline: 'rounded shadow',
+    });
+  });
+
+  it('unapplyClass removes the class from the element and returns to element editing', async () => {
+    const { result } = await withSelection(
+      [{ name: 'card', tokens: ['rounded'], editable: true }],
+      'p-3 card'
+    );
+
+    await act(async () => {
+      await result.current.unapplyClass('card');
+    });
+
+    const call = (applyClassnameEdit as Fn).mock.calls[0] as [
+      string,
+      string,
+      number,
+      string,
+      string,
+    ];
+    expect(call[4]).toBe('p-3'); // card stripped
+    expect(result.current.editTarget).toEqual({ kind: 'element' });
+  });
+
+  it('createClassFromStyles moves only utilities into the class, keeping non-utility tokens on the element', async () => {
+    // `animate-fade` is a plain custom class, not a utility — must stay on the element.
+    (classifyApplyTokens as Fn).mockResolvedValue(['animate-fade']);
+    (createCustomClass as Fn).mockResolvedValue([
+      { name: 'hero', tokens: ['p-3'], editable: true },
+    ]);
+    const { result } = await withSelection([], 'p-3 animate-fade');
+
+    await act(async () => {
+      await result.current.createClassFromStyles('hero');
+    });
+
+    // Only the safe utility went into the new class…
+    expect(createCustomClass).toHaveBeenCalledWith('/proj', 'hero', ['p-3']);
+    // …and the element keeps the non-utility token plus the new class.
+    const call = (applyClassnameEdit as Fn).mock.calls[0] as [
+      string,
+      string,
+      number,
+      string,
+      string,
+    ];
+    expect(call[4]).toBe('animate-fade hero');
+    expect(result.current.editTarget).toMatchObject({ kind: 'class', name: 'hero' });
+  });
+
+  it('deleteClass removes the class and switches off it when it was the edit target', async () => {
+    (deleteCustomClass as Fn).mockResolvedValue([]);
+    const { result } = await withSelection(
+      [{ name: 'card', tokens: ['rounded'], editable: true }],
+      'p-3 card'
+    );
+    act(() => result.current.editClass('card', ['rounded']));
+    expect(result.current.editTarget).toMatchObject({ kind: 'class', name: 'card' });
+
+    await act(async () => {
+      await result.current.deleteClass('card');
+    });
+
+    expect(deleteCustomClass).toHaveBeenCalledWith('/proj', 'card');
+    expect(result.current.editTarget).toEqual({ kind: 'element' });
   });
 });

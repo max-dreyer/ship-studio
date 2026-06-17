@@ -506,6 +506,8 @@ pub fn create_custom_class(
     name: String,
     tokens: Vec<String>,
 ) -> Result<Vec<CustomClass>, CommandError> {
+    let root = validate_project_path(&project_path)?;
+    guard_project_apply_safety(&root, &tokens)?;
     write_entry_css(&project_path, |css| {
         create_class_in_css(css, &name, &tokens)
     })
@@ -520,6 +522,8 @@ pub fn update_custom_class(
     name: String,
     tokens: Vec<String>,
 ) -> Result<Vec<CustomClass>, CommandError> {
+    let root = validate_project_path(&project_path)?;
+    guard_project_apply_safety(&root, &tokens)?;
     write_entry_css(&project_path, |css| {
         update_class_in_css(css, &name, &tokens)
     })
@@ -538,9 +542,9 @@ pub fn delete_custom_class(
 }
 
 /// Of the given tokens, return the ones that can't safely go in an `@apply`
-/// (they're plain classes defined in the project's CSS, not Tailwind utilities).
-/// Lets "create from styles" keep those on the element instead of breaking the
-/// build. Returns `[]` when there's no entry stylesheet to check against.
+/// (they're plain classes defined anywhere in the project's CSS, not Tailwind
+/// utilities). Lets "create from styles" keep those on the element instead of
+/// breaking the build.
 #[tauri::command]
 #[tracing::instrument(skip(tokens), fields(project = %project_path))]
 pub fn classify_apply_tokens(
@@ -548,14 +552,8 @@ pub fn classify_apply_tokens(
     tokens: Vec<String>,
 ) -> Result<Vec<String>, CommandError> {
     let root = validate_project_path(&project_path)?;
-    let Some(entry) = detect_setup_at(&root).entry_css else {
-        return Ok(vec![]);
-    };
-    let Ok(css) = std::fs::read_to_string(root.join(&entry)) else {
-        return Ok(vec![]);
-    };
-    let kind = css_scan(&css);
-    Ok(unsafe_apply_tokens(&css, &kind, &tokens))
+    let (plains, utils) = collect_project_class_index(&root);
+    Ok(unsafe_tokens_against(&plains, &utils, &tokens))
 }
 
 /// Locate the project's entry stylesheet, apply a pure string transform to it,
@@ -728,17 +726,84 @@ fn unsafe_apply_tokens(css: &str, kind: &[CssKind], tokens: &[String]) -> Vec<St
         .collect()
 }
 
-/// Reject a token list that would break the Tailwind build via `@apply`.
+/// A class can be defined as a plain rule in a stylesheet OTHER than the entry
+/// one (a global, a component CSS, a vendored sheet) and still break `@apply`.
+/// Build the index across ALL of the project's CSS (node_modules excluded) so
+/// the guard isn't blind to those. Returns (plain-class names, `@utility` names).
+fn collect_project_class_index(root: &Path) -> (HashSet<String>, HashSet<String>) {
+    let mut plains = HashSet::new();
+    let mut utils = HashSet::new();
+    for entry in ignore::WalkBuilder::new(root)
+        .standard_filters(true)
+        .build()
+        .flatten()
+    {
+        let path = entry.path();
+        let is_css = path
+            .extension()
+            .and_then(|e| e.to_str())
+            .map(|e| e.eq_ignore_ascii_case("css"))
+            .unwrap_or(false);
+        if !is_css {
+            continue;
+        }
+        if let Ok(css) = std::fs::read_to_string(path) {
+            let kind = css_scan(&css);
+            plains.extend(collect_plain_class_names(&css, &kind));
+            utils.extend(collect_utility_names(&css, &kind));
+        }
+    }
+    (plains, utils)
+}
+
+/// Tokens unsafe to `@apply` against a prebuilt (plain, utility) index.
+fn unsafe_tokens_against(
+    plains: &HashSet<String>,
+    utils: &HashSet<String>,
+    tokens: &[String],
+) -> Vec<String> {
+    tokens
+        .iter()
+        .filter(|t| {
+            apply_base_name(t)
+                .map(|n| plains.contains(n) && !utils.contains(n))
+                .unwrap_or(false)
+        })
+        .cloned()
+        .collect()
+}
+
+fn apply_safety_message(bad: &[String]) -> String {
+    format!(
+        "Can't put {} in a class — {} a custom class, not a Tailwind utility, so @apply would break the build. Keep it on the element, or convert it to an @utility.",
+        bad.iter().map(|t| format!("`{t}`")).collect::<Vec<_>>().join(", "),
+        if bad.len() == 1 { "it's" } else { "they're" },
+    )
+}
+
+/// Reject a token list that would break the Tailwind build via `@apply`, checking
+/// against every CSS file in the project (not just the entry stylesheet).
+fn guard_project_apply_safety(root: &Path, tokens: &[String]) -> Result<(), CommandError> {
+    let (plains, utils) = collect_project_class_index(root);
+    let bad = unsafe_tokens_against(&plains, &utils, tokens);
+    if bad.is_empty() {
+        return Ok(());
+    }
+    Err(CommandError::Validation {
+        field: "customClass".into(),
+        reason: apply_safety_message(&bad),
+    })
+}
+
+/// Reject a token list that would break the Tailwind build via `@apply`. Entry-CSS
+/// scope only — kept for the pure transforms' unit tests; commands additionally
+/// run [`guard_project_apply_safety`] across the whole project.
 fn guard_apply_safety(css: &str, kind: &[CssKind], tokens: &[String]) -> Result<(), String> {
     let bad = unsafe_apply_tokens(css, kind, tokens);
     if bad.is_empty() {
         return Ok(());
     }
-    Err(format!(
-        "Can't put {} in a class — {} a custom class, not a Tailwind utility, so @apply would break the build. Keep it on the element, or convert it to an @utility.",
-        bad.iter().map(|t| format!("`{t}`")).collect::<Vec<_>>().join(", "),
-        if bad.len() == 1 { "it's" } else { "they're" },
-    ))
+    Err(apply_safety_message(&bad))
 }
 
 // ───────────────────────── Pure CSS transforms ──────────────────────────────
@@ -1286,6 +1351,45 @@ div.card { @apply p-4; }
             err.contains("animate-fade"),
             "names the offending token: {err}"
         );
+    }
+
+    #[test]
+    fn project_guard_flags_plain_class_from_a_non_entry_stylesheet() {
+        // The class is defined in a SEPARATE css file (a global, a component
+        // sheet) — the entry-only guard would miss it; the project-wide scan
+        // must catch it so the write can't brick the build.
+        let dir = tmp("apply-guard");
+        std::fs::create_dir_all(dir.join("src/styles")).unwrap();
+        std::fs::write(dir.join("src/index.css"), "@import \"tailwindcss\";\n").unwrap();
+        std::fs::write(
+            dir.join("src/styles/animations.css"),
+            ".fancy-spin { animation: spin 1s; }\n",
+        )
+        .unwrap();
+
+        // A real utility passes; the cross-file plain class is rejected.
+        assert!(guard_project_apply_safety(&dir, &["px-4".into()]).is_ok());
+        let err =
+            guard_project_apply_safety(&dir, &["px-4".into(), "fancy-spin".into()]).unwrap_err();
+        assert!(
+            matches!(err, CommandError::Validation { ref reason, .. } if reason.contains("fancy-spin")),
+            "rejects the cross-file plain class: {err:?}"
+        );
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn project_guard_respects_at_utility_across_files() {
+        let dir = tmp("apply-guard-utility");
+        std::fs::write(dir.join("index.css"), "@import \"tailwindcss\";\n").unwrap();
+        std::fs::write(
+            dir.join("utils.css"),
+            "@utility fancy-spin { animation: spin 1s; }\n",
+        )
+        .unwrap();
+        // Defined as an @utility elsewhere → valid in @apply, not flagged.
+        assert!(guard_project_apply_safety(&dir, &["fancy-spin".into()]).is_ok());
+        std::fs::remove_dir_all(&dir).ok();
     }
 
     #[test]
