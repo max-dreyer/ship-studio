@@ -14,6 +14,15 @@ vi.mock('../lib/edit', async (importActual) => {
   return { ...actual, resolveClassnameSource: vi.fn(), applyClassnameEdit: vi.fn() };
 });
 
+// The hook lists custom classes on edit-mode entry; stub it so the test doesn't
+// reach for a real Tauri IPC (the focus here is the element auto-save path).
+vi.mock('../lib/customClasses', () => ({
+  listCustomClasses: vi.fn().mockResolvedValue([]),
+  createCustomClass: vi.fn(),
+  updateCustomClass: vi.fn(),
+  deleteCustomClass: vi.fn(),
+}));
+
 import { useVisualEditor } from './useVisualEditor';
 import {
   resolveClassnameSource,
@@ -21,6 +30,7 @@ import {
   BASE_BREAKPOINT,
   DEFAULT_BREAKPOINTS,
 } from '../lib/edit';
+import { updateCustomClass } from '../lib/customClasses';
 
 const BREAKPOINTS = [BASE_BREAKPOINT, ...DEFAULT_BREAKPOINTS];
 
@@ -149,5 +159,61 @@ describe('useVisualEditor auto-save', () => {
     expect(localStorage.getItem('ss:visualEditor:autoSave')).toBe('1');
     act(() => result.current.toggleAutoSave());
     expect(localStorage.getItem('ss:visualEditor:autoSave')).toBe('0');
+  });
+});
+
+describe('useVisualEditor custom classes', () => {
+  it('routes class edits to a class-scoped preview and saves via updateCustomClass', async () => {
+    (updateCustomClass as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+    const { result, iframeRef } = setup();
+    act(() => result.current.toggleEditMode());
+    await select('btn p-3', iframeRef.current!.contentWindow!);
+
+    // Point the controls at the custom class `.btn` (seeded from its @apply list).
+    act(() => result.current.editClass('btn', ['px-4']));
+
+    // eslint-disable-next-line @typescript-eslint/unbound-method -- inspecting the postMessage mock's calls, not invoking it bound
+    const post = iframeRef.current!.contentWindow!.postMessage as ReturnType<typeof vi.fn>;
+    post.mockClear();
+
+    // An edit now previews against the class selector — every instance — and the
+    // element-scoped mutate must NOT fire.
+    act(() => result.current.applyEnum('px-8', { padding: '2rem' }));
+    const calls = post.mock.calls as Array<[{ type?: string; selector?: string }]>;
+    const mutateClass = calls.find((c) => c[0]?.type === 'ss:mutateClass');
+    expect(mutateClass?.[0].selector).toBe('.btn');
+    expect(calls.some((c) => c[0]?.type === 'ss:mutate')).toBe(false);
+
+    // Saving writes the class's @apply list — not the element's className.
+    await act(async () => {
+      await result.current.commit();
+    });
+    expect(applyClassnameEdit).not.toHaveBeenCalled();
+    expect(updateCustomClass).toHaveBeenCalledTimes(1);
+    const [proj, name, tokens] = (updateCustomClass as ReturnType<typeof vi.fn>).mock.calls[0] as [
+      string,
+      string,
+      string[],
+    ];
+    expect(proj).toBe('/proj');
+    expect(name).toBe('btn');
+    expect(tokens).toContain('px-8');
+  });
+
+  it('returning to the element edits its className again', async () => {
+    const { result, iframeRef } = setup();
+    act(() => result.current.toggleEditMode());
+    await select('btn p-3', iframeRef.current!.contentWindow!);
+    act(() => result.current.editClass('btn', ['px-4']));
+    expect(result.current.editTarget).toEqual({
+      kind: 'class',
+      name: 'btn',
+      baseline: 'px-4',
+    });
+
+    act(() => result.current.editElement());
+    expect(result.current.editTarget).toEqual({ kind: 'element' });
+    // The live class is reseeded from the element, so controls read its utilities.
+    expect(result.current.currentClass).toBe('btn p-3');
   });
 });

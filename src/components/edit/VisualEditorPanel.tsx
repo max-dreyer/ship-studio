@@ -26,6 +26,9 @@ import { PinIcon } from '../icons/layout';
 import { PropSection } from './PropSection';
 import { ImageSection } from './ImageSection';
 import { PropControlRenderer, type ControlRenderCtx } from './PropControlRenderer';
+import { ClassBar } from './ClassBar';
+import type { CustomClass } from '../../lib/customClasses';
+import type { EditTarget } from '../../hooks/useVisualEditor';
 import { CONTROL_SECTIONS } from '../../lib/editControls';
 import { breakpointPrefixes, type UsageReport } from '../../lib/edit';
 import type {
@@ -275,6 +278,15 @@ interface Props {
   /** For a multi-location element: which spot(s) to write — 'all' or one index. */
   multiTarget: 'all' | number;
   onMultiTargetChange: (t: 'all' | number) => void;
+  /** Custom-class state + actions (Webflow-style class bar). Optional so the
+   *  panel can be rendered standalone (e.g. in tests) without the class wiring. */
+  editTarget?: EditTarget;
+  customClasses?: CustomClass[];
+  onEditElement?: () => void;
+  onEditClass?: (name: string, tokens: string[]) => void;
+  onApplyClass?: (name: string) => void;
+  onUnapplyClass?: (name: string) => void;
+  onCreateClass?: (name: string) => void;
   /** Where the selected element's component is used project-wide (scope hint). */
   usage: UsageReport | null;
   /** Jump to a source file:line in the Code tab. */
@@ -316,6 +328,13 @@ export function VisualEditorPanel({
   onReset,
   multiTarget,
   onMultiTargetChange,
+  editTarget = { kind: 'element' },
+  customClasses = [],
+  onEditElement = () => {},
+  onEditClass = () => {},
+  onApplyClass = () => {},
+  onUnapplyClass = () => {},
+  onCreateClass = () => {},
   usage,
   onOpenInCode,
   onCommit,
@@ -505,6 +524,20 @@ export function VisualEditorPanel({
 
         {controlsVisible && (
           <>
+            <ClassBar
+              customClasses={customClasses}
+              elementClass={
+                editTarget.kind === 'element'
+                  ? currentClass
+                  : (selection?.signature.className ?? '')
+              }
+              editTarget={editTarget}
+              onEditElement={onEditElement}
+              onEditClass={onEditClass}
+              onApplyExisting={onApplyClass}
+              onUnapply={onUnapplyClass}
+              onCreate={onCreateClass}
+            />
             {resolution?.status === 'resolved' && (
               <>
                 <div className="ss-edit-panel__source">

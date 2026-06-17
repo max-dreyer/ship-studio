@@ -1080,6 +1080,13 @@ export const Preview = forwardRef<PreviewHandle, PreviewProps>(function Preview(
               onReset={editor.reset}
               multiTarget={editor.multiTarget}
               onMultiTargetChange={editor.setMultiTarget}
+              editTarget={editor.editTarget}
+              customClasses={editor.customClasses}
+              onEditElement={editor.editElement}
+              onEditClass={editor.editClass}
+              onApplyClass={(name) => void editor.applyClass(name)}
+              onUnapplyClass={(name) => void editor.unapplyClass(name)}
+              onCreateClass={(name) => void editor.createClassFromStyles(name)}
               usage={editor.usage}
               onOpenInCode={onOpenInCode}
               onCommit={() => void editor.commit()}

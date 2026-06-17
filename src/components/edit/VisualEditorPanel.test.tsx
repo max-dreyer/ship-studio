@@ -55,6 +55,13 @@ function renderPanel(
       onReset={onReset}
       multiTarget="all"
       onMultiTargetChange={vi.fn()}
+      editTarget={{ kind: 'element' }}
+      customClasses={[]}
+      onEditElement={vi.fn()}
+      onEditClass={vi.fn()}
+      onApplyClass={vi.fn()}
+      onUnapplyClass={vi.fn()}
+      onCreateClass={vi.fn()}
       usage={null}
       onCommit={vi.fn()}
       onClose={vi.fn()}

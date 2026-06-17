@@ -1391,3 +1391,177 @@
   padding: var(--spacing-sm);
   word-break: break-word;
 }
+
+/* ── Class bar (Webflow-style custom classes) ─────────────────────────────── */
+.ss-classbar {
+  display: flex;
+  align-items: flex-start;
+  flex-wrap: wrap;
+  gap: var(--spacing-xs);
+  padding: var(--spacing-sm);
+  background: var(--bg-tertiary);
+  border-radius: var(--radius-sm);
+}
+.ss-classbar__label {
+  font-size: var(--font-size-xs);
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  padding-top: 3px;
+  margin-right: var(--spacing-xs);
+}
+.ss-classbar__chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--spacing-xs);
+  flex: 1;
+  min-width: 0;
+}
+.ss-classbar__chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  height: 22px;
+  padding: 0 var(--spacing-xs);
+  font-size: var(--font-size-xs);
+  color: var(--text-secondary);
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  max-width: 100%;
+}
+.ss-classbar__chip.is-active {
+  color: var(--text-primary);
+  border-color: var(--accent);
+  box-shadow: inset 0 0 0 1px var(--accent);
+}
+.ss-classbar__chip.is-locked {
+  opacity: 0.6;
+}
+.ss-classbar__chip--element {
+  color: var(--text-muted);
+}
+.ss-classbar__chip-name {
+  background: none;
+  border: none;
+  padding: 0;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ss-classbar__chip-name:disabled {
+  cursor: not-allowed;
+}
+.ss-classbar__chip-x {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: none;
+  border: none;
+  padding: 0;
+  color: var(--text-muted);
+  cursor: pointer;
+  border-radius: var(--radius-sm);
+}
+.ss-classbar__chip-x:hover {
+  color: var(--text-primary);
+}
+.ss-classbar__add {
+  position: relative;
+}
+.ss-classbar__add-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  color: var(--text-secondary);
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+.ss-classbar__add-btn:hover {
+  color: var(--text-primary);
+  border-color: var(--accent);
+}
+.ss-classbar__popover {
+  position: absolute;
+  top: calc(100% + var(--spacing-xs));
+  right: 0;
+  z-index: var(--z-dropdown);
+  width: 220px;
+  padding: var(--spacing-sm);
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-md);
+}
+.ss-classbar__create {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-xs);
+}
+.ss-classbar__input {
+  width: 100%;
+  height: 28px;
+  padding: 0 var(--spacing-sm);
+  font-size: var(--font-size-sm);
+  color: var(--text-primary);
+  background: var(--bg-primary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+}
+.ss-classbar__input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+.ss-classbar__create-btn {
+  height: 28px;
+  font-size: var(--font-size-sm);
+  color: var(--text-primary);
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+.ss-classbar__create-btn:hover:not(:disabled) {
+  border-color: var(--accent);
+}
+.ss-classbar__create-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.ss-classbar__existing {
+  margin-top: var(--spacing-sm);
+  padding-top: var(--spacing-sm);
+  border-top: 1px solid var(--border);
+}
+.ss-classbar__existing-label {
+  font-size: var(--font-size-xs);
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  margin-bottom: var(--spacing-xs);
+}
+.ss-classbar__existing-item {
+  display: block;
+  width: 100%;
+  text-align: left;
+  height: 26px;
+  padding: 0 var(--spacing-sm);
+  font-size: var(--font-size-sm);
+  color: var(--text-secondary);
+  background: none;
+  border: none;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+.ss-classbar__existing-item:hover {
+  color: var(--text-primary);
+  background: var(--bg-tertiary);
+}
