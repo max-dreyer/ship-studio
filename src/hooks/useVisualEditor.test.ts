@@ -21,6 +21,7 @@ vi.mock('../lib/customClasses', () => ({
   createCustomClass: vi.fn(),
   updateCustomClass: vi.fn(),
   deleteCustomClass: vi.fn(),
+  classifyApplyTokens: vi.fn().mockResolvedValue([]),
 }));
 
 import { useVisualEditor } from './useVisualEditor';

@@ -72,6 +72,7 @@ import {
   createCustomClass,
   updateCustomClass,
   deleteCustomClass,
+  classifyApplyTokens,
   type CustomClass,
 } from '../lib/customClasses';
 import { logger } from '../lib/logger';
@@ -711,21 +712,29 @@ export function useVisualEditor({
     async (name: string) => {
       const elTokens = currentElementClass().split(/\s+/).filter(Boolean);
       const classNames = new Set(customClasses.map((c) => c.name));
-      const utilities = elTokens.filter((t) => !classNames.has(t));
-      const keptClasses = elTokens.filter((t) => classNames.has(t));
-      if (utilities.length === 0) {
-        onToast?.('This element has no utility classes to extract.', 'error');
-        return;
-      }
+      const candidateUtilities = elTokens.filter((t) => !classNames.has(t));
       try {
+        // Tokens that are plain custom classes (not utilities) can't go in @apply —
+        // applying them would break the Tailwind build. Keep those on the element.
+        const unsafe = new Set(await classifyApplyTokens(projectPath, candidateUtilities));
+        const utilities = candidateUtilities.filter((t) => !unsafe.has(t));
+        // Element keeps its existing classes + any non-utility tokens we couldn't move.
+        const kept = elTokens.filter((t) => classNames.has(t) || unsafe.has(t));
+        if (utilities.length === 0) {
+          onToast?.('This element has no Tailwind utilities to extract into a class.', 'error');
+          return;
+        }
         const list = await createCustomClass(projectPath, name, utilities);
         setCustomClasses(list);
-        const ok = await writeElementClass([...keptClasses, name].join(' '));
+        const ok = await writeElementClass([...kept, name].join(' '));
         if (!ok) {
           // The class was created but couldn't be applied — still let the user edit it.
           onToast?.(`Created .${name}, but couldn't update the element.`, 'error');
         }
         editClass(name, utilities);
+        if (unsafe.size > 0) {
+          onToast?.(`Kept ${[...unsafe].join(', ')} on the element (not a utility).`, 'success');
+        }
       } catch (err) {
         onToast?.(String(err), 'error');
       }

@@ -321,6 +321,9 @@
   inset: 0;
   width: auto;
   min-width: 0;
+  /* Grid items default to min-height:auto, which lets the panel's content force
+     the row taller than the viewport — so the body never scrolls. Pin it to 0 so
+     the 1fr track bounds the panel and the body's overflow-y takes over. */
   min-height: 0;
   max-height: none;
   border-radius: 0;

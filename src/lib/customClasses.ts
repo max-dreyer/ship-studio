@@ -82,3 +82,13 @@ export function updateCustomClass(
 export function deleteCustomClass(projectPath: string, name: string): Promise<CustomClass[]> {
   return invoke<CustomClass[]>('delete_custom_class', { projectPath, name });
 }
+
+/**
+ * Of `tokens`, return the ones that can't safely go in an `@apply` (plain custom
+ * classes defined in the project's CSS, not Tailwind utilities). "Create from
+ * styles" uses this to keep those tokens on the element instead of breaking the
+ * Tailwind build.
+ */
+export function classifyApplyTokens(projectPath: string, tokens: string[]): Promise<string[]> {
+  return invoke<string[]>('classify_apply_tokens', { projectPath, tokens });
+}

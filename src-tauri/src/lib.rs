@@ -390,6 +390,7 @@ pub fn run() {
             commands::custom_classes::create_custom_class,
             commands::custom_classes::update_custom_class,
             commands::custom_classes::delete_custom_class,
+            commands::custom_classes::classify_apply_tokens,
             commands::projects::get_terminal_state,
             commands::projects::set_terminal_state,
             commands::projects::extract_template_zip,

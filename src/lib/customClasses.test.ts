@@ -13,6 +13,7 @@ import {
   createCustomClass,
   updateCustomClass,
   deleteCustomClass,
+  classifyApplyTokens,
 } from './customClasses';
 
 vi.mock('@tauri-apps/api/core', () => ({
@@ -126,6 +127,20 @@ describe('lib/customClasses', () => {
         projectPath: '/abs/project',
         name: 'btn',
       });
+    });
+  });
+
+  describe('classifyApplyTokens', () => {
+    it('invokes "classify_apply_tokens" and returns the unsafe tokens', async () => {
+      vi.mocked(core.invoke).mockResolvedValue(['animate-fade']);
+
+      const result = await classifyApplyTokens('/abs/project', ['px-4', 'animate-fade']);
+
+      expect(core.invoke).toHaveBeenCalledWith('classify_apply_tokens', {
+        projectPath: '/abs/project',
+        tokens: ['px-4', 'animate-fade'],
+      });
+      expect(result).toEqual(['animate-fade']);
     });
   });
 });

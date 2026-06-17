@@ -537,6 +537,27 @@ pub fn delete_custom_class(
     write_entry_css(&project_path, |css| delete_class_in_css(css, &name))
 }
 
+/// Of the given tokens, return the ones that can't safely go in an `@apply`
+/// (they're plain classes defined in the project's CSS, not Tailwind utilities).
+/// Lets "create from styles" keep those on the element instead of breaking the
+/// build. Returns `[]` when there's no entry stylesheet to check against.
+#[tauri::command]
+#[tracing::instrument(skip(tokens), fields(project = %project_path))]
+pub fn classify_apply_tokens(
+    project_path: String,
+    tokens: Vec<String>,
+) -> Result<Vec<String>, CommandError> {
+    let root = validate_project_path(&project_path)?;
+    let Some(entry) = detect_setup_at(&root).entry_css else {
+        return Ok(vec![]);
+    };
+    let Ok(css) = std::fs::read_to_string(root.join(&entry)) else {
+        return Ok(vec![]);
+    };
+    let kind = css_scan(&css);
+    Ok(unsafe_apply_tokens(&css, &kind, &tokens))
+}
+
 /// Locate the project's entry stylesheet, apply a pure string transform to it,
 /// write the result back, and return the fresh class list. Centralizes path
 /// validation, the missing-entry error, and the string-error → Validation map.
@@ -627,6 +648,99 @@ fn validate_tokens(tokens: &[String]) -> Result<(), String> {
     Ok(())
 }
 
+// ─────────────────── @apply-safety (Tailwind v4 build guard) ────────────────
+//
+// Tailwind v4 `@apply` only accepts *utilities* — built-ins, arbitrary-value
+// utilities, and `@utility`-defined ones. Applying a PLAIN class (a `.foo {}`
+// rule, including another `@layer components` class) is a hard CssSyntaxError
+// that breaks the whole stylesheet's build. We can't enumerate Tailwind's
+// built-ins, but we CAN spot the dangerous case: a token that the project's CSS
+// defines as a plain class and NOT as an `@utility`. Those we refuse to write.
+
+/// Every simple `.name` selector defined anywhere in the stylesheet.
+fn collect_plain_class_names(css: &str, kind: &[CssKind]) -> HashSet<String> {
+    let bytes = css.as_bytes();
+    let mut names = HashSet::new();
+    for i in 0..bytes.len() {
+        if kind[i] != CssKind::Code || bytes[i] != b'{' {
+            continue;
+        }
+        if let Some(name) = single_class_name(&prelude_bounds(css, kind, i).1) {
+            names.insert(name);
+        }
+    }
+    names
+}
+
+/// Every name defined via `@utility <name>` — these ARE valid inside `@apply`.
+fn collect_utility_names(css: &str, kind: &[CssKind]) -> HashSet<String> {
+    let bytes = css.as_bytes();
+    let mut names = HashSet::new();
+    let mut from = 0;
+    while let Some(rel) = css[from..].find("@utility") {
+        let at = from + rel;
+        from = at + "@utility".len();
+        if kind[at] != CssKind::Code {
+            continue;
+        }
+        let mut j = at + "@utility".len();
+        while j < bytes.len() && bytes[j].is_ascii_whitespace() {
+            j += 1;
+        }
+        let start = j;
+        while j < bytes.len()
+            && (bytes[j].is_ascii_alphanumeric() || matches!(bytes[j], b'-' | b'_'))
+        {
+            j += 1;
+        }
+        if j > start {
+            names.insert(css[start..j].to_string());
+        }
+    }
+    names
+}
+
+/// The bare class name a token would resolve to for `@apply` — strip the leading
+/// `!` (important) and any variant prefixes (`sm:`, `hover:`). Returns `None` for
+/// arbitrary-value tokens (`text-[…]`), which never name a plain class.
+fn apply_base_name(token: &str) -> Option<&str> {
+    let bare = token.trim_start_matches('!');
+    let name = bare.rsplit(':').next().unwrap_or(bare);
+    if name.is_empty() || name.contains(['[', ']', '(', ')']) {
+        return None;
+    }
+    Some(name)
+}
+
+/// Tokens that would break `@apply`: defined as a plain class in this stylesheet
+/// and not also an `@utility`.
+fn unsafe_apply_tokens(css: &str, kind: &[CssKind], tokens: &[String]) -> Vec<String> {
+    let plains = collect_plain_class_names(css, kind);
+    let utils = collect_utility_names(css, kind);
+    tokens
+        .iter()
+        .filter(|t| {
+            apply_base_name(t)
+                .map(|n| plains.contains(n) && !utils.contains(n))
+                .unwrap_or(false)
+        })
+        .cloned()
+        .collect()
+}
+
+/// Reject a token list that would break the Tailwind build via `@apply`.
+fn guard_apply_safety(css: &str, kind: &[CssKind], tokens: &[String]) -> Result<(), String> {
+    let bad = unsafe_apply_tokens(css, kind, tokens);
+    if bad.is_empty() {
+        return Ok(());
+    }
+    Err(format!(
+        "Can't put {} in a class — {} a custom class, not a Tailwind utility, so @apply would break the build. Keep it on the element, or convert it to an @utility.",
+        bad.iter().map(|t| format!("`{t}`")).collect::<Vec<_>>().join(", "),
+        if bad.len() == 1 { "it's" } else { "they're" },
+    ))
+}
+
 // ───────────────────────── Pure CSS transforms ──────────────────────────────
 
 /// A `.name { … }` rule located in source.
@@ -670,6 +784,7 @@ fn create_class_in_css(css: &str, name: &str, tokens: &[String]) -> Result<Strin
     validate_class_name(name)?;
     validate_tokens(tokens)?;
     let kind = css_scan(css);
+    guard_apply_safety(css, &kind, tokens)?;
     if find_class_rule(css, &kind, name).is_some() {
         return Err(format!("A class named `.{name}` already exists"));
     }
@@ -697,6 +812,7 @@ fn create_class_in_css(css: &str, name: &str, tokens: &[String]) -> Result<Strin
 fn update_class_in_css(css: &str, name: &str, tokens: &[String]) -> Result<String, String> {
     validate_tokens(tokens)?;
     let kind = css_scan(css);
+    guard_apply_safety(css, &kind, tokens)?;
     let rule =
         find_class_rule(css, &kind, name).ok_or_else(|| format!("`.{name}` was not found"))?;
 
@@ -1155,6 +1271,53 @@ div.card { @apply p-4; }
     #[test]
     fn delete_rejects_missing_rule() {
         assert!(delete_class_in_css(".btn { @apply p-2; }", "ghost").is_err());
+    }
+
+    // ───────────── @apply build-safety guard ─────────────
+
+    #[test]
+    fn rejects_applying_a_plain_custom_class() {
+        // The element carried a project-defined plain class; @apply-ing it would
+        // be a hard CssSyntaxError in Tailwind v4 — so create must refuse.
+        let css = "@import \"tailwindcss\";\n.animate-fade { animation: x 1s; }\n";
+        let err = create_class_in_css(css, "hero", &["text-2xl".into(), "animate-fade".into()])
+            .unwrap_err();
+        assert!(
+            err.contains("animate-fade"),
+            "names the offending token: {err}"
+        );
+    }
+
+    #[test]
+    fn allows_at_utility_defined_classes_in_apply() {
+        // Same name, but defined as an @utility → valid in @apply.
+        let css = "@import \"tailwindcss\";\n@utility animate-fade { animation: x 1s; }\n";
+        let out =
+            create_class_in_css(css, "hero", &["text-2xl".into(), "animate-fade".into()]).unwrap();
+        assert!(out.contains("@apply text-2xl animate-fade;"));
+    }
+
+    #[test]
+    fn unsafe_tokens_ignores_utilities_and_arbitrary_values() {
+        let css = ".brandbox { color: red; }";
+        let kind = css_scan(css);
+        // Real utilities, arbitrary values, and variants are all fine.
+        assert!(unsafe_apply_tokens(
+            css,
+            &kind,
+            &[
+                "px-4".into(),
+                "bg-[#fff]".into(),
+                "sm:text-6xl".into(),
+                "lg:text-[5.25rem]".into(),
+            ],
+        )
+        .is_empty());
+        // The plain-class token is flagged (incl. with a variant prefix).
+        assert_eq!(
+            unsafe_apply_tokens(css, &kind, &["brandbox".into(), "hover:brandbox".into()]),
+            vec!["brandbox".to_string(), "hover:brandbox".to_string()]
+        );
     }
 
     #[test]
