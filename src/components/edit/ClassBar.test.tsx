@@ -26,6 +26,8 @@ function renderBar(over: Partial<Parameters<typeof ClassBar>[0]> = {}) {
   return props;
 }
 
+const search = () => screen.getByPlaceholderText(/search or create a class/i);
+
 describe('ClassBar', () => {
   it('labels the trigger with the active target', () => {
     renderBar();
@@ -34,31 +36,51 @@ describe('ClassBar', () => {
 
   it('shows the class name in the trigger while editing a class', () => {
     renderBar({ editTarget: { kind: 'class', name: 'btn', baseline: 'px-4 py-2' } });
-    expect(screen.getByRole('button', { name: '.btn' })).toBeInTheDocument();
+    // The class target shows its bare name (no "." prefix) in the trigger chip.
+    expect(screen.getByRole('button', { name: 'btn' })).toBeInTheDocument();
   });
 
-  it('menu lists the element, applied classes, and available classes', () => {
+  it('menu lists the element, applied classes, and available classes (as options)', () => {
     renderBar();
     fireEvent.click(screen.getByRole('button'));
-    expect(screen.getByRole('menuitem', { name: 'This element' })).toBeInTheDocument();
-    expect(screen.getByRole('menuitem', { name: '.btn' })).toBeInTheDocument(); // applied
-    expect(screen.getByRole('menuitem', { name: '.card' })).toBeInTheDocument(); // available (add)
+    expect(screen.getByRole('option', { name: 'This element' })).toBeInTheDocument();
+    expect(screen.getByRole('option', { name: 'btn' })).toBeInTheDocument(); // applied → edit target
+    expect(screen.getByRole('option', { name: 'card' })).toBeInTheDocument(); // available → apply
+  });
+
+  it('marks the active edit target as selected', () => {
+    renderBar({ editTarget: { kind: 'class', name: 'btn', baseline: 'px-4 py-2' } });
+    fireEvent.click(screen.getByRole('button'));
+    expect(screen.getByRole('option', { name: 'btn' })).toHaveAttribute('aria-selected', 'true');
+    expect(screen.getByRole('option', { name: 'This element' })).toHaveAttribute(
+      'aria-selected',
+      'false'
+    );
   });
 
   it('edits an applied class and applies an available one (apply keeps the menu open)', () => {
     const props = renderBar();
     fireEvent.click(screen.getByRole('button'));
-    fireEvent.click(screen.getByRole('menuitem', { name: '.btn' }));
+    fireEvent.click(screen.getByRole('option', { name: 'btn' }));
     expect(props.onEditClass).toHaveBeenCalledWith('btn', ['px-4', 'py-2']);
 
     fireEvent.click(screen.getByRole('button')); // reopen (editing a target closes the menu)
     // Apply runs through an async serializer (busy state), so flush under act.
     act(() => {
-      fireEvent.click(screen.getByRole('menuitem', { name: '.card' }));
+      fireEvent.click(screen.getByRole('option', { name: 'card' }));
     });
     expect(props.onApplyExisting).toHaveBeenCalledWith('card');
     // Applying keeps the menu open — the search field is still there.
-    expect(screen.getByPlaceholderText(/search or name a new class/i)).toBeInTheDocument();
+    expect(search()).toBeInTheDocument();
+  });
+
+  it('removes an applied class via its × button', () => {
+    const props = renderBar();
+    fireEvent.click(screen.getByRole('button'));
+    act(() => {
+      fireEvent.click(screen.getByRole('button', { name: /remove \.btn/i }));
+    });
+    expect(props.onUnapply).toHaveBeenCalledWith('btn');
   });
 
   it('filters the list by the search query', () => {
@@ -70,32 +92,36 @@ describe('ClassBar', () => {
       elementClass: 'p-3', // nothing applied → both available
     });
     fireEvent.click(screen.getByRole('button'));
-    fireEvent.change(screen.getByPlaceholderText(/search or name a new class/i), {
-      target: { value: 'hero' },
-    });
-    expect(screen.getByRole('menuitem', { name: '.hero-heading' })).toBeInTheDocument();
-    expect(screen.queryByRole('menuitem', { name: '.btn-primary' })).not.toBeInTheDocument();
+    fireEvent.change(search(), { target: { value: 'hero' } });
+    expect(screen.getByRole('option', { name: 'hero-heading' })).toBeInTheDocument();
+    expect(screen.queryByRole('option', { name: 'btn-primary' })).not.toBeInTheDocument();
   });
 
-  it('offers "create from styles" when the query is a new class name and there are utilities', () => {
+  it('keyboard: arrow-down + Enter activates the highlighted row', () => {
+    const props = renderBar({
+      customClasses: [{ name: 'hero', tokens: ['text-5xl'], editable: true }],
+      elementClass: 'p-3', // hero is available
+    });
+    fireEvent.click(screen.getByRole('button'));
+    // Rows: [This element, hero(apply)]. Down → hero, Enter → apply it.
+    fireEvent.keyDown(search(), { key: 'ArrowDown' });
+    act(() => {
+      fireEvent.keyDown(search(), { key: 'Enter' });
+    });
+    expect(props.onApplyExisting).toHaveBeenCalledWith('hero');
+  });
+
+  it('offers "create class" only when the query is a new name with utilities present', () => {
     renderBar({ elementClass: 'p-3 flex' });
     fireEvent.click(screen.getByRole('button'));
-    fireEvent.change(screen.getByPlaceholderText(/search or name a new class/i), {
-      target: { value: 'fresh-name' },
-    });
-    expect(
-      screen.getByRole('menuitem', { name: /create .*fresh-name.* from styles/i })
-    ).toBeEnabled();
+    fireEvent.change(search(), { target: { value: 'fresh-name' } });
+    expect(screen.getByRole('option', { name: /create class .*fresh-name/i })).toBeEnabled();
   });
 
   it('disables create when the project has no writable Tailwind stylesheet', () => {
     renderBar({ elementClass: 'p-3 flex', canCreate: false });
     fireEvent.click(screen.getByRole('button'));
-    fireEvent.change(screen.getByPlaceholderText(/search or name a new class/i), {
-      target: { value: 'fresh-name' },
-    });
-    expect(
-      screen.getByRole('menuitem', { name: /create .*fresh-name.* from styles/i })
-    ).toBeDisabled();
+    fireEvent.change(search(), { target: { value: 'fresh-name' } });
+    expect(screen.getByRole('option', { name: /create class .*fresh-name/i })).toBeDisabled();
   });
 });

@@ -737,8 +737,6 @@ const KNOWN_UTILITY_NAMES: &[&str] = &[
     "contents",
     "flow-root",
     "list-item",
-    "group",
-    "peer",
     "sr-only",
     "not-sr-only",
     "truncate",
@@ -778,11 +776,24 @@ fn apply_base_name(token: &str) -> Option<&str> {
     Some(name)
 }
 
-/// Whether a single token would break `@apply`: its base name is defined as a
-/// plain class, isn't also an `@utility`, and isn't a known built-in utility.
+/// Tailwind marker classes that generate NO CSS — they only exist to be targeted
+/// by variants (`group-hover:`, `peer-checked:`). `@apply group` / `@apply peer`
+/// therefore errors with "cannot apply unknown utility class", so they're never
+/// safe to fold into an `@apply` list (they belong on the element's markup). This
+/// covers the bare markers and their named forms (`group/menu`, `peer/email`).
+fn is_non_applicable_marker(name: &str) -> bool {
+    matches!(name, "group" | "peer") || name.starts_with("group/") || name.starts_with("peer/")
+}
+
+/// Whether a single token would break `@apply`: it's a non-applicable marker, or
+/// its base name is defined as a plain class, isn't also an `@utility`, and isn't
+/// a known built-in utility.
 fn token_is_unsafe(token: &str, plains: &HashSet<String>, utils: &HashSet<String>) -> bool {
     apply_base_name(token)
-        .map(|n| plains.contains(n) && !utils.contains(n) && !KNOWN_UTILITY_NAMES.contains(&n))
+        .map(|n| {
+            is_non_applicable_marker(n)
+                || (plains.contains(n) && !utils.contains(n) && !KNOWN_UTILITY_NAMES.contains(&n))
+        })
         .unwrap_or(false)
 }
 
@@ -1491,6 +1502,34 @@ div.card { @apply p-4; }
             ),
             vec!["brandbox".to_string()]
         );
+    }
+
+    #[test]
+    fn flags_group_and_peer_markers_as_unsafe() {
+        // `group`/`peer` generate no CSS — `@apply group` errors. They must be
+        // flagged even though they're not defined as plain classes anywhere.
+        let css = "@import \"tailwindcss\";";
+        let kind = css_scan(css);
+        assert_eq!(
+            unsafe_apply_tokens(
+                css,
+                &kind,
+                &[
+                    "group".into(),
+                    "peer".into(),
+                    "group/menu".into(),
+                    "peer/email".into(),
+                ],
+            ),
+            vec![
+                "group".to_string(),
+                "peer".to_string(),
+                "group/menu".to_string(),
+                "peer/email".to_string(),
+            ]
+        );
+        // ...but variant utilities that merely *reference* a group are applyable.
+        assert!(unsafe_apply_tokens(css, &kind, &["group-hover:bg-red-500".into()]).is_empty());
     }
 
     #[test]
