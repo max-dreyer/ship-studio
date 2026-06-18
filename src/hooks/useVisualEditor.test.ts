@@ -225,11 +225,19 @@ describe('useVisualEditor custom classes', () => {
     expect(proj).toBe('/proj');
     expect(name).toBe('btn');
     expect(tokens).toContain('px-8');
-    // …and the live class preview is dropped so the compiled @apply is authoritative.
-    const cleared = (post.mock.calls as Array<[{ type?: string; selector?: string }]>).find(
+    // …and the live class preview is KEPT (committed), not dropped: the save's
+    // HMR reload is suppressed, so clearing the override would revert the element
+    // to the stale compiled rule until the next real reload. The override mirrors
+    // the saved tokens and reconciles on target-switch / panel close.
+    const clearedAfterSave = (post.mock.calls as Array<[{ type?: string }]>).some(
       (c) => c[0]?.type === 'ss:clearClassPreview'
     );
-    expect(cleared?.[0].selector).toBe('.btn');
+    expect(clearedAfterSave).toBe(false);
+    expect(
+      (post.mock.calls as Array<[{ type?: string }]>).some(
+        (c) => c[0]?.type === 'ss:suppressReload'
+      )
+    ).toBe(true);
   });
 
   it('returning to the element edits its className again', async () => {

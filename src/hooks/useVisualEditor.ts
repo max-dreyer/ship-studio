@@ -575,8 +575,8 @@ export function useVisualEditor({
   const commit = useCallback(
     async (opts?: { silent?: boolean }) => {
       // Class edit: persist the @apply list to the entry CSS (updates every
-      // instance). No element markup changes, so the element-baseline / suppress
-      // dance below doesn't apply — but we still arm suppression to avoid a flash.
+      // instance). No element markup changes, so the element-baseline dance below
+      // doesn't apply. Suppress the reload our own save triggers (avoids a flash).
       const target = editTargetRef.current;
       if (target.kind === 'class') {
         const next = currentClassRef.current.trim();
@@ -588,10 +588,14 @@ export function useVisualEditor({
           setCustomClasses(list);
           // Advance the baseline so consecutive edits (and auto-save) keep working.
           setEditTarget({ kind: 'class', name: target.name, baseline: tokens.join(' ') });
-          // Drop the live (raw-CSS, !important) preview so the freshly-compiled
-          // @apply rule is authoritative — otherwise the override can mask the
-          // real saved styles where the two diverge.
-          post({ type: 'ss:clearClassPreview', selector: `.${target.name}` });
+          // Keep the live override as the committed state — do NOT clear it here.
+          // The save's HMR reload is suppressed (no flash), so clearing would drop
+          // the element back to the STALE compiled rule until the next real reload,
+          // making the just-saved edit visibly revert. The override already mirrors
+          // the saved tokens; it's reconciled with the freshly-compiled @apply rule
+          // when the edit target switches or the panel closes (both clear class
+          // previews), or on the next genuine reload. Mirrors how element edits keep
+          // their live state via ss:commit rather than discarding it.
           if (!opts?.silent) onToast?.('Class saved', 'success');
         } catch (err) {
           logger.error('[VisualEditor] class write-back failed', { error: String(err) });
