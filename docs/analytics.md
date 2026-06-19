@@ -96,6 +96,10 @@ Fired from `useIntegrationStatus` once GitHub auth resolves with a username.
 | `code_snippet_sent_to_agent` | `file_extension`, `language`, `line_count`, `char_count`, `had_question` |
 | `code_snippet_copied` | `file_extension`, `line_count` |
 | `search_performed` (`code_files`) | Debounced |
+| `custom_class_created` | `token_count` (utilities folded into `@apply`), `kept_count` (non-utility tokens left on the element) |
+| `custom_class_applied` | — |
+| `custom_class_unapplied` | — |
+| `custom_class_edited` | `token_count` (one event per settled edit, incl. auto-save) |
 
 ### Branches & PRs
 

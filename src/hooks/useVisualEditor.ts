@@ -76,6 +76,7 @@ import {
   type CustomClass,
 } from '../lib/customClasses';
 import { logger } from '../lib/logger';
+import { trackEvent } from '../lib/analytics';
 
 /**
  * What the style controls currently edit:
@@ -586,6 +587,7 @@ export function useVisualEditor({
         try {
           const list = await updateCustomClass(projectPath, target.name, tokens);
           setCustomClasses(list);
+          void trackEvent('custom_class_edited', { token_count: tokens.length });
           // Advance the baseline so consecutive edits (and auto-save) keep working.
           setEditTarget({ kind: 'class', name: target.name, baseline: tokens.join(' ') });
           // Keep the live override as the committed state — do NOT clear it here.
@@ -708,6 +710,7 @@ export function useVisualEditor({
       if (current.includes(name)) return; // already on the element
       try {
         await writeElementClass([...current, name].join(' '));
+        void trackEvent('custom_class_applied');
       } catch (err) {
         onToast?.(String(err), 'error');
       }
@@ -729,6 +732,7 @@ export function useVisualEditor({
       try {
         const ok = await writeElementClass(next);
         if (ok && wasEditing) editElement();
+        void trackEvent('custom_class_unapplied');
       } catch (err) {
         onToast?.(String(err), 'error');
       }
@@ -758,6 +762,10 @@ export function useVisualEditor({
         }
         const list = await createCustomClass(projectPath, name, utilities);
         setCustomClasses(list);
+        void trackEvent('custom_class_created', {
+          token_count: utilities.length,
+          kept_count: kept.length,
+        });
         const ok = await writeElementClass([...kept, name].join(' '));
         if (!ok) {
           // The class was created but couldn't be applied — still let the user edit it.
