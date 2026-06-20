@@ -600,6 +600,10 @@ export function OnboardingScreen({ onComplete }: OnboardingScreenProps) {
                 args={terminalConfig.args}
                 onExit={(exitCode) => void handleTerminalExit(exitCode)}
               />
+              <div className="onboarding-terminal-hint">
+                <strong>If you're asked for a password</strong>, type it and press Enter. It stays
+                hidden as you type — no dots or characters appear — but it is being entered.
+              </div>
             </div>
           </div>
         )}
