@@ -30,6 +30,7 @@ import {
   type MovableProjects,
 } from '../../lib/settings';
 import { asCommandError, formatCommandError } from '../../lib/errors';
+import { EditIcon } from '../icons';
 
 const errMsg = (err: unknown) => formatCommandError(asCommandError(err));
 
@@ -226,29 +227,29 @@ export function SettingsModal({
                   Where Ship Studio lists and creates your projects. Point this at an existing dev
                   directory to keep everything in one place.
                 </span>
-                <span className="settings-folder-path" title={projectsRoot}>
-                  {projectsRoot || '—'}
-                  {!customRoot && projectsRoot ? ' (default)' : ''}
-                </span>
-              </div>
-              <div className="settings-folder-actions">
-                <Button
-                  variant="secondary"
-                  size="sm"
+                <button
+                  type="button"
+                  className="settings-folder-field"
                   onClick={() => void handleChangeFolder()}
                   disabled={savingRoot || loading}
+                  title="Change projects folder"
+                  aria-label="Change projects folder"
                 >
-                  Change…
-                </Button>
+                  <span className="settings-folder-field-path">
+                    {projectsRoot || '—'}
+                    {!customRoot && projectsRoot ? ' (default)' : ''}
+                  </span>
+                  <EditIcon size={14} />
+                </button>
                 {customRoot && (
-                  <Button
-                    variant="ghost"
-                    size="sm"
+                  <button
+                    type="button"
+                    className="settings-folder-reset"
                     onClick={() => void handleResetFolder()}
                     disabled={savingRoot}
                   >
                     Reset to default
-                  </Button>
+                  </button>
                 )}
               </div>
             </div>
