@@ -60,6 +60,58 @@
   line-height: 1.4;
 }
 
+/* Projects folder row (stacked: label/description/path above the actions) */
+.settings-row--stacked {
+  flex-direction: column;
+  align-items: stretch;
+}
+
+.settings-folder-path {
+  margin-top: var(--spacing-xs);
+  padding: var(--spacing-sm) var(--spacing-md);
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  font-size: var(--font-size-base);
+  color: var(--text-secondary);
+  word-break: break-all;
+}
+
+.settings-folder-actions {
+  display: flex;
+  gap: var(--spacing-sm);
+  margin-top: var(--spacing-sm);
+}
+
+/* Move-projects prompt */
+.settings-move-intro {
+  font-size: var(--font-size-md);
+  color: var(--text-primary);
+  line-height: 1.5;
+  margin: 0 0 var(--spacing-md);
+}
+
+.settings-move-paths {
+  font-size: var(--font-size-base);
+  color: var(--text-secondary);
+  word-break: break-all;
+  margin: 0 0 var(--spacing-md);
+}
+
+.settings-move-note {
+  font-size: var(--font-size-base);
+  color: var(--text-muted);
+  line-height: 1.4;
+  margin: 0 0 var(--spacing-sm);
+}
+
+.settings-move-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--spacing-sm);
+  margin-top: var(--spacing-lg);
+}
+
 /* Toggle switch */
 .settings-toggle {
   flex-shrink: 0;
