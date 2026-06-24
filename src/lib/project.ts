@@ -670,6 +670,37 @@ export async function setForceStaticServe(projectPath: string, force: boolean): 
   return invoke<void>('set_force_static_serve', { projectPath, force });
 }
 
+/** The hosting providers Ship Studio supports natively. */
+export type HostingProvider = 'vercel' | 'cloudflare' | 'netlify';
+
+/**
+ * Get the explicitly-chosen hosting provider for this project, or `null` if the
+ * user has never picked one. For a pre-selected default that falls back to
+ * detection (installed plugin / `.vercel` / `.netlify`), use {@link detectHostingProvider}.
+ */
+export async function getHostingProvider(projectPath: string): Promise<HostingProvider | null> {
+  return invoke<HostingProvider | null>('get_hosting_provider', { projectPath });
+}
+
+/**
+ * Set (or clear) this project's hosting provider. Pass `null` to clear.
+ */
+export async function setHostingProvider(
+  projectPath: string,
+  provider: HostingProvider | null
+): Promise<void> {
+  return invoke<void>('set_hosting_provider', { projectPath, provider });
+}
+
+/**
+ * Resolve the effective hosting provider to pre-select in the picker: the
+ * explicit choice if set, otherwise inferred for backwards-compat from a real
+ * link config or an installed hosting plugin. `null` when nothing indicates one.
+ */
+export async function detectHostingProvider(projectPath: string): Promise<HostingProvider | null> {
+  return invoke<HostingProvider | null>('detect_hosting_provider', { projectPath });
+}
+
 /** A runnable app discovered inside a monorepo at import time. */
 export interface WorkspaceInfo {
   /** Package name from the workspace's `package.json`. */

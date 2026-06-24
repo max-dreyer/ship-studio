@@ -12,6 +12,7 @@
 
 import { EnvEditor } from './EnvEditor';
 import { LanguagesModal } from './LanguagesModal';
+import { HostingModal } from './HostingModal';
 import { BackupsModal } from './BackupsModal';
 import { AssetsPanel } from './AssetsPanel';
 import { EducationOverlay } from '../EducationOverlay';
@@ -223,6 +224,8 @@ export function WorkspaceModals({
       <EnvEditor projectPath={projectPath} />
 
       <LanguagesModal projectPath={projectPath} onSendToClaude={onSendToClaude} />
+
+      <HostingModal projectPath={projectPath} />
 
       <BackupsModal
         projectPath={projectPath}

@@ -12,6 +12,7 @@
 
 mod detection;
 mod dev_server;
+mod hosting;
 mod metadata;
 mod pins;
 mod sessions;
@@ -21,6 +22,7 @@ mod window_registry;
 
 pub use detection::*;
 pub use dev_server::*;
+pub use hosting::*;
 pub use metadata::*;
 pub use pins::*;
 pub use sessions::*;

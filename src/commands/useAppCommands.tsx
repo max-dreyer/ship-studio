@@ -381,6 +381,15 @@ export function useAppCommands({
         run: () => openModal('i18n'),
       },
       {
+        id: 'modal.hosting',
+        title: 'Hosting',
+        icon: <GlobeIcon size={14} />,
+        category: 'settings',
+        when: 'project',
+        keywords: ['hosting', 'deploy', 'vercel', 'cloudflare', 'netlify', 'provider', 'publish'],
+        run: () => openModal('hosting'),
+      },
+      {
         id: 'modal.backups',
         title: 'Backups',
         icon: <SettingsIcon size={14} />,

@@ -236,6 +236,13 @@ pub struct ProjectMetadata {
     /// built-in "Default" account.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub account_id: Option<String>,
+    /// Hosting provider for this project's publish flow: `"vercel" | "cloudflare"
+    /// | "netlify"`. `None` = not chosen yet. The native Hosting picker infers a
+    /// default from any installed hosting plugin or `.vercel` / `.netlify` config
+    /// (see `detect_hosting_provider`), so projects set up before this field
+    /// existed keep working without re-configuration.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub hosting_provider: Option<String>,
     /// Keys this app version doesn't know about, preserved verbatim across
     /// read-modify-write cycles — an older build must never silently drop
     /// fields written by a newer one.
@@ -268,6 +275,7 @@ impl Default for ProjectMetadata {
             assets_root: None,
             shopify_store: None,
             account_id: None,
+            hosting_provider: None,
             extra: serde_json::Map::new(),
         }
     }
