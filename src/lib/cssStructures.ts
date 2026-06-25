@@ -129,10 +129,24 @@ export const NEST_ITEMS: StructureItem[] = [
     keywords: ['matches'],
   },
   {
+    label: '& > :nth-child(even)',
+    insert: '& > :nth-child(even)',
+    kind: 'nest',
+    hint: 'even children',
+    keywords: ['nth', 'alternate', 'stripe', 'zebra', 'child', 'rows'],
+  },
+  {
+    label: '& > :nth-child(odd)',
+    insert: '& > :nth-child(odd)',
+    kind: 'nest',
+    hint: 'odd children',
+    keywords: ['nth', 'alternate', 'stripe', 'zebra', 'child', 'rows'],
+  },
+  {
     label: '&:nth-child(even)',
     insert: '&:nth-child(even)',
     kind: 'nest',
-    hint: 'every 2nd',
+    hint: 'this, when even sibling',
     keywords: ['nth', 'alternate', 'stripe', '2n'],
   },
   {
