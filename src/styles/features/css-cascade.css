@@ -369,8 +369,10 @@
   justify-content: space-between;
   flex-wrap: wrap;
   gap: var(--spacing-xs) var(--spacing-sm);
-  margin-top: 6px; /* css-ok: footer gap */
-  padding-top: 6px; /* css-ok: footer gap */
+  /* Negative side margins cancel the body's horizontal padding so the divider
+     spans the full card width — matching the header's full-width bottom border. */
+  margin: 6px calc(-1 * var(--spacing-sm)) calc(-1 * var(--spacing-sm)); /* css-ok: edge-to-edge footer */
+  padding: 6px var(--spacing-sm); /* css-ok: footer gap */
   border-top: 1px solid var(--border);
 }
 /* When the add-property combobox opens it takes the whole footer row (the source
@@ -413,6 +415,7 @@
 /* Prop + value are plain WRAPPING text (clicking opens the edit popover), so a long
    prop or value just wraps and is never cut off; a short one reads `prop: value`. */
 .ss-decl {
+  position: relative;
   display: flex;
   align-items: baseline;
   gap: var(--spacing-xs);
@@ -429,6 +432,24 @@
 .ss-decl.is-overridden .ss-decl__prop,
 .ss-decl.is-overridden .ss-decl__value {
   text-decoration: line-through;
+}
+/* "Overridden by X" hover tooltip (portaled, fixed — never clipped by the panel). */
+.ss-decl-tip {
+  z-index: var(--z-tooltip);
+  max-width: 280px;
+  padding: var(--spacing-xs) var(--spacing-sm);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-secondary);
+  box-shadow: var(--shadow-md);
+  color: var(--text-secondary);
+  font-size: var(--font-size-xs);
+  white-space: nowrap;
+  pointer-events: none;
+}
+.ss-decl-tip__sel {
+  color: var(--code-property);
+  font-family: var(--font-mono);
 }
 .ss-decl.is-readonly {
   white-space: normal;
@@ -450,7 +471,6 @@
   color: var(--code-property);
   white-space: normal;
   overflow-wrap: anywhere;
-  word-break: break-word;
 }
 .ss-decl__colon {
   flex: 0 0 auto;
@@ -459,13 +479,13 @@
 .ss-decl__value {
   display: inline-flex;
   align-items: baseline;
+  flex-wrap: wrap;
   gap: var(--spacing-xs);
   flex: 1 1 auto;
   min-width: 0;
   color: var(--text-primary);
   white-space: normal;
   overflow-wrap: anywhere;
-  word-break: break-word;
 }
 .ss-decl__ph {
   color: var(--text-muted);
@@ -480,13 +500,29 @@
 }
 .ss-decl__imp {
   color: var(--warning);
+  white-space: nowrap;
 }
+/* Actions are pulled OUT of the inline flow (absolute, revealed on hover) so they
+   never reserve width and squeeze the value column into per-character wrapping.
+   A solid chip backdrop keeps them legible when they overlay a long value. */
 .ss-decl__actions {
+  position: absolute;
+  top: 1px;
+  right: 2px;
   display: inline-flex;
   align-items: center;
   gap: 1px; /* css-ok: tight action cluster */
-  flex: 0 0 auto;
-  align-self: center;
+  padding: 1px;
+  border-radius: var(--radius-sm);
+  background: var(--bg-secondary);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--transition-fast);
+}
+.ss-decl:hover .ss-decl__actions,
+.ss-decl__actions:has(.is-open) {
+  opacity: 1;
+  pointer-events: auto;
 }
 
 /* Edit popover (click a prop/value) */

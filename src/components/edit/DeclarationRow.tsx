@@ -6,6 +6,7 @@
  */
 
 import { useState } from 'react';
+import { createPortal } from 'react-dom';
 import { CloseIcon } from '../icons/common';
 import { PlusIcon } from '../icons/utility';
 import { EditPopover } from './EditPopover';
@@ -33,6 +34,40 @@ interface ReadonlyProps {
 }
 type Props = EditableProps | ReadonlyProps;
 
+/** Hover tooltip for an overridden declaration, naming what wins the cascade.
+ *  Portaled + fixed-positioned so it's never clipped by the scrolling panel, and
+ *  instant (unlike the native `title` delay). */
+function useOverriddenTip(overridden: boolean, by?: string) {
+  const [pos, setPos] = useState<{ top: number; left: number } | null>(null);
+  const handlers = overridden
+    ? {
+        onMouseEnter: (e: React.MouseEvent<HTMLElement>) => {
+          const r = e.currentTarget.getBoundingClientRect();
+          setPos({ top: r.top - 6, left: r.left });
+        },
+        onMouseLeave: () => setPos(null),
+      }
+    : {};
+  const tip =
+    overridden && pos
+      ? createPortal(
+          <div
+            className="ss-decl-tip"
+            style={{
+              position: 'fixed',
+              top: pos.top,
+              left: pos.left,
+              transform: 'translateY(-100%)',
+            }}
+          >
+            Overridden by <code className="ss-decl-tip__sel">{by ?? 'a later rule'}</code>
+          </div>,
+          document.body
+        )
+      : null;
+  return { handlers, tip };
+}
+
 /** A color swatch chip when the value is a color. */
 function Swatch({ value }: { value: string }) {
   const c = colorSwatch(value);
@@ -42,8 +77,7 @@ function Swatch({ value }: { value: string }) {
 
 export function DeclarationRow(props: Props) {
   const { decl, overridden } = props;
-  const overriddenTitle =
-    overridden && props.overriddenBy ? `Overridden by ${props.overriddenBy}` : undefined;
+  const { handlers: tipHandlers, tip } = useOverriddenTip(overridden, props.overriddenBy);
   // The anchor element is captured from the click event (never read from a ref
   // during render). Clicking the same field again toggles the popover closed.
   const [editing, setEditing] = useState<null | { field: 'prop' | 'value'; anchor: HTMLElement }>(
@@ -56,10 +90,7 @@ export function DeclarationRow(props: Props) {
 
   if (!props.editable) {
     return (
-      <div
-        className={`ss-decl is-readonly${overridden ? ' is-overridden' : ''}`}
-        title={overriddenTitle}
-      >
+      <div className={`ss-decl is-readonly${overridden ? ' is-overridden' : ''}`} {...tipHandlers}>
         <span className="ss-decl__prop">{decl.prop}</span>
         <span className="ss-decl__colon">:</span>
         <span className="ss-decl__value">
@@ -67,6 +98,7 @@ export function DeclarationRow(props: Props) {
           {decl.value}
           {decl.important && <span className="ss-decl__imp"> !important</span>}
         </span>
+        {tip}
       </div>
     );
   }
@@ -74,7 +106,8 @@ export function DeclarationRow(props: Props) {
   const { onChange, onRemove, onNest, nestTargets } = props;
 
   return (
-    <div className={`ss-decl${overridden ? ' is-overridden' : ''}`} title={overriddenTitle}>
+    <div className={`ss-decl${overridden ? ' is-overridden' : ''}`} {...tipHandlers}>
+      {tip}
       <button type="button" className="ss-decl__prop ss-decl__edit" onClick={toggle('prop')}>
         {decl.prop || <span className="ss-decl__ph">property</span>}
       </button>
