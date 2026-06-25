@@ -1011,8 +1011,10 @@
 .ss-cascade-scope {
   display: flex;
   gap: var(--spacing-xs);
-  margin: var(--spacing-sm) var(--spacing-md) 0;
-  padding-bottom: var(--spacing-sm);
+  /* Horizontal inset via padding (not margin) so the bottom border runs the full
+     width of the panel while the tabs stay inset. */
+  margin: var(--spacing-sm) 0 0;
+  padding: 0 var(--spacing-md) var(--spacing-sm);
   border-bottom: 1px solid var(--border);
 }
 .ss-cascade-scope__tab {
