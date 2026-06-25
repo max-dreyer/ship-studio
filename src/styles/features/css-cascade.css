@@ -328,30 +328,104 @@
   background: color-mix(in srgb, var(--error) 14%, transparent);
 }
 
-/* + Add parent / + Add child affordances */
-.ss-card__at {
+/* Smart "+ Add" trigger — opens the grouped structure menu (nest / condition). */
+.ss-card__structure {
+  margin-top: 2px; /* css-ok: tight row above footer */
+}
+.ss-card__add-structure {
   all: unset;
   cursor: pointer;
   display: inline-flex;
   align-items: center;
-  gap: 2px; /* css-ok: icon + label */
-  margin-left: calc(var(--cascade-rail) + var(--spacing-xs));
+  gap: var(--spacing-xs);
+  padding: 3px 6px; /* css-ok: dense affordance */
+  margin-left: var(--cascade-rail);
+  border-radius: var(--radius-sm);
   color: var(--text-muted);
   font-size: var(--font-size-xs);
-  opacity: 0.5;
   transition:
     color var(--transition-fast),
-    opacity var(--transition-fast);
+    background var(--transition-fast);
 }
-.ss-card:hover .ss-card__at {
-  opacity: 0.85;
+.ss-card__add-structure:hover,
+.ss-card__add-structure.is-open {
+  color: var(--text-primary);
+  background: var(--tint-subtle);
 }
-.ss-card__at:hover {
-  color: var(--text-secondary);
-  opacity: 1;
+
+/* The grouped, searchable "+ Add" menu (portaled, fixed — never clipped). */
+.ss-struct-menu {
+  z-index: var(--z-dropdown);
+  display: flex;
+  flex-direction: column;
+  max-height: 320px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--bg-secondary);
+  box-shadow: var(--shadow-lg);
+  overflow: hidden;
 }
-.ss-card__at-input {
-  margin-left: calc(var(--cascade-rail) + var(--spacing-xs));
+.ss-struct-menu__search {
+  all: unset;
+  box-sizing: border-box;
+  width: 100%;
+  padding: var(--spacing-sm);
+  border-bottom: 1px solid var(--border);
+  color: var(--text-primary);
+  font-family: var(--font-mono);
+  font-size: var(--font-size-sm);
+}
+.ss-struct-menu__search::placeholder {
+  color: var(--text-muted);
+}
+.ss-struct-menu__list {
+  overflow-y: auto;
+  padding: var(--spacing-xs);
+  scrollbar-width: thin;
+}
+.ss-struct-menu__group {
+  padding: var(--spacing-xs) var(--spacing-xs) 2px;
+  color: var(--text-muted);
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.ss-struct-menu__empty {
+  padding: var(--spacing-sm);
+  color: var(--text-muted);
+  font-size: var(--font-size-sm);
+}
+.ss-struct-menu__item {
+  all: unset;
+  box-sizing: border-box;
+  cursor: pointer;
+  display: flex;
+  align-items: baseline;
+  gap: var(--spacing-sm);
+  width: 100%;
+  padding: 4px 6px; /* css-ok: dense menu row */
+  border-radius: var(--radius-sm);
+}
+.ss-struct-menu__item:hover,
+.ss-struct-menu__item.is-active {
+  background: var(--tint);
+}
+.ss-struct-menu__label {
+  flex: 0 0 auto;
+  color: var(--code-property);
+  font-family: var(--font-mono);
+  font-size: var(--font-size-sm);
+}
+.ss-struct-menu__hint {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-align: right;
+  color: var(--text-muted);
+  font-size: var(--font-size-xs);
 }
 
 /* ── Card body ── */
@@ -838,7 +912,6 @@
 .ss-cascade-add-selector:hover,
 .ss-card__collapse:hover,
 .ss-card__trash:hover,
-.ss-card__at:hover,
 .ss-card__add:hover,
 .ss-decl:hover,
 .ss-decl__imp-toggle:hover,

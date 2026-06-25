@@ -18,7 +18,7 @@ import { LayersIcon } from '../icons/utility';
 import { TrashIcon, FileIcon } from '../icons/editor';
 import { DeclarationRow } from './DeclarationRow';
 import { AddPropertyRow } from './AddPropertyRow';
-import { AtRuleButton } from './AtRuleButton';
+import { AddStructureMenu } from './AddStructureMenu';
 import { suggestMediaConditions } from '../../lib/cssProperties';
 import {
   declarations,
@@ -336,21 +336,7 @@ export function CascadeRuleCard(props: Props) {
       className={`ss-card${depth ? ' is-nested' : ''}${collapsed ? ' is-collapsed' : ''}`}
       data-testid="cascade-card"
     >
-      <header className="ss-card__head">
-        {onWrap && (
-          <AtRuleButton
-            label="Add parent"
-            title="Wrap this rule in a parent at-rule (e.g. @media)"
-            onSubmit={onWrap}
-          />
-        )}
-        {selectorRow}
-        <AtRuleButton
-          label="Add child"
-          title="Add a nested child rule (at-rule or selector like &:hover)"
-          onSubmit={(prelude) => onChange(addNestedRule(body, prelude))}
-        />
-      </header>
+      <header className="ss-card__head">{selectorRow}</header>
 
       {!collapsed && (
         <div className="ss-card__body">
@@ -387,6 +373,13 @@ export function CascadeRuleCard(props: Props) {
               onDelete={() => onChange(removeItem(body, r.index))}
             />
           ))}
+
+          <div className="ss-card__structure">
+            <AddStructureMenu
+              onNest={(sel) => onChange(addNestedRule(body, sel))}
+              onWrap={onWrap}
+            />
+          </div>
 
           <footer className="ss-card__foot">
             <AddPropertyRow
