@@ -209,6 +209,8 @@ interface PreviewProps {
   /** Snapshot undo/redo, surfaced in the fullscreen toolbar. */
   canUndo?: boolean;
   canRedo?: boolean;
+  undoTitle?: string;
+  redoTitle?: string;
   onUndo?: () => void;
   onRedo?: () => void;
 }
@@ -279,6 +281,8 @@ export const Preview = forwardRef<PreviewHandle, PreviewProps>(function Preview(
     onOpenInCode,
     canUndo,
     canRedo,
+    undoTitle,
+    redoTitle,
     onUndo,
     onRedo,
   },
@@ -950,7 +954,7 @@ export const Preview = forwardRef<PreviewHandle, PreviewProps>(function Preview(
             className="preview-fullscreen-btn"
             onClick={onUndo}
             disabled={!canUndo}
-            title="Undo last change (⌘Z)"
+            title={undoTitle ?? 'Undo last change (⌘Z)'}
             aria-label="Undo"
           >
             <UndoIcon size={14} />
@@ -962,7 +966,7 @@ export const Preview = forwardRef<PreviewHandle, PreviewProps>(function Preview(
             className="preview-fullscreen-btn"
             onClick={onRedo}
             disabled={!canRedo}
-            title="Redo (⌘⇧Z)"
+            title={redoTitle ?? 'Redo (⌘⇧Z)'}
             aria-label="Redo"
           >
             <RedoIcon size={14} />

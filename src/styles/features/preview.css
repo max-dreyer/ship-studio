@@ -271,11 +271,20 @@
     color var(--transition);
 }
 
-.preview-refresh:hover,
-.preview-fullscreen-btn:hover,
-.preview-tree-btn:hover {
+.preview-refresh:hover:not(:disabled),
+.preview-fullscreen-btn:hover:not(:disabled),
+.preview-tree-btn:hover:not(:disabled) {
   background: var(--bg-tertiary);
   color: var(--text-primary);
+}
+
+/* Disabled (e.g. undo/redo with nothing to restore, or no git repo) — grayed
+   and non-interactive, matching the docked toolbar's icon buttons. */
+.preview-refresh:disabled,
+.preview-fullscreen-btn:disabled,
+.preview-tree-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
 }
 
 .preview-tree-btn.active {

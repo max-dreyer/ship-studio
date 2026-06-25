@@ -18,6 +18,8 @@ type ShowToast = (message: string, type?: ToastType) => void;
 interface UseSnapshotsResult {
   canUndo: boolean;
   canRedo: boolean;
+  /** Whether the project is a git repo (snapshots require one). */
+  isGitRepo: boolean;
   undo: () => Promise<void>;
   redo: () => Promise<void>;
 }
@@ -26,6 +28,7 @@ const EMPTY_STATUS: snapshots.SnapshotStatus = {
   watching: false,
   can_undo: false,
   can_redo: false,
+  is_git_repo: false,
   history_size: 0,
   cursor: 0,
   files_changed: [],
@@ -112,6 +115,7 @@ export function useSnapshots(
   return {
     canUndo: status.can_undo,
     canRedo: status.can_redo,
+    isGitRepo: status.is_git_repo,
     undo,
     redo,
   };
