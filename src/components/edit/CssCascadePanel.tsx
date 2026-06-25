@@ -122,16 +122,6 @@ export function CssCascadePanel({
     ...new Set([...classes.map((c) => `.${c}`), ...selectorSuggestions, ...existingSelectors]),
   ];
 
-  // The element's own selectors (its classes, then its tag) that don't yet have a
-  // base rule — offered as one-click "start styling" cards so every class/tag on the
-  // element is reachable, not just the ones that already have CSS.
-  const styledBase = new Set(rows.filter((r) => !r.mediaText && r.selector).map((r) => r.selector));
-  const unstyledSelectors = [
-    ...new Set(
-      [...classes.map((c) => `.${c}`), selection?.signature.tagName ?? ''].filter(Boolean)
-    ),
-  ].filter((s) => !styledBase.has(s));
-
   return (
     <div
       ref={rootRef}
@@ -289,11 +279,14 @@ export function CssCascadePanel({
                               row.inactiveMedia ? new Map() : (overridden[key] ?? new Map())
                             }
                             body={bodies[key]}
+                            draft={row.draft}
                             onChange={(b) => onChangeBody(key, b)}
                             onDelete={() => onDeleteRule(key)}
-                            onWrap={(at) => onWrapRule(key, at)}
-                            onRename={(s) => onRenameRule(key, s)}
-                            onRenameAtRule={(m) => onRenameAtRule(key, m)}
+                            // A draft rule doesn't exist in source yet — no rename/wrap
+                            // until it's created (by adding the first property).
+                            onWrap={row.draft ? undefined : (at) => onWrapRule(key, at)}
+                            onRename={row.draft ? undefined : (s) => onRenameRule(key, s)}
+                            onRenameAtRule={row.draft ? undefined : (m) => onRenameAtRule(key, m)}
                             selectorSuggestions={selectorSuggestions}
                             variables={variables}
                           />
@@ -323,16 +316,8 @@ export function CssCascadePanel({
                       );
                     })}
 
-                    {unstyledSelectors.length > 0 && (
-                      <GhostSelectors
-                        selectors={unstyledSelectors}
-                        onPick={onAddSelector}
-                        leadIn={
-                          rows.length > 0
-                            ? 'Also on this element:'
-                            : 'No rules yet — start styling one of these:'
-                        }
-                      />
+                    {rows.length === 0 && (
+                      <p className="ss-cascade-empty">No CSS rules match this element.</p>
                     )}
                   </div>
                 )}
@@ -342,40 +327,6 @@ export function CssCascadePanel({
         )}
       </div>
     </div>
-  );
-}
-
-/** The element's own selectors that aren't styled yet (its classes, then its tag) as
- *  one-click "start styling" cards — so every class/tag on the element is reachable,
- *  whether or not it already has CSS. Each click creates an editable rule. */
-function GhostSelectors({
-  selectors,
-  onPick,
-  leadIn,
-}: {
-  selectors: string[];
-  onPick: (selector: string) => void;
-  leadIn: string;
-}) {
-  const unique = [...new Set(selectors.filter(Boolean))];
-  return (
-    <>
-      <p className="ss-cascade-ghost-hint">{leadIn}</p>
-      {unique.map((sel) => (
-        <button
-          key={sel}
-          type="button"
-          className="ss-cascade-ghost"
-          title={`Create a rule for ${sel}`}
-          onClick={() => onPick(sel)}
-        >
-          <code className="ss-card__selector-chip">{sel}</code>
-          <span className="ss-cascade-ghost__add">
-            <PlusIcon size={11} /> Add
-          </span>
-        </button>
-      ))}
-    </>
   );
 }
 

@@ -80,6 +80,9 @@ export interface CascadeRow {
   innerText?: string;
   /** Why a rule is read-only, surfaced in the UI. */
   readonlyReason?: string;
+  /** A not-yet-created rule for one of the element's own selectors — an empty editable
+   *  card shown in cascade order; the rule is written to source on the first property. */
+  draft?: boolean;
 }
 
 /** Map a batch of cascade matches to their source locations (index-aligned). */

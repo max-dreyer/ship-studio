@@ -79,6 +79,9 @@ interface EditableCard extends CommonHeader {
   onRenameAtRule?: (newMedia: string) => void;
   /** Project CSS variables (`--foo`) for `var(--…)` value autocomplete. */
   variables?: string[];
+  /** A not-yet-created rule (one of the element's own selectors) — shown dashed with a
+   *  "new" chip; the rule is written to source on the first property. */
+  draft?: boolean;
 }
 
 interface ReadonlyCard extends CommonHeader {
@@ -559,8 +562,16 @@ export function CascadeRuleCard(props: Props) {
           inactive
         </span>
       )}
+      {props.editable && props.draft && (
+        <span
+          className="ss-card__chip ss-card__chip--new"
+          title="No rule yet — it's created in your stylesheet when you add the first property"
+        >
+          new
+        </span>
+      )}
       {!editable && <span className="ss-card__src ss-card__src--ro">read-only</span>}
-      {editable && props.onDelete && (
+      {editable && props.onDelete && !props.draft && (
         <button
           type="button"
           className="ss-card__trash"
@@ -605,7 +616,7 @@ export function CascadeRuleCard(props: Props) {
 
   return (
     <section
-      className={`ss-card${depth ? ' is-nested' : ''}${collapsed ? ' is-collapsed' : ''}${inactive ? ' is-inactive' : ''}`}
+      className={`ss-card${depth ? ' is-nested' : ''}${collapsed ? ' is-collapsed' : ''}${inactive ? ' is-inactive' : ''}${props.draft ? ' is-draft' : ''}`}
       data-testid="cascade-card"
     >
       <header className="ss-card__head">{selectorRow}</header>

@@ -1048,38 +1048,20 @@
   background: none;
 }
 
-/* ── Ghost selectors (empty-state quick-start cards) ── */
-.ss-cascade-ghost-hint {
-  margin: 0 var(--spacing-xs) var(--spacing-xs);
-  color: var(--text-muted);
+/* ── Draft cards (the element's own selectors with no rule yet) ──
+   Dashed + slightly dimmed so it reads as "not written yet"; it solidifies into a
+   normal card once you add the first property (which creates the rule in source). */
+.ss-card.is-draft {
+  border-style: dashed;
+  background: transparent;
+}
+.ss-card.is-draft .ss-card__selector-chip {
+  opacity: 0.85;
+}
+.ss-card__chip--new {
+  color: var(--action);
+  background: var(--tint-strong);
+  text-transform: uppercase;
   font-size: var(--font-size-xs);
-}
-.ss-cascade-ghost {
-  all: unset;
-  box-sizing: border-box;
-  display: flex;
-  align-items: center;
-  gap: var(--spacing-sm);
-  padding: var(--spacing-sm);
-  border: 1px dashed var(--border);
-  border-radius: var(--radius-sm);
-  cursor: pointer;
-  transition:
-    border-color var(--transition),
-    background var(--transition);
-}
-.ss-cascade-ghost:hover {
-  border-color: var(--border-hover);
-  background: var(--tint-subtle);
-}
-.ss-cascade-ghost__add {
-  display: inline-flex;
-  align-items: center;
-  gap: 2px; /* css-ok: icon + label */
-  margin-left: auto;
-  color: var(--text-muted);
-  font-size: var(--font-size-sm);
-}
-.ss-cascade-ghost:hover .ss-cascade-ghost__add {
-  color: var(--text-secondary);
+  letter-spacing: 0.04em; /* css-ok: small caps chip */
 }

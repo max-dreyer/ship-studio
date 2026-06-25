@@ -45,6 +45,32 @@ function toastText(err: unknown): string {
 const PREVIEW_DEBOUNCE_MS = 120;
 const SAVE_DEBOUNCE_MS = 600;
 
+/** Approximate specificity of a simple selector (the element's own class/id/tag), for
+ *  ordering draft cards within the cascade. */
+function draftSpecificity(selector: string): [number, number, number] {
+  if (selector.startsWith('#')) return [1, 0, 0];
+  if (selector.startsWith('.')) return [0, 1, 0];
+  return [0, 0, 1];
+}
+
+/** Compare specificity tuples (a−b, MSB first). */
+function specCmp(a: [number, number, number], b: [number, number, number]): number {
+  return a[0] - b[0] || a[1] - b[1] || a[2] - b[2];
+}
+
+/** Insert a draft row into the cascade list (which is sorted highest-priority first),
+ *  mutating in place: before the first ACTIVE row with lower specificity, but above the
+ *  inactive-media block. */
+function insertDraftByCascade(rows: CascadeRow[], draft: CascadeRow): void {
+  const ds = draft.specificity;
+  let i = rows.findIndex((r) => !r.inactiveMedia && specCmp(r.specificity, ds) < 0);
+  if (i < 0) {
+    const inactive = rows.findIndex((r) => r.inactiveMedia);
+    i = inactive < 0 ? rows.length : inactive;
+  }
+  rows.splice(i, 0, draft);
+}
+
 export interface CascadeSelection {
   signature: ElementSignature;
   instanceCount: number;
@@ -95,6 +121,9 @@ export function useCssCascadeEditor({ iframeRef, projectPath, enabled, onToast }
   // a different element is selected; an entry is dropped once the real cascade
   // includes it (confirmed).
   const createdRowsRef = useRef<Map<string, CascadeRow>>(new Map());
+  // Keys of draft cards (the element's own selectors with no rule yet). A draft's rule
+  // is created in source on its first saved property; until then it's display-only.
+  const draftKeysRef = useRef<Set<string>>(new Set());
   const editModeOnRef = useRef(false);
   useEffect(() => {
     editModeOnRef.current = editModeOn;
@@ -235,6 +264,57 @@ export function useCssCascadeEditor({ iframeRef, projectPath, enabled, onToast }
               nextOverridden[key] = new Map();
             }
             const finalRows = [...extraRows, ...merged];
+
+            // Draft cards: the element's own selectors (classes, then tag) with no base
+            // rule yet — empty editable cards placed in cascade order. They aren't
+            // written to source until the first property is saved (see saveRule).
+            draftKeysRef.current = new Set();
+            const sig = lastSignatureRef.current;
+            if (sig) {
+              let targetFile = finalRows.find((r) => r.editable && r.file)?.file;
+              if (!targetFile) {
+                try {
+                  targetFile = (await listStylesheets(projectPath))[0];
+                } catch {
+                  targetFile = undefined;
+                }
+              }
+              if (targetFile && selTokenRef.current === token) {
+                const sigClasses = sig.className.split(/\s+/).filter(Boolean);
+                const candidates = [
+                  ...new Set([...sigClasses.map((c) => `.${c}`), sig.tagName].filter(Boolean)),
+                ];
+                const styledBase = new Set(
+                  finalRows.filter((r) => !r.mediaText && r.selector).map((r) => r.selector)
+                );
+                for (const selector of candidates) {
+                  if (styledBase.has(selector)) continue;
+                  const draft: CascadeRow = {
+                    index: ++synthIndex.current,
+                    selector,
+                    declarations: [],
+                    specificity: draftSpecificity(selector),
+                    mediaText: null,
+                    mediaMinPx: null,
+                    inactiveMedia: false,
+                    layer: null,
+                    origin: 'author',
+                    editable: true,
+                    file: targetFile,
+                    line: 0,
+                    innerText: '\n',
+                    draft: true,
+                  };
+                  const key = rowKey(draft);
+                  draftKeysRef.current.add(key);
+                  nextBodies[key] = { items: [] };
+                  nextBaseline[key] = '\n';
+                  nextOverridden[key] = new Map();
+                  insertDraftByCascade(finalRows, draft);
+                }
+              }
+            }
+
             setRows(finalRows);
             setBodies(nextBodies);
             bodiesRef.current = nextBodies;
@@ -285,6 +365,16 @@ export function useCssCascadeEditor({ iframeRef, projectPath, enabled, onToast }
       setSavingKeys((prev) => new Set(prev).add(key));
       post({ type: 'ss:suppressReload' });
       try {
+        // A draft's rule doesn't exist in source yet — create the (empty) rule on its
+        // first real property, then write the body into it. After this it's a normal card.
+        if (draftKeysRef.current.has(key)) {
+          try {
+            await createCssRule(projectPath, row.file, row.selector);
+          } catch (err) {
+            if (!String(err).includes('already exists')) throw err;
+          }
+          draftKeysRef.current.delete(key);
+        }
         await applyCssRuleText(
           projectPath,
           row.file,
