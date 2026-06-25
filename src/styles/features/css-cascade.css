@@ -409,6 +409,47 @@
 .ss-add-menu__search::placeholder {
   color: var(--text-muted);
 }
+/* Portaled chip autocomplete (selector / nested selector / @media). Lives on
+   <body>, so it's a plain stacked block — no ancestor flex/grid/column context. */
+.ss-suggest {
+  z-index: var(--z-tooltip);
+  display: block;
+  overflow-y: auto;
+  padding: var(--spacing-xs);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--bg-secondary);
+  box-shadow: var(--shadow-lg);
+  scrollbar-width: thin;
+}
+.ss-suggest__item {
+  all: unset;
+  box-sizing: border-box;
+  display: flex;
+  align-items: baseline;
+  gap: var(--spacing-sm);
+  width: 100%;
+  padding: 5px 7px; /* css-ok: dense menu row */
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+.ss-suggest__item:hover,
+.ss-suggest__item.is-active {
+  background: var(--tint);
+}
+.ss-suggest__label {
+  color: var(--code-property);
+  font-family: var(--font-mono);
+  font-size: var(--font-size-sm);
+  overflow-wrap: anywhere;
+}
+.ss-suggest__hint {
+  margin-left: auto;
+  flex: 0 0 auto;
+  color: var(--text-muted);
+  font-size: var(--font-size-xs);
+}
+
 /* A single-column grid: `grid-template-columns: 1fr` defines exactly ONE column
    track and `grid-auto-flow: row` stacks items into it — there is no mechanism for
    a second column (unlike flex-column, which wraps into columns at a height limit). */

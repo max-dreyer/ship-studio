@@ -20,6 +20,7 @@ import { DeclarationRow } from './DeclarationRow';
 import { AddMenu } from './AddMenu';
 import { suggestMediaConditions } from '../../lib/cssProperties';
 import { NEST_ITEMS, WRAP_ITEMS, searchStructures } from '../../lib/cssStructures';
+import { SuggestionPopover, type Suggestion } from './SuggestionPopover';
 import {
   declarations,
   nestedRules,
@@ -99,6 +100,7 @@ function SelectorChip({
   const [editing, setEditing] = useState(false);
   const [text, setText] = useState(selector);
   const [active, setActive] = useState(0);
+  const [anchorEl, setAnchorEl] = useState<HTMLElement | null>(null);
 
   if (!editing) {
     return (
@@ -129,7 +131,7 @@ function SelectorChip({
   const isCondition = typed.startsWith('@');
   // Typing `@…` switches the field into condition mode (wrap the rule); otherwise
   // it autocompletes the project's class names (rename the rule).
-  const matches: { label: string; value: string; hint?: string }[] = isCondition
+  const matches: Suggestion[] = isCondition
     ? [
         ...(typed.length > 1 && !WRAP_ITEMS.some((w) => w.insert === typed)
           ? [{ label: typed, value: typed, hint: 'new condition' }]
@@ -169,6 +171,7 @@ function SelectorChip({
         autoComplete="off"
         aria-label="Rule selector"
         placeholder="selector, or @media (…) to scope it"
+        onFocus={(e) => setAnchorEl(e.currentTarget)}
         onChange={(e) => {
           setText(e.target.value);
           setActive(0);
@@ -191,24 +194,7 @@ function SelectorChip({
         }}
         onBlur={() => setEditing(false)}
       />
-      {matches.length > 0 && (
-        <div className="ss-add-menu ss-card__chip-menu ss-card__chip-menu--left">
-          <div className="ss-add-menu__list">
-            {matches.map((m, i) => (
-              <button
-                key={m.value}
-                type="button"
-                className={`ss-add-menu__item${active === i ? ' is-active' : ''}`}
-                onMouseDown={(e) => e.preventDefault()}
-                onClick={() => commit(m.value)}
-              >
-                <code className="ss-add-menu__label">{m.label}</code>
-                {m.hint && <span className="ss-add-menu__hint">{m.hint}</span>}
-              </button>
-            ))}
-          </div>
-        </div>
-      )}
+      <SuggestionPopover anchor={anchorEl} items={matches} active={active} onPick={commit} />
     </div>
   );
 }
@@ -227,17 +213,24 @@ function NestedSelectorInput({
 }) {
   const [focused, setFocused] = useState(false);
   const [active, setActive] = useState(0);
+  const [anchorEl, setAnchorEl] = useState<HTMLElement | null>(null);
 
   const typed = value.trim();
   // Curated nesting vocab matched on label/hint/keywords (so "even" finds
   // &:nth-child), plus the project's classes as `& .class`.
   const q = typed.toLowerCase();
-  const curated = searchStructures(NEST_ITEMS, typed).map((i) => i.insert);
-  const classMatches = suggestions
+  const curated: Suggestion[] = searchStructures(NEST_ITEMS, typed).map((i) => ({
+    value: i.insert,
+    label: i.insert,
+    hint: i.hint,
+  }));
+  const classItems: Suggestion[] = suggestions
     .map((s) => `& ${s}`)
-    .filter((p) => !q || p.toLowerCase().includes(q));
-  const matches = [...curated, ...classMatches].slice(0, 8);
-  const showMenu = focused && matches.length > 0 && !(matches.length === 1 && matches[0] === value);
+    .filter((p) => !q || p.toLowerCase().includes(q))
+    .map((p) => ({ value: p, label: p }));
+  const matches = [...curated, ...classItems].slice(0, 10);
+  const showMenu =
+    focused && matches.length > 0 && !(matches.length === 1 && matches[0].value === value);
 
   return (
     <div className="ss-card__chip-edit ss-card__selector-edit">
@@ -248,7 +241,8 @@ function NestedSelectorInput({
         autoComplete="off"
         aria-label="Nested selector"
         placeholder="&:hover, &:nth-child(2n), & .child…"
-        onFocus={() => {
+        onFocus={(e) => {
+          setAnchorEl(e.currentTarget);
           setFocused(true);
           setActive(0);
         }}
@@ -266,7 +260,7 @@ function NestedSelectorInput({
             setActive((a) => Math.max(a - 1, 0));
           } else if (e.key === 'Enter') {
             e.preventDefault();
-            onChange(matches[active]);
+            if (matches[active]) onChange(matches[active].value);
             setFocused(false);
           } else if (e.key === 'Escape') {
             setFocused(false);
@@ -275,24 +269,15 @@ function NestedSelectorInput({
         onBlur={() => setFocused(false)}
       />
       {showMenu && (
-        <div className="ss-add-menu ss-card__chip-menu ss-card__chip-menu--left">
-          <div className="ss-add-menu__list">
-            {matches.map((s, i) => (
-              <button
-                key={s}
-                type="button"
-                className={`ss-add-menu__item${active === i ? ' is-active' : ''}`}
-                onMouseDown={(e) => e.preventDefault()}
-                onClick={() => {
-                  onChange(s);
-                  setFocused(false);
-                }}
-              >
-                <code className="ss-add-menu__label">{s}</code>
-              </button>
-            ))}
-          </div>
-        </div>
+        <SuggestionPopover
+          anchor={anchorEl}
+          items={matches}
+          active={active}
+          onPick={(v) => {
+            onChange(v);
+            setFocused(false);
+          }}
+        />
       )}
     </div>
   );
@@ -312,6 +297,7 @@ function MediaChip({
   const [editing, setEditing] = useState(false);
   const [text, setText] = useState(condition);
   const [active, setActive] = useState(0);
+  const [anchorEl, setAnchorEl] = useState<HTMLElement | null>(null);
   if (!editing) {
     return (
       <span
@@ -341,7 +327,7 @@ function MediaChip({
     if (v && v !== condition) onCommit(v);
     setEditing(false);
   };
-  const matches = suggestMediaConditions(text);
+  const matches: Suggestion[] = suggestMediaConditions(text).map((m) => ({ value: m, label: m }));
   return (
     <div className="ss-card__chip-edit">
       <input
@@ -351,6 +337,7 @@ function MediaChip({
         spellCheck={false}
         autoComplete="off"
         aria-label="Media condition"
+        onFocus={(e) => setAnchorEl(e.currentTarget)}
         onChange={(e) => {
           setText(e.target.value);
           setActive(0);
@@ -358,7 +345,7 @@ function MediaChip({
         onKeyDown={(e) => {
           if (e.key === 'Enter') {
             e.preventDefault();
-            commit(matches[active] ?? text);
+            commit(matches[active]?.value ?? text);
           } else if (e.key === 'ArrowDown') {
             e.preventDefault();
             setActive((a) => Math.min(a + 1, matches.length - 1));
@@ -373,23 +360,13 @@ function MediaChip({
         }}
         onBlur={() => setEditing(false)}
       />
-      {matches.length > 0 && (
-        <div className="ss-add-menu ss-card__chip-menu">
-          <div className="ss-add-menu__list">
-            {matches.map((m, i) => (
-              <button
-                key={m}
-                type="button"
-                className={`ss-add-menu__item${active === i ? ' is-active' : ''}`}
-                onMouseDown={(e) => e.preventDefault()}
-                onClick={() => commit(m)}
-              >
-                <code className="ss-add-menu__label">{m}</code>
-              </button>
-            ))}
-          </div>
-        </div>
-      )}
+      <SuggestionPopover
+        anchor={anchorEl}
+        items={matches}
+        active={active}
+        onPick={commit}
+        width={220}
+      />
     </div>
   );
 }

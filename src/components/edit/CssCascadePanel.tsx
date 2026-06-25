@@ -15,6 +15,7 @@ import { PlusIcon } from '../icons/utility';
 import { Spinner } from '../primitives/Spinner';
 import { CascadeRuleCard } from './CascadeRuleCard';
 import { ElementSettingsPanel } from './ElementSettingsPanel';
+import { SuggestionPopover, type Suggestion } from './SuggestionPopover';
 import { mediaChipLabel, rowKey, type CascadeRow } from '../../lib/cssCascade';
 import type { RuleBody } from '../../lib/cssBody';
 import type { CascadeSelection } from '../../hooks/useCssCascadeEditor';
@@ -274,6 +275,7 @@ function AddSelectorBar({
   const [open, setOpen] = useState(false);
   const [text, setText] = useState('');
   const [active, setActive] = useState(0);
+  const [anchorEl, setAnchorEl] = useState<HTMLElement | null>(null);
 
   const submit = (value: string) => {
     const v = value.trim();
@@ -292,11 +294,14 @@ function AddSelectorBar({
   }
 
   const typed = text.trim();
-  const matches = (
+  const classMatches = (
     typed ? suggestions.filter((s) => s.toLowerCase().includes(typed.toLowerCase())) : suggestions
   ).slice(0, 8);
-  const showCreate = typed.length > 0 && !matches.includes(typed);
-  const flat = [...(showCreate ? [typed] : []), ...matches];
+  const showCreate = typed.length > 0 && !classMatches.includes(typed);
+  const items: Suggestion[] = [
+    ...(showCreate ? [{ value: typed, label: typed, hint: 'new rule' }] : []),
+    ...classMatches.map((s) => ({ value: s, label: s })),
+  ];
 
   return (
     <div className="ss-cascade-add-selector__wrap">
@@ -307,6 +312,7 @@ function AddSelectorBar({
         spellCheck={false}
         autoComplete="off"
         placeholder="New selector, e.g. .card or h1.title"
+        onFocus={(e) => setAnchorEl(e.currentTarget)}
         onChange={(e) => {
           setText(e.target.value);
           setActive(0);
@@ -314,10 +320,10 @@ function AddSelectorBar({
         onKeyDown={(e) => {
           if (e.key === 'Enter') {
             e.preventDefault();
-            submit(flat[active] ?? text);
+            submit(items[active]?.value ?? text);
           } else if (e.key === 'ArrowDown') {
             e.preventDefault();
-            setActive((a) => Math.min(a + 1, flat.length - 1));
+            setActive((a) => Math.min(a + 1, items.length - 1));
           } else if (e.key === 'ArrowUp') {
             e.preventDefault();
             setActive((a) => Math.max(a - 1, 0));
@@ -329,37 +335,13 @@ function AddSelectorBar({
         }}
         onBlur={() => setOpen(false)}
       />
-      {flat.length > 0 && (
-        <div className="ss-add-menu ss-cascade-add-selector__menu">
-          <div className="ss-add-menu__list">
-            {showCreate && (
-              <button
-                type="button"
-                className={`ss-add-menu__item${active === 0 ? ' is-active' : ''}`}
-                onMouseDown={(e) => e.preventDefault()}
-                onClick={() => submit(typed)}
-              >
-                <code className="ss-add-menu__label">{typed}</code>
-                <span className="ss-add-menu__hint">new rule</span>
-              </button>
-            )}
-            {matches.map((s, i) => {
-              const idx = (showCreate ? 1 : 0) + i;
-              return (
-                <button
-                  key={s}
-                  type="button"
-                  className={`ss-add-menu__item${active === idx ? ' is-active' : ''}`}
-                  onMouseDown={(e) => e.preventDefault()}
-                  onClick={() => submit(s)}
-                >
-                  <code className="ss-add-menu__label">{s}</code>
-                </button>
-              );
-            })}
-          </div>
-        </div>
-      )}
+      <SuggestionPopover
+        anchor={anchorEl}
+        items={items}
+        active={active}
+        onPick={submit}
+        width={280}
+      />
     </div>
   );
 }
