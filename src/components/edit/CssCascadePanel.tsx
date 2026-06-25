@@ -95,6 +95,10 @@ export function CssCascadePanel({
   }, []);
 
   const classes = (selection?.signature.className ?? '').split(/\s+/).filter(Boolean);
+  // The element's own classes lead the "Add selector" suggestions (so a class you
+  // just added in Settings is one click away from getting a rule), then the rest of
+  // the project's classes.
+  const addSelectorOptions = [...new Set([...classes.map((c) => `.${c}`), ...selectorSuggestions])];
 
   return (
     <div
@@ -184,7 +188,7 @@ export function CssCascadePanel({
               <ElementSettingsPanel settings={settings} />
             ) : (
               <>
-                <AddSelectorBar onAddSelector={onAddSelector} suggestions={selectorSuggestions} />
+                <AddSelectorBar onAddSelector={onAddSelector} suggestions={addSelectorOptions} />
 
                 {loading ? (
                   <div className="ss-cascade-loading">
