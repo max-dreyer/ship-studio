@@ -17,7 +17,6 @@ import { CascadeRuleCard } from './CascadeRuleCard';
 import { ElementSettingsPanel } from './ElementSettingsPanel';
 import { SuggestionPopover, type Suggestion } from './SuggestionPopover';
 import { mediaChipLabel, rowKey, type CascadeRow } from '../../lib/cssCascade';
-import { NEW_RULE_ITEMS, searchStructures } from '../../lib/cssStructures';
 import type { RuleBody } from '../../lib/cssBody';
 import type { CascadeSelection } from '../../hooks/useCssCascadeEditor';
 import type { ElementSettings } from '../../hooks/useElementSettings';
@@ -310,16 +309,15 @@ function AddSelectorBar({
 
   const typed = text.trim();
   const existingSet = new Set(existing);
+  // Element-scoped selectors only — a `@keyframes` animation isn't a rule that targets
+  // this element (it lives in the stylesheet, referenced via `animation`), so `@`-rules
+  // are intentionally not offered here.
   const selectorMatches = (
     typed ? suggestions.filter((s) => s.toLowerCase().includes(typed.toLowerCase())) : suggestions
-  ).slice(0, 10);
-  // Recommended `@`-rules the editor can author (e.g. `@keyframes`) — surfaced
-  // alongside existing selectors so animations are discoverable, not just typeable.
-  const atItems: Suggestion[] = searchStructures(NEW_RULE_ITEMS, typed)
-    .filter((i) => !existingSet.has(i.insert))
-    .map((i) => ({ value: i.insert, label: i.label, hint: i.hint }));
-  const showCreate =
-    typed.length > 0 && !selectorMatches.includes(typed) && !atItems.some((a) => a.value === typed);
+  )
+    .filter((s) => !s.trim().startsWith('@'))
+    .slice(0, 10);
+  const showCreate = typed.length > 0 && !typed.startsWith('@') && !selectorMatches.includes(typed);
   const items: Suggestion[] = [
     ...(showCreate ? [{ value: typed, label: typed, hint: 'new rule' }] : []),
     // Existing rules are tagged so it's clear picking one re-opens it (no duplicate).
@@ -328,7 +326,6 @@ function AddSelectorBar({
       label: s,
       hint: existingSet.has(s) ? 'existing' : undefined,
     })),
-    ...atItems,
   ];
 
   return (
