@@ -36,6 +36,8 @@ interface Props {
   onAddSelector: (selector: string) => void;
   /** `.class` suggestions for the selector autocomplete. */
   selectorSuggestions: string[];
+  /** Project CSS variables (`--foo`) for `var(--…)` value autocomplete. */
+  variables: string[];
   settings: ElementSettings;
   onClose: () => void;
   pinned?: boolean;
@@ -55,6 +57,7 @@ export function CssCascadePanel({
   onRenameAtRule,
   onAddSelector,
   selectorSuggestions,
+  variables,
   settings,
   onClose,
   pinned,
@@ -216,6 +219,7 @@ export function CssCascadePanel({
                             onRename={(s) => onRenameRule(key, s)}
                             onRenameAtRule={(m) => onRenameAtRule(key, m)}
                             selectorSuggestions={selectorSuggestions}
+                            variables={variables}
                           />
                         );
                       }

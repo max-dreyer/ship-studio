@@ -1517,6 +1517,59 @@ pub fn list_css_classes(project_path: String) -> Result<Vec<String>, CommandErro
     Ok(set.into_iter().collect())
 }
 
+/// Collect CSS custom-property *definitions* (`--name:`) from raw stylesheet text.
+/// A definition sits at the start of a declaration (after `{` or `;`), which lets us
+/// skip `var(--name)` *usages* (preceded by `(`).
+fn collect_custom_props(css: &str, set: &mut std::collections::BTreeSet<String>) {
+    let b = css.as_bytes();
+    let n = b.len();
+    let mut i = 0;
+    while i + 1 < n {
+        if b[i] == b'-' && b[i + 1] == b'-' {
+            // The preceding non-whitespace byte must mark a declaration boundary.
+            let mut k = i;
+            while k > 0 {
+                k -= 1;
+                if b[k].is_ascii_whitespace() {
+                    continue;
+                }
+                break;
+            }
+            let at_decl_start = i == 0 || matches!(b[k], b'{' | b';');
+            if at_decl_start {
+                let start = i;
+                let mut j = i + 2;
+                while j < n && (b[j].is_ascii_alphanumeric() || b[j] == b'-' || b[j] == b'_') {
+                    j += 1;
+                }
+                let mut m = j;
+                while m < n && b[m].is_ascii_whitespace() {
+                    m += 1;
+                }
+                if j > start + 2 && m < n && b[m] == b':' {
+                    set.insert(css[start..j].to_string());
+                }
+                i = j;
+                continue;
+            }
+        }
+        i += 1;
+    }
+}
+
+/// All CSS custom-property names (`--foo`) defined across the project's stylesheets,
+/// sorted & unique — powers `var(--…)` value autocomplete in the editor.
+#[tauri::command]
+#[tracing::instrument(fields(project = %project_path))]
+pub fn list_css_variables(project_path: String) -> Result<Vec<String>, CommandError> {
+    let root = validate_project_path(&project_path)?;
+    let mut set = std::collections::BTreeSet::new();
+    for sheet in cached_sheets(&root).iter() {
+        collect_custom_props(&sheet.content, &mut set);
+    }
+    Ok(set.into_iter().collect())
+}
+
 /// Map a batch of cascade matches (from the in-iframe walker) back to their source
 /// rules, in the same order. Each entry is `resolved` (editable), `multiple`, or
 /// `not_found` (read-only) — the code panel renders accordingly.
@@ -1663,6 +1716,18 @@ pub fn rename_css_at_rule(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn collect_custom_props_finds_definitions_not_usages() {
+        let css = ":root {\n  --accent: #fff;\n  --gap: 8px;\n}\n\
+                   .btn { color: var(--accent); padding: var(--gap); --local: 1; }";
+        let mut set = std::collections::BTreeSet::new();
+        collect_custom_props(css, &mut set);
+        let got: Vec<_> = set.into_iter().collect();
+        // --accent, --gap, --local are definitions; the var(--accent)/var(--gap)
+        // usages must NOT add duplicates or stray names.
+        assert_eq!(got, vec!["--accent", "--gap", "--local"]);
+    }
 
     fn sig(class: &str) -> CssSignature {
         CssSignature {

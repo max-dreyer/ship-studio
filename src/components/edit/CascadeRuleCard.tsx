@@ -65,6 +65,8 @@ interface EditableCard extends CommonHeader {
   selectorSuggestions?: string[];
   /** Present for top-level editable rules inside an `@media` — edit its condition. */
   onRenameAtRule?: (newMedia: string) => void;
+  /** Project CSS variables (`--foo`) for `var(--…)` value autocomplete. */
+  variables?: string[];
 }
 
 interface ReadonlyCard extends CommonHeader {
@@ -448,6 +450,7 @@ export function CascadeRuleCard(props: Props) {
               overridden={overridden.has(d.prop.toLowerCase())}
               overriddenBy={overridden.get(d.prop.toLowerCase())}
               nestTargets={nested.map((r) => r.selector)}
+              variables={props.variables}
               onChange={(next) => onChange(replaceItem(body, d.index, { kind: 'decl', ...next }))}
               onRemove={() => onChange(removeItem(body, d.index))}
               onNest={(sel) => onChange(moveDeclIntoNested(body, d.index, sel))}
@@ -462,6 +465,7 @@ export function CascadeRuleCard(props: Props) {
               selector={r.selector}
               overridden={new Map()}
               body={r.body}
+              variables={props.variables}
               onChange={(nextBody) =>
                 onChange(
                   replaceItem(body, r.index, { kind: 'rule', selector: r.selector, body: nextBody })

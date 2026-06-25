@@ -22,6 +22,7 @@ import {
   createCssRule,
   listStylesheets,
   listCssClasses,
+  listCssVariables,
   renameCssSelector,
   renameCssAtRule,
   mergeCascade,
@@ -67,6 +68,8 @@ export function useCssCascadeEditor({ iframeRef, projectPath, enabled, onToast }
   const [savingKeys, setSavingKeys] = useState<Set<string>>(() => new Set());
   // Project class names for selector autocomplete (loaded when edit mode opens).
   const [classSuggestions, setClassSuggestions] = useState<string[]>([]);
+  // Project CSS variables (`--foo`) for `var(--…)` value autocomplete.
+  const [variableSuggestions, setVariableSuggestions] = useState<string[]>([]);
 
   // Per-rule source baseline (drift guard + diff) and latest body, in refs so the
   // debounced callbacks read fresh values without re-binding.
@@ -127,12 +130,15 @@ export function useCssCascadeEditor({ iframeRef, projectPath, enabled, onToast }
 
   useEffect(() => () => clearTimers(), [clearTimers]);
 
-  // Project class names for selector autocomplete.
+  // Project class names + CSS variables for autocomplete.
   useEffect(() => {
     if (!editMode) return;
     let cancelled = false;
     void listCssClasses(projectPath)
       .then((cs) => !cancelled && setClassSuggestions(cs))
+      .catch(() => undefined);
+    void listCssVariables(projectPath)
+      .then((vs) => !cancelled && setVariableSuggestions(vs))
       .catch(() => undefined);
     return () => {
       cancelled = true;
@@ -580,6 +586,7 @@ export function useCssCascadeEditor({ iframeRef, projectPath, enabled, onToast }
     renameSelector,
     renameAtRule,
     classSuggestions,
+    variableSuggestions,
     loading,
     savingKeys,
   };

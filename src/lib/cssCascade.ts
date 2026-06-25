@@ -130,6 +130,11 @@ export function listCssClasses(projectPath: string): Promise<string[]> {
   return invoke<string[]>('list_css_classes', { projectPath });
 }
 
+/** Every CSS custom-property name (`--foo`) defined in the project (value autocomplete). */
+export function listCssVariables(projectPath: string): Promise<string[]> {
+  return invoke<string[]>('list_css_variables', { projectPath });
+}
+
 /** Change the `@media` condition enclosing a rule, drift-guarded against `oldInner`. */
 export function renameCssAtRule(
   projectPath: string,
