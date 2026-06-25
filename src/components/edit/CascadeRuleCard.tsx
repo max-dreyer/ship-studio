@@ -229,10 +229,14 @@ function NestedSelectorInput({
   const [active, setActive] = useState(0);
 
   const typed = value.trim();
-  const pool = [...NEST_ITEMS.map((i) => i.insert), ...suggestions.map((s) => `& ${s}`)];
-  const matches = (
-    typed ? pool.filter((p) => p.toLowerCase().includes(typed.toLowerCase())) : pool
-  ).slice(0, 8);
+  // Curated nesting vocab matched on label/hint/keywords (so "even" finds
+  // &:nth-child), plus the project's classes as `& .class`.
+  const q = typed.toLowerCase();
+  const curated = searchStructures(NEST_ITEMS, typed).map((i) => i.insert);
+  const classMatches = suggestions
+    .map((s) => `& ${s}`)
+    .filter((p) => !q || p.toLowerCase().includes(q));
+  const matches = [...curated, ...classMatches].slice(0, 8);
   const showMenu = focused && matches.length > 0 && !(matches.length === 1 && matches[0] === value);
 
   return (
