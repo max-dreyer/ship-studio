@@ -19,7 +19,7 @@ import { TrashIcon, FileIcon } from '../icons/editor';
 import { DeclarationRow } from './DeclarationRow';
 import { AddMenu } from './AddMenu';
 import { suggestMediaConditions } from '../../lib/cssProperties';
-import { WRAP_ITEMS, searchStructures } from '../../lib/cssStructures';
+import { NEST_ITEMS, WRAP_ITEMS, searchStructures } from '../../lib/cssStructures';
 import {
   declarations,
   nestedRules,
@@ -213,6 +213,87 @@ function SelectorChip({
   );
 }
 
+/** A nested rule's selector — a live input with autocomplete over the modern nesting
+ *  vocabulary (`&:hover`, `&:nth-child(2n)`, `&::before`, `&:has(…)`, `& .child`) plus
+ *  the project's classes. Controlled: edits the body on every keystroke. */
+function NestedSelectorInput({
+  value,
+  suggestions,
+  onChange,
+}: {
+  value: string;
+  suggestions: string[];
+  onChange: (selector: string) => void;
+}) {
+  const [focused, setFocused] = useState(false);
+  const [active, setActive] = useState(0);
+
+  const typed = value.trim();
+  const pool = [...NEST_ITEMS.map((i) => i.insert), ...suggestions.map((s) => `& ${s}`)];
+  const matches = (
+    typed ? pool.filter((p) => p.toLowerCase().includes(typed.toLowerCase())) : pool
+  ).slice(0, 8);
+  const showMenu = focused && matches.length > 0 && !(matches.length === 1 && matches[0] === value);
+
+  return (
+    <span className="ss-card__chip-edit ss-card__selector-edit">
+      <input
+        className="ss-card__selector-chip ss-card__selector-chip--input"
+        value={value}
+        spellCheck={false}
+        autoComplete="off"
+        aria-label="Nested selector"
+        placeholder="&:hover, &:nth-child(2n), & .child…"
+        onFocus={() => {
+          setFocused(true);
+          setActive(0);
+        }}
+        onChange={(e) => {
+          onChange(e.target.value);
+          setActive(0);
+        }}
+        onKeyDown={(e) => {
+          if (!showMenu) return;
+          if (e.key === 'ArrowDown') {
+            e.preventDefault();
+            setActive((a) => Math.min(a + 1, matches.length - 1));
+          } else if (e.key === 'ArrowUp') {
+            e.preventDefault();
+            setActive((a) => Math.max(a - 1, 0));
+          } else if (e.key === 'Enter') {
+            e.preventDefault();
+            onChange(matches[active]);
+            setFocused(false);
+          } else if (e.key === 'Escape') {
+            setFocused(false);
+          }
+        }}
+        onBlur={() => setFocused(false)}
+      />
+      {showMenu && (
+        <span className="ss-add-menu ss-card__chip-menu ss-card__chip-menu--left">
+          <span className="ss-add-menu__list">
+            {matches.map((s, i) => (
+              <button
+                key={s}
+                type="button"
+                className={`ss-add-menu__item${active === i ? ' is-active' : ''}`}
+                onMouseDown={(e) => e.preventDefault()}
+                onClick={() => {
+                  onChange(s);
+                  setFocused(false);
+                }}
+              >
+                <code className="ss-add-menu__label">{s}</code>
+              </button>
+            ))}
+          </span>
+        </span>
+      )}
+    </span>
+  );
+}
+
 /** A click-to-edit `@media` condition chip (shows the compact label, edits the raw
  *  condition with a native datalist of common conditions). */
 function MediaChip({
@@ -354,13 +435,10 @@ export function CascadeRuleCard(props: Props) {
         <ChevronIcon size={12} />
       </button>
       {editable && props.onSelectorChange ? (
-        <input
-          className="ss-card__selector-chip ss-card__selector-chip--input"
+        <NestedSelectorInput
           value={props.selector}
-          spellCheck={false}
-          autoComplete="off"
-          aria-label="Nested selector"
-          onChange={(e) => props.onSelectorChange?.(e.target.value)}
+          suggestions={props.selectorSuggestions ?? []}
+          onChange={(sel) => props.onSelectorChange?.(sel)}
         />
       ) : props.editable && props.onRename ? (
         <SelectorChip
@@ -466,6 +544,7 @@ export function CascadeRuleCard(props: Props) {
               overridden={new Map()}
               body={r.body}
               variables={props.variables}
+              selectorSuggestions={props.selectorSuggestions}
               onChange={(nextBody) =>
                 onChange(
                   replaceItem(body, r.index, { kind: 'rule', selector: r.selector, body: nextBody })
