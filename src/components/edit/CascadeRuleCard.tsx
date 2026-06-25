@@ -160,7 +160,7 @@ function SelectorChip({
   };
 
   return (
-    <span className="ss-card__chip-edit ss-card__selector-edit">
+    <div className="ss-card__chip-edit ss-card__selector-edit">
       <input
         className="ss-card__selector-chip ss-card__selector-chip--input"
         autoFocus
@@ -192,8 +192,8 @@ function SelectorChip({
         onBlur={() => setEditing(false)}
       />
       {matches.length > 0 && (
-        <span className="ss-add-menu ss-card__chip-menu ss-card__chip-menu--left">
-          <span className="ss-add-menu__list">
+        <div className="ss-add-menu ss-card__chip-menu ss-card__chip-menu--left">
+          <div className="ss-add-menu__list">
             {matches.map((m, i) => (
               <button
                 key={m.value}
@@ -206,10 +206,10 @@ function SelectorChip({
                 {m.hint && <span className="ss-add-menu__hint">{m.hint}</span>}
               </button>
             ))}
-          </span>
-        </span>
+          </div>
+        </div>
       )}
-    </span>
+    </div>
   );
 }
 
@@ -240,7 +240,7 @@ function NestedSelectorInput({
   const showMenu = focused && matches.length > 0 && !(matches.length === 1 && matches[0] === value);
 
   return (
-    <span className="ss-card__chip-edit ss-card__selector-edit">
+    <div className="ss-card__chip-edit ss-card__selector-edit">
       <input
         className="ss-card__selector-chip ss-card__selector-chip--input"
         value={value}
@@ -275,8 +275,8 @@ function NestedSelectorInput({
         onBlur={() => setFocused(false)}
       />
       {showMenu && (
-        <span className="ss-add-menu ss-card__chip-menu ss-card__chip-menu--left">
-          <span className="ss-add-menu__list">
+        <div className="ss-add-menu ss-card__chip-menu ss-card__chip-menu--left">
+          <div className="ss-add-menu__list">
             {matches.map((s, i) => (
               <button
                 key={s}
@@ -291,10 +291,10 @@ function NestedSelectorInput({
                 <code className="ss-add-menu__label">{s}</code>
               </button>
             ))}
-          </span>
-        </span>
+          </div>
+        </div>
       )}
-    </span>
+    </div>
   );
 }
 
@@ -343,7 +343,7 @@ function MediaChip({
   };
   const matches = suggestMediaConditions(text);
   return (
-    <span className="ss-card__chip-edit">
+    <div className="ss-card__chip-edit">
       <input
         className="ss-card__chip ss-card__chip--media-input"
         autoFocus
@@ -374,8 +374,8 @@ function MediaChip({
         onBlur={() => setEditing(false)}
       />
       {matches.length > 0 && (
-        <span className="ss-add-menu ss-card__chip-menu">
-          <span className="ss-add-menu__list">
+        <div className="ss-add-menu ss-card__chip-menu">
+          <div className="ss-add-menu__list">
             {matches.map((m, i) => (
               <button
                 key={m}
@@ -387,10 +387,10 @@ function MediaChip({
                 <code className="ss-add-menu__label">{m}</code>
               </button>
             ))}
-          </span>
-        </span>
+          </div>
+        </div>
       )}
-    </span>
+    </div>
   );
 }
 
