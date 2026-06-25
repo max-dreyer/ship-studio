@@ -130,4 +130,13 @@ describe('overriddenProps', () => {
     expect(map.get('background')).toBe('.btn--primary');
     expect(map.has('color')).toBe(false);
   });
+
+  it('ignores declarations that are inactive but not actually overridden (no winner)', () => {
+    // A rule inside a non-matching @media: its decls are inactive yet nothing
+    // overrides them — they must NOT be marked overridden (no empty tooltip).
+    const map = overriddenProps({
+      declarations: [{ prop: 'font-size', value: '60px', important: false, active: false }],
+    });
+    expect(map.has('font-size')).toBe(false);
+  });
 });

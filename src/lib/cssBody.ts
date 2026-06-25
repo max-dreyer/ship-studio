@@ -194,11 +194,14 @@ export function serializeRuleBody(body: RuleBody, level = 1): string {
 }
 
 /** Overridden properties → the selector that wins each (for the strike-through and
- *  "overridden by …" tooltip). Lowercased prop names; best-effort for shorthands. */
+ *  "overridden by …" tooltip). Lowercased prop names; best-effort for shorthands.
+ *  Only TRUE overrides (another rule actually wins) are included — a declaration
+ *  that's merely inactive because its rule's @media doesn't match the current
+ *  viewport has no `overriddenBy` and is left out (the card is dimmed instead). */
 export function overriddenProps(row: Pick<MatchedRule, 'declarations'>): Map<string, string> {
   const out = new Map<string, string>();
   for (const d of row.declarations) {
-    if (!d.active) out.set(d.prop.toLowerCase(), d.overriddenBy ?? '');
+    if (!d.active && d.overriddenBy) out.set(d.prop.toLowerCase(), d.overriddenBy);
   }
   return out;
 }

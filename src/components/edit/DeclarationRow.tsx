@@ -60,7 +60,7 @@ function useOverriddenTip(overridden: boolean, by?: string) {
               transform: 'translateY(-100%)',
             }}
           >
-            Overridden by <code className="ss-decl-tip__sel">{by ?? 'a later rule'}</code>
+            Overridden by <code className="ss-decl-tip__sel">{by || 'a later rule'}</code>
           </div>,
           document.body
         )

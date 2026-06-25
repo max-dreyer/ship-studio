@@ -205,7 +205,10 @@ export function CssCascadePanel({
                             mediaLabel={media}
                             mediaText={row.mediaText}
                             layer={row.layer}
-                            overridden={overridden[key] ?? new Map()}
+                            inactive={row.inactiveMedia}
+                            overridden={
+                              row.inactiveMedia ? new Map() : (overridden[key] ?? new Map())
+                            }
                             body={bodies[key]}
                             onChange={(b) => onChangeBody(key, b)}
                             onDelete={() => onDeleteRule(key)}
@@ -226,7 +229,10 @@ export function CssCascadePanel({
                           mediaLabel={media}
                           mediaText={row.mediaText}
                           layer={row.layer}
-                          overridden={overridden[key] ?? new Map()}
+                          inactive={row.inactiveMedia}
+                          overridden={
+                            row.inactiveMedia ? new Map() : (overridden[key] ?? new Map())
+                          }
                           readonlyReason={row.readonlyReason}
                           decls={row.declarations.map((d) => ({
                             prop: d.prop,

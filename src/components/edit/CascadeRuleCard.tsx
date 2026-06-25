@@ -41,6 +41,9 @@ interface CommonHeader {
   layer?: string | null;
   /** Nesting depth (0 = top-level rule), for indentation. */
   depth?: number;
+  /** The rule's @media/@container condition doesn't match the current preview
+   *  viewport — the whole card is dimmed and its declarations don't apply now. */
+  inactive?: boolean;
 }
 
 interface EditableCard extends CommonHeader {
@@ -246,6 +249,7 @@ export function CascadeRuleCard(props: Props) {
   const [collapsed, setCollapsed] = useState(false);
   const depth = props.depth ?? 0;
   const editable = props.editable;
+  const inactive = props.inactive ?? false;
   const onRenameAtRule = props.editable ? props.onRenameAtRule : undefined;
 
   const selectorRow = (
@@ -286,6 +290,14 @@ export function CascadeRuleCard(props: Props) {
         layer={props.layer}
         onRenameAtRule={onRenameAtRule}
       />
+      {inactive && (
+        <span
+          className="ss-card__chip ss-card__chip--inactive"
+          title="This condition doesn't match the current preview size — these styles aren't applying right now"
+        >
+          inactive
+        </span>
+      )}
       {!editable && <span className="ss-card__src ss-card__src--ro">read-only</span>}
       {editable && props.onDelete && (
         <button
@@ -304,7 +316,7 @@ export function CascadeRuleCard(props: Props) {
   if (!editable) {
     return (
       <section
-        className={`ss-card is-readonly${depth ? ' is-nested' : ''}${collapsed ? ' is-collapsed' : ''}`}
+        className={`ss-card is-readonly${depth ? ' is-nested' : ''}${collapsed ? ' is-collapsed' : ''}${inactive ? ' is-inactive' : ''}`}
         data-testid="cascade-card"
       >
         <header className="ss-card__head">{selectorRow}</header>
@@ -332,7 +344,7 @@ export function CascadeRuleCard(props: Props) {
 
   return (
     <section
-      className={`ss-card${depth ? ' is-nested' : ''}${collapsed ? ' is-collapsed' : ''}`}
+      className={`ss-card${depth ? ' is-nested' : ''}${collapsed ? ' is-collapsed' : ''}${inactive ? ' is-inactive' : ''}`}
       data-testid="cascade-card"
     >
       <header className="ss-card__head">{selectorRow}</header>

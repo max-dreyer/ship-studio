@@ -162,6 +162,19 @@
   margin-top: var(--spacing-xs);
   background: var(--bg-tertiary);
 }
+/* A rule whose @media/@container doesn't match the current preview size: dimmed,
+   because its declarations aren't applying right now (they're not "overridden"). */
+.ss-card.is-inactive {
+  opacity: 0.55;
+}
+.ss-card.is-inactive:hover {
+  opacity: 1;
+}
+.ss-card__chip--inactive {
+  color: var(--text-muted);
+  background: var(--tint-subtle);
+  font-style: italic;
+}
 
 /* ── Card header (the selector chip + any media/layer chips) ── */
 .ss-card__head {
