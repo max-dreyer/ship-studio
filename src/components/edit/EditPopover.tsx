@@ -12,7 +12,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { ColorPicker } from './ColorPicker';
-import { colorSwatch } from '../../lib/cssProperties';
+import { colorSwatch, parseNumericValue, formatNumericValue } from '../../lib/cssProperties';
 
 interface Props {
   anchor: HTMLElement | null;
@@ -110,32 +110,43 @@ export function EditPopover({ anchor, initial, options, placeholder, onCommit, o
         />
       ) : (
         <>
-          <input
-            ref={inputRef}
-            className="ss-value-pop__input"
-            value={text}
-            spellCheck={false}
-            autoComplete="off"
-            placeholder={placeholder}
-            onChange={(e) => {
-              setText(e.target.value);
-              setActive(0);
-            }}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter') {
-                e.preventDefault();
-                const pick = showMenu ? (matches[active] ?? text) : text;
-                onCommit(pick);
-                onClose();
-              } else if (e.key === 'ArrowDown' && showMenu) {
-                e.preventDefault();
-                setActive((a) => Math.min(a + 1, matches.length - 1));
-              } else if (e.key === 'ArrowUp' && showMenu) {
-                e.preventDefault();
-                setActive((a) => Math.max(a - 1, 0));
-              }
-            }}
-          />
+          <div className="ss-value-pop__field">
+            {parseNumericValue(text) && (
+              <ScrubHandle
+                value={text}
+                onScrub={(v) => {
+                  setText(v);
+                  onCommit(v); // live-apply as you drag
+                }}
+              />
+            )}
+            <input
+              ref={inputRef}
+              className="ss-value-pop__input"
+              value={text}
+              spellCheck={false}
+              autoComplete="off"
+              placeholder={placeholder}
+              onChange={(e) => {
+                setText(e.target.value);
+                setActive(0);
+              }}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  e.preventDefault();
+                  const pick = showMenu ? (matches[active] ?? text) : text;
+                  onCommit(pick);
+                  onClose();
+                } else if (e.key === 'ArrowDown' && showMenu) {
+                  e.preventDefault();
+                  setActive((a) => Math.min(a + 1, matches.length - 1));
+                } else if (e.key === 'ArrowUp' && showMenu) {
+                  e.preventDefault();
+                  setActive((a) => Math.max(a - 1, 0));
+                }
+              }}
+            />
+          </div>
           {showMenu && (
             <div className="ss-add-menu ss-value-pop__menu">
               <div className="ss-add-menu__list">
@@ -160,5 +171,52 @@ export function EditPopover({ anchor, initial, options, placeholder, onCommit, o
       )}
     </div>,
     document.body
+  );
+}
+
+/** Drag-to-scrub a numeric value (devtools-style). Horizontal drag adjusts the
+ *  number live, preserving the unit; Shift ×10, Alt ÷10 for coarse/fine control. */
+function ScrubHandle({ value, onScrub }: { value: string; onScrub: (v: string) => void }) {
+  const drag = useRef<{ x: number; num: number; unit: string; decimals: number } | null>(null);
+  return (
+    <span
+      className="ss-value-pop__scrub"
+      title="Drag to adjust · Shift ×10 · Alt ÷10"
+      onPointerDown={(e) => {
+        const p = parseNumericValue(value);
+        if (!p) return;
+        e.preventDefault();
+        e.currentTarget.setPointerCapture(e.pointerId);
+        drag.current = { x: e.clientX, num: p.num, unit: p.unit, decimals: p.decimals };
+      }}
+      onPointerMove={(e) => {
+        const d = drag.current;
+        if (!d) return;
+        const base = d.decimals > 0 ? 0.1 : 1;
+        const step = e.shiftKey ? base * 10 : e.altKey ? base / 10 : base;
+        const stepDecimals = step >= 1 ? 0 : step >= 0.1 ? 1 : 2;
+        const next = d.num + (e.clientX - d.x) * step;
+        onScrub(formatNumericValue(next, d.unit, Math.max(d.decimals, stepDecimals)));
+      }}
+      onPointerUp={(e) => {
+        drag.current = null;
+        e.currentTarget.releasePointerCapture?.(e.pointerId);
+      }}
+    >
+      <svg
+        width={12}
+        height={12}
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2.2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        aria-hidden="true"
+      >
+        <polyline points="9 7 4 12 9 17" />
+        <polyline points="15 7 20 12 15 17" />
+      </svg>
+    </span>
   );
 }

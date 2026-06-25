@@ -684,6 +684,32 @@
   background: var(--bg-secondary);
   box-shadow: var(--shadow-md);
 }
+/* Input row: optional drag-to-scrub handle + the text field. */
+.ss-value-pop__field {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-xs);
+}
+.ss-value-pop__field .ss-value-pop__input {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.ss-value-pop__scrub {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 26px;
+  border-radius: var(--radius-sm);
+  color: var(--text-muted);
+  cursor: ew-resize;
+  touch-action: none; /* let the pointer drag scrub instead of scrolling */
+}
+.ss-value-pop__scrub:hover {
+  color: var(--text-primary);
+  background: var(--tint-subtle);
+}
 .ss-value-pop__input {
   all: unset;
   box-sizing: border-box;

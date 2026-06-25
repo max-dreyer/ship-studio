@@ -459,6 +459,35 @@ export function suggestValues(property: string, variables: string[] = []): strin
   return out;
 }
 
+const NUMERIC_VALUE = /^(-?(?:\d+\.?\d*|\.\d+))([a-z%]*)$/i;
+
+/**
+ * A single numeric CSS value (`24px`, `1.5rem`, `50`, `-10%`, `.5`) parsed into its
+ * number, unit, and decimal places — for drag-to-scrub. Returns null for anything
+ * that isn't exactly one number (+ optional unit), e.g. `0 auto`, `1px solid red`,
+ * `calc(…)`, `var(…)`.
+ */
+export function parseNumericValue(
+  value: string
+): { num: number; unit: string; decimals: number } | null {
+  const m = NUMERIC_VALUE.exec(value.trim());
+  if (!m) return null;
+  const num = parseFloat(m[1]);
+  if (!Number.isFinite(num)) return null;
+  const dot = m[1].indexOf('.');
+  const decimals = dot < 0 ? 0 : m[1].length - dot - 1;
+  return { num, unit: m[2], decimals };
+}
+
+/** Format a scrubbed number back to a CSS value, trimming float noise to `decimals`
+ *  places (min 0) and re-attaching the unit. */
+export function formatNumericValue(num: number, unit: string, decimals: number): string {
+  const fixed = num.toFixed(Math.max(0, Math.min(4, decimals)));
+  // Drop trailing zeros / dot so 24.0 → 24, 1.50 → 1.5.
+  const clean = decimals > 0 ? fixed.replace(/\.?0+$/, '') : fixed;
+  return `${clean}${unit}`;
+}
+
 const COLOR_FN = /^(rgb|rgba|hsl|hsla|hwb|lab|lch|oklab|oklch|color)\(/i;
 const HEX = /^#([0-9a-f]{3,4}|[0-9a-f]{6}|[0-9a-f]{8})$/i;
 const NAMED_COLORS = new Set([
