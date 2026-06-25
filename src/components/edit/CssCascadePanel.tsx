@@ -120,7 +120,7 @@ export function CssCascadePanel({
         onPointerMove={pinned ? undefined : onHeaderPointerMove}
         onPointerUp={pinned ? undefined : onHeaderPointerUp}
       >
-        <span className="ss-edit-panel__title">CSS · Cascade</span>
+        <span className="ss-edit-panel__title">CSS</span>
         <span className="ss-edit-panel__header-actions">
           {onTogglePin && (
             <button
