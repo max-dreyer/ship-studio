@@ -141,6 +141,22 @@ export function listCssVariables(projectPath: string): Promise<string[]> {
   return invoke<string[]>('list_css_variables', { projectPath });
 }
 
+/** A custom-property definition with where it's set — backs the Variables editor. */
+export interface CssVariableDef {
+  /** Name including the leading `--`. */
+  name: string;
+  value: string;
+  /** The selector it's defined on (`:root`, `.theme-dark`, …). */
+  selector: string;
+  /** Project-relative stylesheet path. */
+  file: string;
+}
+
+/** Every custom-property definition in the project (name, value, scope, file). */
+export function getCssVariables(projectPath: string): Promise<CssVariableDef[]> {
+  return invoke<CssVariableDef[]>('get_css_variables', { projectPath });
+}
+
 /** Change the `@media` condition enclosing a rule, drift-guarded against `oldInner`. */
 export function renameCssAtRule(
   projectPath: string,

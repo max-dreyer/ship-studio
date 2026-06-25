@@ -15,11 +15,18 @@ import { PlusIcon } from '../icons/utility';
 import { Spinner } from '../primitives/Spinner';
 import { CascadeRuleCard } from './CascadeRuleCard';
 import { ElementSettingsPanel } from './ElementSettingsPanel';
+import { CssVariablesPanel } from './CssVariablesPanel';
+import { CssAnimationsPanel } from './CssAnimationsPanel';
 import { SuggestionPopover, type Suggestion } from './SuggestionPopover';
 import { mediaChipLabel, rowKey, type CascadeRow } from '../../lib/cssCascade';
 import type { RuleBody } from '../../lib/cssBody';
 import type { CascadeSelection } from '../../hooks/useCssCascadeEditor';
 import type { ElementSettings } from '../../hooks/useElementSettings';
+import type { useCssVariables } from '../../hooks/useCssVariables';
+import type { useCssAnimations } from '../../hooks/useCssAnimations';
+
+/** The panel's scope: the selected element, or the project-global tokens/animations. */
+type Scope = 'element' | 'variables' | 'animations';
 
 const PANEL_WIDTH = 360;
 
@@ -43,6 +50,10 @@ interface Props {
   /** Project CSS variables (`--foo`) for `var(--…)` value autocomplete. */
   variables: string[];
   settings: ElementSettings;
+  /** Project-global Variables editor state (custom properties / design tokens). */
+  variablesState: ReturnType<typeof useCssVariables>;
+  /** Project-global Animations editor state (`@keyframes`). */
+  animationsState: ReturnType<typeof useCssAnimations>;
   onClose: () => void;
   pinned?: boolean;
   onTogglePin?: () => void;
@@ -64,11 +75,14 @@ export function CssCascadePanel({
   existingSelectors,
   variables,
   settings,
+  variablesState,
+  animationsState,
   onClose,
   pinned,
   onTogglePin,
 }: Props) {
   const [tab, setTab] = useState<'style' | 'settings'>('style');
+  const [scope, setScope] = useState<Scope>('element');
   const [pos, setPos] = useState(() => ({
     top: 76,
     left: Math.max(
@@ -151,7 +165,44 @@ export function CssCascadePanel({
       </div>
 
       <div className="ss-edit-panel__body">
-        {!selection ? (
+        <div className="ss-cascade-scope" role="tablist" aria-label="CSS scope">
+          {(['element', 'variables', 'animations'] as Scope[]).map((s) => (
+            <button
+              key={s}
+              type="button"
+              role="tab"
+              aria-selected={scope === s}
+              className={`ss-cascade-scope__tab${scope === s ? ' is-active' : ''}`}
+              onClick={() => {
+                setScope(s);
+                if (s === 'variables') void variablesState.reload();
+                else if (s === 'animations') void animationsState.reload();
+              }}
+            >
+              {s === 'element' ? 'Element' : s === 'variables' ? 'Variables' : 'Animations'}
+            </button>
+          ))}
+        </div>
+
+        {scope === 'variables' ? (
+          <CssVariablesPanel
+            variables={variablesState.variables}
+            loading={variablesState.loading}
+            variableNames={variables}
+            onSetValue={variablesState.setValue}
+            onAddVariable={(n, v) => void variablesState.addVariable(n, v)}
+          />
+        ) : scope === 'animations' ? (
+          <CssAnimationsPanel
+            animations={animationsState.animations}
+            loading={animationsState.loading}
+            selectorSuggestions={selectorSuggestions}
+            variables={variables}
+            onChangeBody={animationsState.setBody}
+            onDelete={(s) => void animationsState.remove(s)}
+            onCreate={(n) => void animationsState.create(n)}
+          />
+        ) : !selection ? (
           <p className="ss-cascade-empty">Click an element to see the CSS that styles it.</p>
         ) : (
           <>

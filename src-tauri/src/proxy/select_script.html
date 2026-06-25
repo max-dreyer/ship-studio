@@ -456,6 +456,12 @@ else if(d.type==='ss:deleteRulePreview'){var dl=findRuleOwner(d.selector,d.media
    value, so this only bridges the gap. srcset is cleared so a framework-generated
    candidate set can't keep showing the old image until then. */
 else if(d.type==='ss:setSrc'){if(typeof d.value==='string'){for(var i=0;i<selectedSet.length;i++){var el=selectedSet[i];if(!el||el.tagName!=='IMG')continue;el.setAttribute('src',d.value);if(el.hasAttribute('srcset'))el.setAttribute('srcset','');}}placeSet();}
+/* Variables editor live preview: set a custom property so every var() consumer updates
+   instantly. Prefer editing the live :root rule in the CSSOM (HMR replaces the sheet and
+   supersedes it cleanly); fall back to an inline style on <html> when there's no :root
+   rule yet (e.g. adding the first variable) — that fallback is cleared on commit. */
+else if(d.type==='ss:setVar'){if(typeof d.name==='string'){var vv=String(d.value!=null?d.value:''),setOk=false;try{var rl=findRuleOwner(':root',null);if(rl){rl.owner.cssRules[rl.index].style.setProperty(d.name,vv);setOk=true;}}catch(e){}if(!setOk){try{document.documentElement.style.setProperty(d.name,vv);}catch(e){}}}}
+else if(d.type==='ss:clearVar'){if(typeof d.name==='string'){try{document.documentElement.style.removeProperty(d.name);}catch(e){}}else{var ds=document.documentElement.style;for(var vi=ds.length-1;vi>=0;vi--){var pn=ds[vi];if(pn&&pn.indexOf('--')===0)ds.removeProperty(pn);}}}
 else if(d.type==='ss:suppressReload'){window.__ssSuppressUntil=Date.now()+3000;}
 else if(d.type==='ss:commit'){pendingMark=null;txtRevertEl=null;snapshotOrig();window.__ssSuppressUntil=Date.now()+2000;}
 else if(d.type==='ss:requestTree'){treeOn=true;treeEnsureObserver();treeSend();}

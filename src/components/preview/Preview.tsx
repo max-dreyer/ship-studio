@@ -42,6 +42,8 @@ import { BrowserDropdown } from './BrowserDropdown';
 import { useVisualEditor } from '../../hooks/useVisualEditor';
 import { useCssCascadeEditor } from '../../hooks/useCssCascadeEditor';
 import { useElementSettings } from '../../hooks/useElementSettings';
+import { useCssVariables } from '../../hooks/useCssVariables';
+import { useCssAnimations } from '../../hooks/useCssAnimations';
 import { CssCascadePanel } from '../edit/CssCascadePanel';
 import { useBreakpoints } from '../../hooks/useBreakpoints';
 import {
@@ -583,6 +585,18 @@ export const Preview = forwardRef<PreviewHandle, PreviewProps>(function Preview(
     projectPath,
     enabled: cssEditorEnabled,
     signature: cssEditor.selection?.signature ?? null,
+    onToast,
+  });
+  // Project-global scopes of the CSS panel: design tokens + animations.
+  const cssVariables = useCssVariables({
+    iframeRef,
+    projectPath,
+    enabled: cssEditor.editMode,
+    onToast,
+  });
+  const cssAnimations = useCssAnimations({
+    projectPath,
+    enabled: cssEditor.editMode,
     onToast,
   });
   // Which editor (if any) the toolbar toggle and panel drive.
@@ -1273,6 +1287,8 @@ export const Preview = forwardRef<PreviewHandle, PreviewProps>(function Preview(
               existingSelectors={cssEditor.existingSelectors}
               variables={cssEditor.variableSuggestions}
               settings={elementSettings}
+              variablesState={cssVariables}
+              animationsState={cssAnimations}
               onClose={cssEditor.toggleEditMode}
               pinned={editorPinned}
               onTogglePin={toggleEditorPinned}

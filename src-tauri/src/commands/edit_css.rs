@@ -1643,6 +1643,45 @@ pub fn list_css_variables(project_path: String) -> Result<Vec<String>, CommandEr
     Ok(set.into_iter().collect())
 }
 
+/// A custom-property *definition* with where it's set — backs the Variables editor.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct CssVariableDef {
+    /// Property name including the leading `--` (e.g. `--surface`).
+    pub name: String,
+    /// The declared value, verbatim.
+    pub value: String,
+    /// The selector it's defined on (`:root`, `.theme-dark`, …).
+    pub selector: String,
+    /// Project-relative stylesheet path it lives in.
+    pub file: String,
+}
+
+/// Every custom-property definition across the project's stylesheets, in document
+/// order (so the UI can keep last-wins semantics). `:root` tokens are the common,
+/// editable case; ones scoped to other selectors are surfaced too (the UI groups
+/// them by scope). Powers the Variables editor.
+#[tauri::command]
+#[tracing::instrument(fields(project = %project_path))]
+pub fn get_css_variables(project_path: String) -> Result<Vec<CssVariableDef>, CommandError> {
+    let root = validate_project_path(&project_path)?;
+    let mut out = Vec::new();
+    for sheet in cached_sheets(&root).iter() {
+        for rule in &sheet.rules {
+            for d in declarations_in(&sheet.content, rule) {
+                if d.property.starts_with("--") {
+                    out.push(CssVariableDef {
+                        name: d.property,
+                        value: d.value,
+                        selector: rule.selector.clone(),
+                        file: sheet.rel.clone(),
+                    });
+                }
+            }
+        }
+    }
+    Ok(out)
+}
+
 /// Map a batch of cascade matches (from the in-iframe walker) back to their source
 /// rules, in the same order. Each entry is `resolved` (editable), `multiple`, or
 /// `not_found` (read-only) — the code panel renders accordingly.
@@ -1965,6 +2004,39 @@ mod tests {
         let rules = index_rules(css);
         assert_eq!(rules.len(), 1);
         assert_eq!(rules[0].selector, "@-webkit-keyframes fade");
+    }
+
+    #[test]
+    fn extracts_custom_properties_with_their_scope() {
+        // Mirrors get_css_variables: every `--*` declaration, tagged with the selector
+        // it's defined on (so the Variables editor can show :root vs scoped tokens).
+        let css =
+            ":root {\n  --surface: #fff;\n  --gap: 8px;\n  color: red;\n}\n.dark {\n  --surface: #000;\n}";
+        let rules = index_rules(css);
+        let mut vars = Vec::new();
+        for r in &rules {
+            for d in declarations_in(css, r) {
+                if d.property.starts_with("--") {
+                    vars.push((d.property, d.value, r.selector.clone()));
+                }
+            }
+        }
+        assert_eq!(
+            vars,
+            vec![
+                (
+                    "--surface".to_string(),
+                    "#fff".to_string(),
+                    ":root".to_string()
+                ),
+                ("--gap".to_string(), "8px".to_string(), ":root".to_string()),
+                (
+                    "--surface".to_string(),
+                    "#000".to_string(),
+                    ".dark".to_string()
+                ),
+            ]
+        );
     }
 
     #[test]
