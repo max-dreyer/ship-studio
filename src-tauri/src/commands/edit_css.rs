@@ -732,8 +732,9 @@ fn rename_at_rule_in_source(
 
 /// Wrap the matching rule in an at-rule: `selector { body }` →
 /// `at_prelude {\n  selector { body }\n}` (re-indented). The testable core of
-/// [`wrap_css_rule`]. Only `@media` keeps the inner rule editable afterward (the
-/// locator indexes rules inside `@media`, not `@supports`/`@layer` yet).
+/// [`wrap_css_rule`]. The inner rule stays editable afterward for `@media`
+/// (condition surfaced) and for the descended grouping at-rules `@layer`/
+/// `@supports`/`@container`.
 fn wrap_rule_in_source(
     src: &str,
     selector: &str,
@@ -2384,6 +2385,34 @@ mod tests {
         assert_eq!(
             out,
             "@container (min-width: 400px) {\n  .card {\n    gap: 2rem;\n  }\n}\n"
+        );
+    }
+
+    #[test]
+    fn renames_to_a_complex_selector_and_stays_locatable() {
+        let src = ".old {\n  color: red;\n}\n";
+        let out =
+            rename_selector_in_source(src, ".old", &None, "\n  color: red;\n", "h1.title:not(.x)")
+                .unwrap();
+        assert_eq!(out, "h1.title:not(.x) {\n  color: red;\n}\n");
+        let rules = index_rules(&out);
+        assert_eq!(rules[0].selector, "h1.title:not(.x)");
+    }
+
+    #[test]
+    fn renames_the_media_condition_of_a_wrapped_rule() {
+        let src = "@media (max-width: 768px) {\n  .a { color: red; }\n}\n";
+        let out = rename_at_rule_in_source(
+            src,
+            ".a",
+            &Some("(max-width: 768px)".into()),
+            " color: red; ",
+            "(max-width: 600px)",
+        )
+        .unwrap();
+        assert_eq!(
+            out,
+            "@media (max-width: 600px) {\n  .a { color: red; }\n}\n"
         );
     }
 
