@@ -409,11 +409,10 @@
 .ss-add-menu__search::placeholder {
   color: var(--text-muted);
 }
+/* Plain block flow — block-level children (the items below are display:flex, which
+   is block-level) stack vertically, full stop. No flex-direction/wrap quirks. */
 .ss-add-menu__list {
-  display: flex;
-  flex-direction: column;
-  align-items: stretch;
-  gap: 1px; /* css-ok: menu row gap */
+  display: block;
   overflow-y: auto;
   padding: var(--spacing-xs);
   scrollbar-width: thin;
