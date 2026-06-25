@@ -394,6 +394,7 @@ pub fn run() {
             commands::edit_css::create_css_class,
             commands::edit_css::list_stylesheets,
             commands::edit_css::list_css_classes,
+            commands::edit_css::list_css_selectors,
             commands::edit_css::list_css_variables,
             commands::edit_css::locate_css_rules,
             commands::edit_css::apply_css_rule_text,

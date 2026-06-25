@@ -1270,6 +1270,7 @@ export const Preview = forwardRef<PreviewHandle, PreviewProps>(function Preview(
               onRenameAtRule={(key, m) => void cssEditor.renameAtRule(key, m)}
               onAddSelector={(sel) => void cssEditor.addSelector(sel)}
               selectorSuggestions={cssEditor.classSuggestions.map((c) => `.${c}`)}
+              existingSelectors={cssEditor.existingSelectors}
               variables={cssEditor.variableSuggestions}
               settings={elementSettings}
               onClose={cssEditor.toggleEditMode}

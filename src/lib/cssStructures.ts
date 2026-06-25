@@ -194,6 +194,54 @@ export const NEST_ITEMS: StructureItem[] = [
   { label: '&:empty', insert: '&:empty', kind: 'nest', keywords: ['no children'] },
 ];
 
+/** KEYFRAME STEPS — the stops inside a `@keyframes` rule. Each is a nested block
+ *  (`from { … }`, `50% { … }`) holding the declarations for that point in time. */
+export const KEYFRAME_STEP_ITEMS: StructureItem[] = [
+  { label: 'from', insert: 'from', kind: 'nest', hint: 'start (0%)', keywords: ['0', 'begin'] },
+  { label: 'to', insert: 'to', kind: 'nest', hint: 'end (100%)', keywords: ['100', 'finish'] },
+  { label: '0%', insert: '0%', kind: 'nest', hint: 'start', keywords: ['from', 'begin'] },
+  { label: '25%', insert: '25%', kind: 'nest', keywords: ['quarter'] },
+  { label: '50%', insert: '50%', kind: 'nest', hint: 'midpoint', keywords: ['half', 'middle'] },
+  { label: '75%', insert: '75%', kind: 'nest', keywords: ['three quarter'] },
+  { label: '100%', insert: '100%', kind: 'nest', hint: 'end', keywords: ['to', 'finish'] },
+];
+
+/** A `@keyframes <name>` / `@-webkit-keyframes <name>` rule — its body is keyframe
+ *  steps, not declarations or ordinary nested rules. */
+export function isKeyframesSelector(selector: string): boolean {
+  return /^@(-[a-z]+-)?keyframes\b/i.test(selector.trim());
+}
+
+/** Recommended standalone rules offered by "Add selector" beyond plain class/tag
+ *  selectors — top-level `@`-rules the editor can fully author. Currently just
+ *  `@keyframes` (animations); kept here so the list is easy to grow. */
+export const NEW_RULE_ITEMS: StructureItem[] = [
+  {
+    label: '@keyframes animate',
+    insert: '@keyframes animate',
+    kind: 'nest',
+    hint: 'animation steps',
+    keywords: ['animation', 'motion', 'animate', 'transition', 'keyframe'],
+  },
+];
+
+/** Normalize free-typed keyframe-step text: a bare number → `N%`, `from`/`to` kept,
+ *  an existing `%` kept. Returns null for empty/invalid. */
+export function classifyKeyframeStep(text: string): StructureItem | null {
+  const t = text.trim().toLowerCase();
+  if (!t) return null;
+  if (t === 'from' || t === 'to') return { label: t, insert: t, kind: 'nest' };
+  // `50` → `50%`, `50%` → `50%`. Allow a comma group (`0%, 100%`).
+  const norm = t
+    .split(',')
+    .map((p) => p.trim())
+    .filter(Boolean)
+    .map((p) => (/^\d+(\.\d+)?%?$/.test(p) ? (p.endsWith('%') ? p : `${p}%`) : p))
+    .join(', ');
+  if (!norm) return null;
+  return { label: norm, insert: norm, kind: 'nest' };
+}
+
 /** ONLY WHEN — conditions/scopes that gate when the rule applies. */
 export const WRAP_ITEMS: StructureItem[] = [
   {

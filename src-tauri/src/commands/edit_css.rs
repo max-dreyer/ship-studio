@@ -870,8 +870,36 @@ fn index_rules(css: &str) -> Vec<RuleSpan> {
                     ));
                 } else if name == "layer" || name == "supports" || name == "container" {
                     // Grouping at-rules that hold ordinary style rules — descend so
-                    // their contents are editable (keyframes/font-face/page do NOT).
+                    // their contents are editable (font-face/page do NOT).
                     stack.push(Frame::Transparent);
+                } else if name.ends_with("keyframes") {
+                    // `@keyframes <name>` / `@-webkit-keyframes <name>`: a named
+                    // animation. Index the whole rule as ONE locatable/editable block
+                    // (selector = the full `@keyframes name` prelude); its step blocks
+                    // (`0%`, `from`, …) are written verbatim as body text rather than
+                    // indexed as separate style rules (so the body round-trips through
+                    // `apply_css_rule_text`).
+                    let (media, media_prelude) = stack
+                        .iter()
+                        .rev()
+                        .find_map(|f| match f {
+                            Frame::Media(m, cs, ce) => Some((Some(m.clone()), Some((*cs, *ce)))),
+                            _ => None,
+                        })
+                        .unwrap_or((None, None));
+                    let selector_start = first_significant(css, prelude_start, i);
+                    let selector_line = line_of(css, selector_start);
+                    let idx = rules.len();
+                    rules.push(RuleSpan {
+                        selector: prelude.to_string(),
+                        media,
+                        media_prelude,
+                        selector_start,
+                        block_inner_start: i + 1,
+                        block_inner_end: i + 1,
+                        selector_line,
+                    });
+                    stack.push(Frame::Rule(idx));
                 } else {
                     stack.push(Frame::Other);
                 }
@@ -1542,6 +1570,26 @@ pub fn list_css_classes(project_path: String) -> Result<Vec<String>, CommandErro
     Ok(set.into_iter().collect())
 }
 
+/// Every distinct rule selector across the project's stylesheets (full selector
+/// text — `.card`, `article .feature-card`, `@keyframes reveal`), sorted & unique.
+/// Powers the "Add selector" autocomplete so existing rules are discoverable and
+/// re-surfaced (rather than duplicated or rejected) when you type one that exists.
+#[tauri::command]
+#[tracing::instrument(fields(project = %project_path))]
+pub fn list_css_selectors(project_path: String) -> Result<Vec<String>, CommandError> {
+    let root = validate_project_path(&project_path)?;
+    let mut set = std::collections::BTreeSet::new();
+    for sheet in cached_sheets(&root).iter() {
+        for rule in &sheet.rules {
+            let s = rule.selector.trim();
+            if !s.is_empty() {
+                set.insert(s.to_string());
+            }
+        }
+    }
+    Ok(set.into_iter().collect())
+}
+
 /// Collect CSS custom-property *definitions* (`--name:`) from raw stylesheet text.
 /// A definition sits at the start of a declaration (after `{` or `;`), which lets us
 /// skip `var(--name)` *usages* (preceded by `(`).
@@ -1896,12 +1944,27 @@ mod tests {
     }
 
     #[test]
-    fn skips_keyframes_inner_blocks() {
+    fn indexes_keyframes_as_one_rule_but_not_its_stops() {
         let css = "@keyframes spin { 0% { transform: rotate(0); } 100% { transform: rotate(360deg); } }\n.real { color: red; }";
         let rules = index_rules(css);
-        // Only `.real` is a style rule; the keyframe stops are not.
+        // `@keyframes spin` is indexed as ONE editable block; its `0%`/`100%` stops are
+        // NOT separate style rules. `.real` is indexed too.
+        assert_eq!(rules.len(), 2);
+        assert_eq!(rules[0].selector, "@keyframes spin");
+        assert!(rules[0].media.is_none());
+        assert_eq!(rules[1].selector, ".real");
+        // The whole stops body is captured verbatim inside the keyframes block.
+        let inner = &css[rules[0].block_inner_start..rules[0].block_inner_end];
+        assert!(inner.contains("0%"));
+        assert!(inner.contains("100%"));
+    }
+
+    #[test]
+    fn indexes_webkit_keyframes_too() {
+        let css = "@-webkit-keyframes fade { from { opacity: 0; } to { opacity: 1; } }";
+        let rules = index_rules(css);
         assert_eq!(rules.len(), 1);
-        assert_eq!(rules[0].selector, ".real");
+        assert_eq!(rules[0].selector, "@-webkit-keyframes fade");
     }
 
     #[test]
@@ -1933,12 +1996,15 @@ mod tests {
     }
 
     #[test]
-    fn still_skips_keyframes_and_font_face_inner_blocks() {
+    fn still_skips_font_face_inner_blocks() {
+        // `@font-face` stays opaque (Other); `@keyframes` is now indexed as one rule,
+        // and `.real` is a normal style rule → 2 indexed rules, not 3.
         let css = "@keyframes spin { 0% { opacity: 0; } 100% { opacity: 1; } }\n\
                    @font-face { font-family: X; }\n.real { color: red; }";
         let rules = index_rules(css);
-        assert_eq!(rules.len(), 1);
-        assert_eq!(rules[0].selector, ".real");
+        assert_eq!(rules.len(), 2);
+        assert_eq!(rules[0].selector, "@keyframes spin");
+        assert_eq!(rules[1].selector, ".real");
     }
 
     #[test]
@@ -2481,6 +2547,24 @@ mod tests {
             ),
             RuleLocation::Resolved { .. }
         ));
+    }
+
+    #[test]
+    fn writes_keyframe_steps_into_a_keyframes_body() {
+        // An empty `@keyframes reveal {}` (as `create_css_class` writes it) gets its
+        // step blocks filled in — the keyframes rule is located by its full prelude
+        // and the steps round-trip as opaque body text.
+        let src = "@keyframes reveal {\n}\n";
+        let steps = "\n  from {\n    opacity: 0;\n  }\n  to {\n    opacity: 1;\n  }\n";
+        let out = apply_rule_text_to_source(src, "@keyframes reveal", &None, "\n", steps).unwrap();
+        assert_eq!(
+            out,
+            "@keyframes reveal {\n  from {\n    opacity: 0;\n  }\n  to {\n    opacity: 1;\n  }\n}\n"
+        );
+        // Still ONE indexed rule (the keyframes block); its steps aren't separate rules.
+        let reindexed = index_rules(&out);
+        assert_eq!(reindexed.len(), 1);
+        assert_eq!(reindexed[0].selector, "@keyframes reveal");
     }
 
     #[test]

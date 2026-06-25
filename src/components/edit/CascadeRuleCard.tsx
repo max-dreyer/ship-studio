@@ -19,7 +19,13 @@ import { TrashIcon, FileIcon } from '../icons/editor';
 import { DeclarationRow } from './DeclarationRow';
 import { AddMenu } from './AddMenu';
 import { suggestMediaConditions } from '../../lib/cssProperties';
-import { NEST_ITEMS, WRAP_ITEMS, searchStructures } from '../../lib/cssStructures';
+import {
+  NEST_ITEMS,
+  WRAP_ITEMS,
+  KEYFRAME_STEP_ITEMS,
+  searchStructures,
+  isKeyframesSelector,
+} from '../../lib/cssStructures';
 import { SuggestionPopover, type Suggestion } from './SuggestionPopover';
 import {
   declarations,
@@ -43,6 +49,9 @@ interface CommonHeader {
   layer?: string | null;
   /** Nesting depth (0 = top-level rule), for indentation. */
   depth?: number;
+  /** This card is a keyframe step (a child of a `@keyframes` rule) — its selector is
+   *  a step (`0%`, `from`) and its body holds only declarations. */
+  isStep?: boolean;
   /** The rule's @media/@container condition doesn't match the current preview
    *  viewport — the whole card is dimmed and its declarations don't apply now. */
   inactive?: boolean;
@@ -206,29 +215,41 @@ function NestedSelectorInput({
   value,
   suggestions,
   onChange,
+  vocab = 'nesting',
 }: {
   value: string;
   suggestions: string[];
   onChange: (selector: string) => void;
+  /** Which suggestion vocabulary to offer: CSS nesting (`&:hover`, `& .child`) or
+   *  `@keyframes` steps (`from`, `to`, `50%`). */
+  vocab?: 'nesting' | 'keyframe';
 }) {
   const [focused, setFocused] = useState(false);
   const [active, setActive] = useState(0);
   const [anchorEl, setAnchorEl] = useState<HTMLElement | null>(null);
 
   const typed = value.trim();
-  // Curated nesting vocab matched on label/hint/keywords (so "even" finds
-  // &:nth-child), plus the project's classes as `& .class`.
   const q = typed.toLowerCase();
-  const curated: Suggestion[] = searchStructures(NEST_ITEMS, typed).map((i) => ({
-    value: i.insert,
-    label: i.insert,
-    hint: i.hint,
-  }));
-  const classItems: Suggestion[] = suggestions
-    .map((s) => `& ${s}`)
-    .filter((p) => !q || p.toLowerCase().includes(q))
-    .map((p) => ({ value: p, label: p }));
-  const matches = [...curated, ...classItems].slice(0, 10);
+  let matches: Suggestion[];
+  if (vocab === 'keyframe') {
+    // Keyframe steps only — no class suggestions (a step isn't a selector).
+    matches = searchStructures(KEYFRAME_STEP_ITEMS, typed)
+      .map((i) => ({ value: i.insert, label: i.label, hint: i.hint }))
+      .slice(0, 10);
+  } else {
+    // Curated nesting vocab matched on label/hint/keywords (so "even" finds
+    // &:nth-child), plus the project's classes as `& .class`.
+    const curated: Suggestion[] = searchStructures(NEST_ITEMS, typed).map((i) => ({
+      value: i.insert,
+      label: i.insert,
+      hint: i.hint,
+    }));
+    const classItems: Suggestion[] = suggestions
+      .map((s) => `& ${s}`)
+      .filter((p) => !q || p.toLowerCase().includes(q))
+      .map((p) => ({ value: p, label: p }));
+    matches = [...curated, ...classItems].slice(0, 10);
+  }
   const showMenu =
     focused && matches.length > 0 && !(matches.length === 1 && matches[0].value === value);
 
@@ -239,8 +260,10 @@ function NestedSelectorInput({
         value={value}
         spellCheck={false}
         autoComplete="off"
-        aria-label="Nested selector"
-        placeholder="&:hover, &:nth-child(2n), & .child…"
+        aria-label={vocab === 'keyframe' ? 'Keyframe step' : 'Nested selector'}
+        placeholder={
+          vocab === 'keyframe' ? 'from, to, 50%…' : '&:hover, &:nth-child(2n), & .child…'
+        }
         onFocus={(e) => {
           setAnchorEl(e.currentTarget);
           setFocused(true);
@@ -402,6 +425,10 @@ export function CascadeRuleCard(props: Props) {
   const depth = props.depth ?? 0;
   const editable = props.editable;
   const inactive = props.inactive ?? false;
+  const isStep = props.isStep ?? false;
+  // A `@keyframes <name>` container: its body is steps, not declarations. (A step
+  // itself is never a keyframes container, even if oddly named.)
+  const isKeyframes = !isStep && isKeyframesSelector(props.selector);
   const onRenameAtRule = props.editable ? props.onRenameAtRule : undefined;
 
   const selectorRow = (
@@ -419,6 +446,7 @@ export function CascadeRuleCard(props: Props) {
         <NestedSelectorInput
           value={props.selector}
           suggestions={props.selectorSuggestions ?? []}
+          vocab={isStep ? 'keyframe' : 'nesting'}
           onChange={(sel) => props.onSelectorChange?.(sel)}
         />
       ) : props.editable && props.onRename ? (
@@ -521,6 +549,7 @@ export function CascadeRuleCard(props: Props) {
               key={r.index}
               editable
               depth={depth + 1}
+              isStep={isKeyframes}
               selector={r.selector}
               overridden={new Map()}
               body={r.body}
@@ -540,6 +569,7 @@ export function CascadeRuleCard(props: Props) {
 
           <footer className="ss-card__foot">
             <AddMenu
+              mode={isKeyframes ? 'keyframes' : isStep ? 'props' : 'full'}
               onAddProperty={(prop) =>
                 onChange(addDeclaration(body, { prop, value: '', important: false }))
               }

@@ -22,6 +22,7 @@ import {
   createCssRule,
   listStylesheets,
   listCssClasses,
+  listCssSelectors,
   listCssVariables,
   renameCssSelector,
   renameCssAtRule,
@@ -68,6 +69,9 @@ export function useCssCascadeEditor({ iframeRef, projectPath, enabled, onToast }
   const [savingKeys, setSavingKeys] = useState<Set<string>>(() => new Set());
   // Project class names for selector autocomplete (loaded when edit mode opens).
   const [classSuggestions, setClassSuggestions] = useState<string[]>([]);
+  // Every existing rule selector (full text), so "Add selector" can suggest what's
+  // already defined and re-surface it on a match instead of erroring.
+  const [existingSelectors, setExistingSelectors] = useState<string[]>([]);
   // Project CSS variables (`--foo`) for `var(--…)` value autocomplete.
   const [variableSuggestions, setVariableSuggestions] = useState<string[]>([]);
 
@@ -142,6 +146,9 @@ export function useCssCascadeEditor({ iframeRef, projectPath, enabled, onToast }
     let cancelled = false;
     void listCssClasses(projectPath)
       .then((cs) => !cancelled && setClassSuggestions(cs))
+      .catch(() => undefined);
+    void listCssSelectors(projectPath)
+      .then((ss) => !cancelled && setExistingSelectors(ss))
       .catch(() => undefined);
     void listCssVariables(projectPath)
       .then((vs) => !cancelled && setVariableSuggestions(vs))
@@ -457,7 +464,8 @@ export function useCssCascadeEditor({ iframeRef, projectPath, enabled, onToast }
       } catch (err) {
         const msg = String(err);
         // The rule already exists in source but doesn't match this element (so it
-        // isn't in the cascade). Surface the real rule for editing instead of erroring.
+        // isn't in the cascade). Surface the real rule for editing instead of erroring
+        // — typing an existing selector should just open it.
         if (msg.includes('already exists')) {
           try {
             const [loc] = await locateCssRules(projectPath, [
@@ -468,8 +476,12 @@ export function useCssCascadeEditor({ iframeRef, projectPath, enabled, onToast }
               return;
             }
           } catch {
-            /* fall through to the toast */
+            /* fall through to a soft message below */
           }
+          // It exists but we couldn't pin it here (e.g. it lives in a sheet we can't
+          // open). Don't show a scary validation error — explain plainly.
+          onToast(`“${sel}” already exists — open it from its stylesheet.`, 'error');
+          return;
         }
         logger.error('[CssCascade] add selector failed', { error: msg });
         onToast(toastText(err), 'error');
@@ -640,6 +652,7 @@ export function useCssCascadeEditor({ iframeRef, projectPath, enabled, onToast }
     renameSelector,
     renameAtRule,
     classSuggestions,
+    existingSelectors,
     variableSuggestions,
     loading,
     savingKeys,

@@ -1,5 +1,14 @@
 import { describe, expect, it } from 'vitest';
-import { NEST_ITEMS, WRAP_ITEMS, searchStructures, classifyFreeText } from './cssStructures';
+import {
+  NEST_ITEMS,
+  WRAP_ITEMS,
+  KEYFRAME_STEP_ITEMS,
+  NEW_RULE_ITEMS,
+  searchStructures,
+  classifyFreeText,
+  classifyKeyframeStep,
+  isKeyframesSelector,
+} from './cssStructures';
 
 describe('searchStructures', () => {
   it('returns the full group (capped) for an empty query', () => {
@@ -59,5 +68,56 @@ describe('classifyFreeText', () => {
 
   it('returns null for empty input', () => {
     expect(classifyFreeText('   ')).toBeNull();
+  });
+});
+
+describe('isKeyframesSelector', () => {
+  it('recognizes @keyframes and vendor-prefixed variants', () => {
+    expect(isKeyframesSelector('@keyframes reveal')).toBe(true);
+    expect(isKeyframesSelector('  @keyframes  spin ')).toBe(true);
+    expect(isKeyframesSelector('@-webkit-keyframes fade')).toBe(true);
+  });
+
+  it('rejects ordinary selectors and other at-rules', () => {
+    expect(isKeyframesSelector('.card')).toBe(false);
+    expect(isKeyframesSelector('@media (min-width: 600px)')).toBe(false);
+    expect(isKeyframesSelector('@font-face')).toBe(false);
+  });
+});
+
+describe('classifyKeyframeStep', () => {
+  it('keeps from / to', () => {
+    expect(classifyKeyframeStep('from')).toMatchObject({ insert: 'from', kind: 'nest' });
+    expect(classifyKeyframeStep('TO')).toMatchObject({ insert: 'to', kind: 'nest' });
+  });
+
+  it('appends % to a bare number', () => {
+    expect(classifyKeyframeStep('50')).toMatchObject({ insert: '50%' });
+    expect(classifyKeyframeStep('50%')).toMatchObject({ insert: '50%' });
+  });
+
+  it('normalizes a comma group of stops', () => {
+    expect(classifyKeyframeStep('0, 100')).toMatchObject({ insert: '0%, 100%' });
+  });
+
+  it('returns null for empty input', () => {
+    expect(classifyKeyframeStep('  ')).toBeNull();
+  });
+});
+
+describe('keyframe + new-rule catalogs', () => {
+  it('offers from/to/percentages as steps', () => {
+    expect(searchStructures(KEYFRAME_STEP_ITEMS, '').map((i) => i.insert)).toEqual(
+      expect.arrayContaining(['from', 'to', '0%', '50%', '100%'])
+    );
+  });
+
+  it('finds @keyframes from animation keywords in the new-rule list', () => {
+    expect(
+      searchStructures(NEW_RULE_ITEMS, 'animation').some((i) => i.insert.startsWith('@keyframes'))
+    ).toBe(true);
+    expect(
+      searchStructures(NEW_RULE_ITEMS, 'motion').some((i) => i.insert.startsWith('@keyframes'))
+    ).toBe(true);
   });
 });

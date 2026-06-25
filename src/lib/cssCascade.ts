@@ -130,6 +130,12 @@ export function listCssClasses(projectPath: string): Promise<string[]> {
   return invoke<string[]>('list_css_classes', { projectPath });
 }
 
+/** Every existing rule selector (full text — `.card`, `@keyframes reveal`), for the
+ *  "Add selector" autocomplete: discover what's defined and re-surface it on a match. */
+export function listCssSelectors(projectPath: string): Promise<string[]> {
+  return invoke<string[]>('list_css_selectors', { projectPath });
+}
+
 /** Every CSS custom-property name (`--foo`) defined in the project (value autocomplete). */
 export function listCssVariables(projectPath: string): Promise<string[]> {
   return invoke<string[]>('list_css_variables', { projectPath });

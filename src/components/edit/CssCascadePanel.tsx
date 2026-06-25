@@ -17,6 +17,7 @@ import { CascadeRuleCard } from './CascadeRuleCard';
 import { ElementSettingsPanel } from './ElementSettingsPanel';
 import { SuggestionPopover, type Suggestion } from './SuggestionPopover';
 import { mediaChipLabel, rowKey, type CascadeRow } from '../../lib/cssCascade';
+import { NEW_RULE_ITEMS, searchStructures } from '../../lib/cssStructures';
 import type { RuleBody } from '../../lib/cssBody';
 import type { CascadeSelection } from '../../hooks/useCssCascadeEditor';
 import type { ElementSettings } from '../../hooks/useElementSettings';
@@ -37,6 +38,9 @@ interface Props {
   onAddSelector: (selector: string) => void;
   /** `.class` suggestions for the selector autocomplete. */
   selectorSuggestions: string[];
+  /** Full text of every existing rule selector (`.card`, `@keyframes reveal`) — shown
+   *  in "Add selector" so existing rules are discoverable and re-surfaced on a match. */
+  existingSelectors: string[];
   /** Project CSS variables (`--foo`) for `var(--…)` value autocomplete. */
   variables: string[];
   settings: ElementSettings;
@@ -58,6 +62,7 @@ export function CssCascadePanel({
   onRenameAtRule,
   onAddSelector,
   selectorSuggestions,
+  existingSelectors,
   variables,
   settings,
   onClose,
@@ -98,8 +103,11 @@ export function CssCascadePanel({
   const classes = (selection?.signature.className ?? '').split(/\s+/).filter(Boolean);
   // The element's own classes lead the "Add selector" suggestions (so a class you
   // just added in Settings is one click away from getting a rule), then the rest of
-  // the project's classes.
-  const addSelectorOptions = [...new Set([...classes.map((c) => `.${c}`), ...selectorSuggestions])];
+  // the project's classes, then every existing rule selector (incl. `@keyframes …`)
+  // so what's already defined is discoverable and re-openable rather than duplicated.
+  const addSelectorOptions = [
+    ...new Set([...classes.map((c) => `.${c}`), ...selectorSuggestions, ...existingSelectors]),
+  ];
 
   return (
     <div
@@ -189,7 +197,11 @@ export function CssCascadePanel({
               <ElementSettingsPanel settings={settings} />
             ) : (
               <>
-                <AddSelectorBar onAddSelector={onAddSelector} suggestions={addSelectorOptions} />
+                <AddSelectorBar
+                  onAddSelector={onAddSelector}
+                  suggestions={addSelectorOptions}
+                  existing={existingSelectors}
+                />
 
                 {loading ? (
                   <div className="ss-cascade-loading">
@@ -268,9 +280,12 @@ export function CssCascadePanel({
 function AddSelectorBar({
   onAddSelector,
   suggestions,
+  existing,
 }: {
   onAddSelector: (selector: string) => void;
   suggestions: string[];
+  /** Selectors that already have a rule — tagged "existing" and re-opened on pick. */
+  existing: string[];
 }) {
   const [open, setOpen] = useState(false);
   const [text, setText] = useState('');
@@ -294,13 +309,26 @@ function AddSelectorBar({
   }
 
   const typed = text.trim();
-  const classMatches = (
+  const existingSet = new Set(existing);
+  const selectorMatches = (
     typed ? suggestions.filter((s) => s.toLowerCase().includes(typed.toLowerCase())) : suggestions
-  ).slice(0, 8);
-  const showCreate = typed.length > 0 && !classMatches.includes(typed);
+  ).slice(0, 10);
+  // Recommended `@`-rules the editor can author (e.g. `@keyframes`) — surfaced
+  // alongside existing selectors so animations are discoverable, not just typeable.
+  const atItems: Suggestion[] = searchStructures(NEW_RULE_ITEMS, typed)
+    .filter((i) => !existingSet.has(i.insert))
+    .map((i) => ({ value: i.insert, label: i.label, hint: i.hint }));
+  const showCreate =
+    typed.length > 0 && !selectorMatches.includes(typed) && !atItems.some((a) => a.value === typed);
   const items: Suggestion[] = [
     ...(showCreate ? [{ value: typed, label: typed, hint: 'new rule' }] : []),
-    ...classMatches.map((s) => ({ value: s, label: s })),
+    // Existing rules are tagged so it's clear picking one re-opens it (no duplicate).
+    ...selectorMatches.map((s) => ({
+      value: s,
+      label: s,
+      hint: existingSet.has(s) ? 'existing' : undefined,
+    })),
+    ...atItems,
   ];
 
   return (

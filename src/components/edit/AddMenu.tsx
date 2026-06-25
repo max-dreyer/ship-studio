@@ -15,12 +15,27 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { PlusIcon } from '../icons/utility';
 import { suggestProperties } from '../../lib/cssProperties';
-import { NEST_ITEMS, searchStructures, classifyFreeText } from '../../lib/cssStructures';
+import {
+  NEST_ITEMS,
+  KEYFRAME_STEP_ITEMS,
+  searchStructures,
+  classifyFreeText,
+  classifyKeyframeStep,
+} from '../../lib/cssStructures';
+
+/**
+ * What this card's body can hold, which decides what "+ Add" offers:
+ *   'full'      — a style rule: properties + nested rules (default)
+ *   'keyframes' — a `@keyframes` rule: keyframe steps only (`from`, `50%`, …)
+ *   'props'     — a keyframe step: properties only (no nested rules)
+ */
+export type AddMode = 'full' | 'keyframes' | 'props';
 
 interface Props {
   onAddProperty: (prop: string) => void;
-  /** Add a nested rule with this selector/prelude. */
+  /** Add a nested rule with this selector/prelude (a nested selector or keyframe step). */
   onNest: (selector: string) => void;
+  mode?: AddMode;
 }
 
 type RowKind = 'prop' | 'nest';
@@ -41,7 +56,7 @@ const MENU_WIDTH = 288;
 const SEL_START = /^[&:>+~.#[*]/;
 const LOOKS_PROP = /^[a-zA-Z-]+$/;
 
-export function AddMenu({ onAddProperty, onNest }: Props) {
+export function AddMenu({ onAddProperty, onNest, mode = 'full' }: Props) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState('');
   const [active, setActive] = useState(0);
@@ -64,12 +79,39 @@ export function AddMenu({ onAddProperty, onNest }: Props) {
 
   const sections = useMemo<Section[]>(() => {
     const typed = query.trim();
-    const startsAt = typed.startsWith('@');
-    const startsSel = SEL_START.test(typed);
     const out: Section[] = [];
 
+    // KEYFRAMES — the body of a `@keyframes` rule is steps, never bare declarations.
+    if (mode === 'keyframes') {
+      const rows: MenuRow[] = [];
+      const free = classifyKeyframeStep(typed);
+      const items = searchStructures(KEYFRAME_STEP_ITEMS, typed);
+      if (free && !items.some((i) => i.insert === free.insert)) {
+        rows.push({
+          key: `f:${free.insert}`,
+          label: free.insert,
+          hint: 'new step',
+          kind: 'nest',
+          insert: free.insert,
+        });
+      }
+      for (const it of items)
+        rows.push({
+          key: `s:${it.insert}`,
+          label: it.label,
+          hint: it.hint,
+          kind: 'nest',
+          insert: it.insert,
+        });
+      if (rows.length) out.push({ title: 'Keyframe step', rows });
+      return out;
+    }
+
+    const startsAt = typed.startsWith('@');
+    const startsSel = SEL_START.test(typed);
+
     // PROPERTY — only when the query isn't clearly a selector or at-rule.
-    if (!startsAt && !startsSel) {
+    if (mode === 'props' || (!startsAt && !startsSel)) {
       const sugg = suggestProperties(typed);
       const rows: MenuRow[] = [];
       if (typed && LOOKS_PROP.test(typed) && !sugg.includes(typed)) {
@@ -86,8 +128,8 @@ export function AddMenu({ onAddProperty, onNest }: Props) {
     }
 
     // ALSO STYLE (nested) — curated selectors + any free-typed selector or nested
-    // `@`-rule. (Conditions that scope the whole rule live on the selector, not here.)
-    {
+    // `@`-rule. (A keyframe step holds only declarations, so 'props' mode skips this.)
+    if (mode !== 'props') {
       const rows: MenuRow[] = [];
       const items = startsAt ? [] : searchStructures(NEST_ITEMS, typed);
       if (startsSel || startsAt) {
@@ -114,7 +156,7 @@ export function AddMenu({ onAddProperty, onNest }: Props) {
     }
 
     return out;
-  }, [query]);
+  }, [query, mode]);
 
   const flat = useMemo(() => sections.flatMap((s) => s.rows), [sections]);
 
@@ -142,12 +184,26 @@ export function AddMenu({ onAddProperty, onNest }: Props) {
     return () => document.removeEventListener('mousedown', onDown, true);
   }, [open]);
 
+  const label = mode === 'keyframes' ? 'Add step' : mode === 'props' ? 'Add property' : 'Add';
+  const placeholder =
+    mode === 'keyframes'
+      ? 'Add a keyframe step (from, to, 50%)…'
+      : mode === 'props'
+        ? 'Add a property…'
+        : 'Add a property or nested rule (&:hover, & .child)…';
+
   const trigger = (
     <button
       ref={btnRef}
       type="button"
       className={`ss-card__add${open ? ' is-open' : ''}`}
-      aria-label="Add a property, nested rule, or condition"
+      aria-label={
+        mode === 'keyframes'
+          ? 'Add a keyframe step'
+          : mode === 'props'
+            ? 'Add a property'
+            : 'Add a property, nested rule, or condition'
+      }
       aria-expanded={open}
       onClick={(e) => {
         if (open) close();
@@ -157,7 +213,7 @@ export function AddMenu({ onAddProperty, onNest }: Props) {
         }
       }}
     >
-      <PlusIcon size={11} /> Add
+      <PlusIcon size={11} /> {label}
     </button>
   );
 
@@ -185,7 +241,7 @@ export function AddMenu({ onAddProperty, onNest }: Props) {
             value={query}
             spellCheck={false}
             autoComplete="off"
-            placeholder="Add a property or nested rule (&:hover, & .child)…"
+            placeholder={placeholder}
             onChange={(e) => {
               setQuery(e.target.value);
               setActive(0);
