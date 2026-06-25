@@ -511,9 +511,11 @@ fn href_basename(href: &str) -> Option<String> {
         .map(|s| s.to_string())
 }
 
-/// The filename component of a project-relative POSIX path.
+/// The filename component of a project-relative POSIX path, minus any `?style=N`
+/// embedded-block suffix (`src/Foo.astro?style=0` → `Foo.astro`).
 fn rel_basename(rel: &str) -> &str {
-    rel.rsplit('/').next().unwrap_or(rel)
+    let name = rel.rsplit('/').next().unwrap_or(rel);
+    name.split('?').next().unwrap_or(name)
 }
 
 /// Map one cascade match to its source rule across the pre-indexed sheets.
@@ -1305,12 +1307,25 @@ fn discover_stylesheets(root: &Path) -> Vec<(String, String)> {
     // hand-rolled denylist can't know about `.vercel`, `.turbo`, `.svelte-kit`,
     // asset dumps, etc., so it descended into huge generated trees and made every
     // cache-miss resolve crawl on large projects.
+    // Prune build output / dependency dirs by name during the walk. `standard_filters`
+    // only applies `.gitignore` inside an actual git repo, so a non-git project (e.g. a
+    // freshly imported starter) would otherwise descend into `dist/` and `node_modules/`
+    // — making every `src/` selector also match the built bundle → "defined in multiple
+    // files" → read-only. This backstop keeps discovery correct without requiring git.
     let walker = ignore::WalkBuilder::new(root)
         .standard_filters(true)
+        .filter_entry(|entry| {
+            let name = entry.file_name().to_string_lossy();
+            !crate::commands::code::SKIP_DIRS.contains(&name.as_ref())
+        })
         .build();
     for entry in walker.flatten() {
         let path = entry.path();
-        if path.extension().and_then(|e| e.to_str()) != Some("css") {
+        let ext = path.extension().and_then(|e| e.to_str());
+        // Standalone stylesheets, plus `.astro` components whose `<style>` blocks
+        // are surfaced as virtual sheets (`Foo.astro?style=N`).
+        let (is_css, is_astro) = (ext == Some("css"), ext == Some("astro"));
+        if !is_css && !is_astro {
             continue;
         }
         if !entry.file_type().map(|t| t.is_file()).unwrap_or(false) {
@@ -1327,14 +1342,29 @@ fn discover_stylesheets(root: &Path) -> Vec<(String, String)> {
             .unwrap_or(path)
             .to_string_lossy()
             .replace('\\', "/");
-        out.push((rel, content));
+        if is_css {
+            out.push((rel, content));
+        } else {
+            // One virtual sheet per non-empty CSS `<style>` block; the index must
+            // match `astro_style_blocks` order so `?style=N` round-trips on write.
+            for (i, (s, e)) in astro_style_blocks(&content).into_iter().enumerate() {
+                let css = &content[s..e];
+                if css.trim().is_empty() {
+                    continue;
+                }
+                out.push((format!("{rel}?style={i}"), css.to_string()));
+            }
+        }
     }
     out
 }
 
-/// Resolve `file` to an absolute path proven to live inside `root`.
+/// Resolve `file` to an absolute path proven to live inside `root`. The `?style=N`
+/// suffix that identifies an embedded `<style>` block is stripped first — it isn't
+/// part of the on-disk path.
 fn safe_join(root: &Path, file: &str) -> Result<std::path::PathBuf, CommandError> {
-    let abs = root.join(file);
+    let (path, _) = parse_style_ref(file);
+    let abs = root.join(path);
     let canon_root = root.canonicalize().map_err(CommandError::from)?;
     let canon_file = abs.canonicalize().map_err(CommandError::from)?;
     if !canon_file.starts_with(&canon_root) {
@@ -1344,6 +1374,148 @@ fn safe_join(root: &Path, file: &str) -> Result<std::path::PathBuf, CommandError
         });
     }
     Ok(abs)
+}
+
+// ───────────────────── Embedded `<style>` blocks (Astro) ─────────────────────
+//
+// A "file" the editor writes to is usually a standalone `.css`, but it can also be
+// a `<style>` block embedded in an `.astro` component — addressed as
+// `path/to/Foo.astro?style=N` (the Nth *CSS* block in that file). The CSS engine
+// (index/edit/drift-guard) operates purely on a CSS string, so the only thing that
+// differs is reading the right sub-range out of the host file and splicing the edit
+// back into it. `EditableCss` captures that splice context.
+
+/// Split a `file` identifier into its on-disk path and optional embedded-block index.
+/// `"Foo.astro?style=2"` → `("Foo.astro", Some(2))`; a plain `.css` path → `(path, None)`.
+fn parse_style_ref(file: &str) -> (&str, Option<usize>) {
+    match file.split_once("?style=") {
+        Some((path, idx)) => (path, idx.parse().ok()),
+        None => (file, None),
+    }
+}
+
+/// Byte offset just past a leading Astro frontmatter fence (`---\n … \n---`), so the
+/// `<style>` scan never matches a `<style>` literal sitting inside frontmatter JS.
+fn astro_frontmatter_end(src: &str) -> usize {
+    let Some(rest) = src.strip_prefix("---") else {
+        return 0;
+    };
+    match rest.find("\n---") {
+        // 3 (opening fence) + offset of "\n---" + 4 ("\n---") = just past the close fence.
+        Some(p) => 3 + p + 4,
+        None => 0,
+    }
+}
+
+/// Whether a `<style …>` open tag declares a non-CSS preprocessor (`lang="scss"`,
+/// etc.) — those blocks aren't plain CSS, so the editor leaves them alone.
+fn style_tag_is_non_css(open_tag: &str) -> bool {
+    let t = open_tag.to_ascii_lowercase();
+    ["scss", "sass", "less", "styl", "stylus", "postcss"]
+        .iter()
+        .any(|lang| {
+            t.contains(&format!("lang=\"{lang}\""))
+                || t.contains(&format!("lang='{lang}'"))
+                || t.contains(&format!("lang={lang}"))
+        })
+}
+
+/// The inner byte ranges (between `>` and `</style`) of every plain-CSS `<style>`
+/// block in an Astro file, in document order. Non-CSS (`lang="scss"`) blocks are
+/// skipped, so the Nth entry here is the Nth addressable CSS block (`?style=N`).
+fn astro_style_blocks(src: &str) -> Vec<(usize, usize)> {
+    let lower = src.to_ascii_lowercase(); // ASCII-lowercase preserves byte offsets
+    let mut out = Vec::new();
+    let mut search = astro_frontmatter_end(src);
+    while let Some(rel) = lower[search..].find("<style") {
+        let tag_start = search + rel;
+        let after = tag_start + "<style".len();
+        // Must be a real tag, not a prefix like `<styled-x>`: next char ends the name.
+        let is_tag = match lower[after..].chars().next() {
+            Some('>') | Some('/') => true,
+            Some(c) => c.is_whitespace(),
+            None => false,
+        };
+        if !is_tag {
+            search = after;
+            continue;
+        }
+        let Some(gt) = lower[after..].find('>') else {
+            break;
+        };
+        let open_end = after + gt; // byte index of the open tag's '>'
+        let inner_start = open_end + 1;
+        let Some(close) = lower[inner_start..].find("</style") else {
+            break;
+        };
+        let inner_end = inner_start + close;
+        if !style_tag_is_non_css(&src[tag_start..=open_end]) {
+            out.push((inner_start, inner_end));
+        }
+        search = inner_end + "</style".len();
+    }
+    out
+}
+
+/// A loaded editable CSS source plus how to write it back: either a whole `.css`
+/// file, or a sub-range of an `.astro` host file (the rest preserved verbatim).
+struct EditableCss {
+    abs: std::path::PathBuf,
+    /// The CSS text the engine operates on (whole file, or the block's inner text).
+    css: String,
+    /// Host-file bytes before / after the block (empty for a whole `.css` file).
+    prefix: String,
+    suffix: String,
+    whole_file: bool,
+}
+
+impl EditableCss {
+    /// Splice `new_css` back into the host file and write it (no-op if unchanged).
+    fn write_back(&self, root: &Path, new_css: &str) -> Result<(), CommandError> {
+        if new_css == self.css {
+            return Ok(());
+        }
+        let out = if self.whole_file {
+            new_css.to_string()
+        } else {
+            format!("{}{}{}", self.prefix, new_css, self.suffix)
+        };
+        std::fs::write(&self.abs, out).map_err(CommandError::from)?;
+        invalidate_sheet_cache(root);
+        Ok(())
+    }
+}
+
+/// Load the editable CSS for a `file` identifier — a whole `.css` file, or one
+/// embedded `<style>` block of an `.astro` host — with its write-back splice context.
+fn load_editable_css(root: &Path, file: &str) -> Result<EditableCss, CommandError> {
+    let (_, block) = parse_style_ref(file);
+    let abs = safe_join(root, file)?;
+    let host = std::fs::read_to_string(&abs).map_err(CommandError::from)?;
+    match block {
+        None => Ok(EditableCss {
+            abs,
+            css: host,
+            prefix: String::new(),
+            suffix: String::new(),
+            whole_file: true,
+        }),
+        Some(idx) => {
+            let (s, e) = astro_style_blocks(&host).get(idx).copied().ok_or_else(|| {
+                CommandError::Validation {
+                    field: "file".into(),
+                    reason: "the <style> block no longer exists — reselect the element".into(),
+                }
+            })?;
+            Ok(EditableCss {
+                abs,
+                css: host[s..e].to_string(),
+                prefix: host[..s].to_string(),
+                suffix: host[e..].to_string(),
+                whole_file: false,
+            })
+        }
+    }
 }
 
 // ───────────────────────── Write validation ─────────────────────────
@@ -1458,19 +1630,15 @@ pub fn set_css_declaration(
 ) -> Result<(), CommandError> {
     validate_declaration(&property, value.as_deref())?;
     let root = validate_project_path(&project_path)?;
-    let abs = safe_join(&root, &file)?;
-    let src = std::fs::read_to_string(&abs).map_err(CommandError::from)?;
+    let ec = load_editable_css(&root, &file)?;
     let updated = apply_declaration_to_source(
-        &src,
+        &ec.css,
         &selector,
         breakpoint_min_px,
         &property,
         value.as_deref(),
     )?;
-    if updated != src {
-        std::fs::write(&abs, updated).map_err(CommandError::from)?;
-        invalidate_sheet_cache(&root);
-    }
+    ec.write_back(&root, &updated)?;
     Ok(())
 }
 
@@ -1491,10 +1659,9 @@ pub fn create_css_class(
         validate_declaration(&d.property, Some(&d.value))?;
     }
     let root = validate_project_path(&project_path)?;
-    let abs = safe_join(&root, &file)?;
-    let src = std::fs::read_to_string(&abs).map_err(CommandError::from)?;
+    let ec = load_editable_css(&root, &file)?;
 
-    let already = index_rules(&src).into_iter().any(|r| {
+    let already = index_rules(&ec.css).into_iter().any(|r| {
         selector_has_part(&r.selector, &selector) && media_matches(&r.media, breakpoint_min_px)
     });
     if already {
@@ -1505,7 +1672,7 @@ pub fn create_css_class(
     }
 
     let rule = build_rule_text(&selector, &declarations, breakpoint_min_px);
-    let mut out = src.clone();
+    let mut out = ec.css.clone();
     if !out.is_empty() && !out.ends_with('\n') {
         out.push('\n');
     }
@@ -1514,8 +1681,7 @@ pub fn create_css_class(
     }
     out.push_str(&rule);
     out.push('\n');
-    std::fs::write(&abs, out).map_err(CommandError::from)?;
-    invalidate_sheet_cache(&root);
+    ec.write_back(&root, &out)?;
     Ok(())
 }
 
@@ -1723,13 +1889,10 @@ pub fn apply_css_rule_text(
         });
     }
     let root = validate_project_path(&project_path)?;
-    let abs = safe_join(&root, &file)?;
-    let src = std::fs::read_to_string(&abs).map_err(CommandError::from)?;
-    let updated = apply_rule_text_to_source(&src, &selector, &media_text, &old_inner, &new_inner)?;
-    if updated != src {
-        std::fs::write(&abs, updated).map_err(CommandError::from)?;
-        invalidate_sheet_cache(&root);
-    }
+    let ec = load_editable_css(&root, &file)?;
+    let updated =
+        apply_rule_text_to_source(&ec.css, &selector, &media_text, &old_inner, &new_inner)?;
+    ec.write_back(&root, &updated)?;
     Ok(())
 }
 
@@ -1745,13 +1908,9 @@ pub fn delete_css_rule(
     old_inner: String,
 ) -> Result<(), CommandError> {
     let root = validate_project_path(&project_path)?;
-    let abs = safe_join(&root, &file)?;
-    let src = std::fs::read_to_string(&abs).map_err(CommandError::from)?;
-    let updated = remove_rule_from_source(&src, &selector, &media_text, &old_inner)?;
-    if updated != src {
-        std::fs::write(&abs, updated).map_err(CommandError::from)?;
-        invalidate_sheet_cache(&root);
-    }
+    let ec = load_editable_css(&root, &file)?;
+    let updated = remove_rule_from_source(&ec.css, &selector, &media_text, &old_inner)?;
+    ec.write_back(&root, &updated)?;
     Ok(())
 }
 
@@ -1768,13 +1927,9 @@ pub fn wrap_css_rule(
     old_inner: String,
 ) -> Result<(), CommandError> {
     let root = validate_project_path(&project_path)?;
-    let abs = safe_join(&root, &file)?;
-    let src = std::fs::read_to_string(&abs).map_err(CommandError::from)?;
-    let updated = wrap_rule_in_source(&src, &selector, &media_text, &at_prelude, &old_inner)?;
-    if updated != src {
-        std::fs::write(&abs, updated).map_err(CommandError::from)?;
-        invalidate_sheet_cache(&root);
-    }
+    let ec = load_editable_css(&root, &file)?;
+    let updated = wrap_rule_in_source(&ec.css, &selector, &media_text, &at_prelude, &old_inner)?;
+    ec.write_back(&root, &updated)?;
     Ok(())
 }
 
@@ -1791,14 +1946,10 @@ pub fn rename_css_selector(
     new_selector: String,
 ) -> Result<(), CommandError> {
     let root = validate_project_path(&project_path)?;
-    let abs = safe_join(&root, &file)?;
-    let src = std::fs::read_to_string(&abs).map_err(CommandError::from)?;
+    let ec = load_editable_css(&root, &file)?;
     let updated =
-        rename_selector_in_source(&src, &selector, &media_text, &old_inner, &new_selector)?;
-    if updated != src {
-        std::fs::write(&abs, updated).map_err(CommandError::from)?;
-        invalidate_sheet_cache(&root);
-    }
+        rename_selector_in_source(&ec.css, &selector, &media_text, &old_inner, &new_selector)?;
+    ec.write_back(&root, &updated)?;
     Ok(())
 }
 
@@ -1815,13 +1966,10 @@ pub fn rename_css_at_rule(
     new_media: String,
 ) -> Result<(), CommandError> {
     let root = validate_project_path(&project_path)?;
-    let abs = safe_join(&root, &file)?;
-    let src = std::fs::read_to_string(&abs).map_err(CommandError::from)?;
-    let updated = rename_at_rule_in_source(&src, &selector, &media_text, &old_inner, &new_media)?;
-    if updated != src {
-        std::fs::write(&abs, updated).map_err(CommandError::from)?;
-        invalidate_sheet_cache(&root);
-    }
+    let ec = load_editable_css(&root, &file)?;
+    let updated =
+        rename_at_rule_in_source(&ec.css, &selector, &media_text, &old_inner, &new_media)?;
+    ec.write_back(&root, &updated)?;
     Ok(())
 }
 
@@ -2778,5 +2926,143 @@ mod tests {
             apply_rule_text_to_source(dup, ".a", &None, " color: red; ", " color: green; ")
                 .is_err()
         );
+    }
+
+    // ───────────── Embedded `<style>` blocks (Astro) ─────────────
+
+    #[test]
+    fn parse_style_ref_splits_path_and_block_index() {
+        assert_eq!(parse_style_ref("src/styles.css"), ("src/styles.css", None));
+        assert_eq!(
+            parse_style_ref("src/Foo.astro?style=0"),
+            ("src/Foo.astro", Some(0))
+        );
+        assert_eq!(
+            parse_style_ref("a/b/Foo.astro?style=3"),
+            ("a/b/Foo.astro", Some(3))
+        );
+    }
+
+    #[test]
+    fn rel_basename_drops_dir_and_style_query() {
+        assert_eq!(
+            rel_basename("src/components/Foo.astro?style=0"),
+            "Foo.astro"
+        );
+        assert_eq!(rel_basename("styles/main.css"), "main.css");
+    }
+
+    #[test]
+    fn href_basename_matches_vite_dev_id_of_an_astro_block() {
+        // The Vite dev-id we now pass as `href` for injected <style> tags.
+        let dev_id =
+            "/@fs/Users/me/app/src/components/Hero.astro?astro&type=style&index=0&lang.css";
+        assert_eq!(href_basename(dev_id).as_deref(), Some("Hero.astro"));
+    }
+
+    #[test]
+    fn astro_style_blocks_finds_inner_ranges() {
+        let src = "---\nconst x = 1;\n---\n<h1>hi</h1>\n<style>\n.a { color: red; }\n</style>\n";
+        let blocks = astro_style_blocks(src);
+        assert_eq!(blocks.len(), 1);
+        let (s, e) = blocks[0];
+        assert_eq!(&src[s..e], "\n.a { color: red; }\n");
+    }
+
+    #[test]
+    fn astro_style_blocks_handles_multiple_and_attributes() {
+        let src = "<style>.a{}</style>\n<style is:global>.b{}</style>";
+        let blocks = astro_style_blocks(src);
+        assert_eq!(blocks.len(), 2);
+        assert_eq!(&src[blocks[0].0..blocks[0].1], ".a{}");
+        assert_eq!(&src[blocks[1].0..blocks[1].1], ".b{}");
+    }
+
+    #[test]
+    fn astro_style_blocks_skips_non_css_lang() {
+        let src = "<style lang=\"scss\">.a{ .b{} }</style>\n<style>.c{}</style>";
+        let blocks = astro_style_blocks(src);
+        // Only the plain-CSS block is addressable; the scss one is skipped, so the
+        // plain block is index 0 (matching `discover_stylesheets`' enumerate order).
+        assert_eq!(blocks.len(), 1);
+        assert_eq!(&src[blocks[0].0..blocks[0].1], ".c{}");
+    }
+
+    #[test]
+    fn astro_style_blocks_ignores_style_inside_frontmatter() {
+        let src = "---\nconst s = \"<style>fake</style>\";\n---\n<style>.real{}</style>";
+        let blocks = astro_style_blocks(src);
+        assert_eq!(blocks.len(), 1);
+        assert_eq!(&src[blocks[0].0..blocks[0].1], ".real{}");
+    }
+
+    #[test]
+    fn discover_surfaces_astro_blocks_as_virtual_sheets() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let root = dir.path();
+        std::fs::write(root.join("a.css"), ".g { color: red; }").unwrap();
+        std::fs::write(
+            root.join("Card.astro"),
+            "---\n---\n<div class=\"card\"></div>\n<style>\n.card { padding: 4px; }\n</style>\n",
+        )
+        .unwrap();
+        let sheets = discover_stylesheets(root);
+        let rels: std::collections::BTreeSet<_> = sheets.iter().map(|(r, _)| r.as_str()).collect();
+        assert!(rels.contains("a.css"));
+        assert!(rels.contains("Card.astro?style=0"));
+    }
+
+    #[test]
+    fn edit_round_trips_into_an_astro_style_block() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let root = dir.path();
+        let before = "---\nconst x = 1;\n---\n<div class=\"card\"></div>\n\
+                      <style>\n.card {\n  padding: 4px;\n}\n</style>\n<p>after</p>\n";
+        std::fs::write(root.join("Card.astro"), before).unwrap();
+
+        // The block's inner text is what the editor seeds `old_inner` from.
+        let ec = load_editable_css(root, "Card.astro?style=0").unwrap();
+        assert!(ec.css.contains(".card"));
+        assert!(!ec.whole_file);
+        let old_inner = "\n  padding: 4px;\n";
+        let updated =
+            apply_rule_text_to_source(&ec.css, ".card", &None, old_inner, "\n  padding: 8px;\n")
+                .unwrap();
+        ec.write_back(root, &updated).unwrap();
+
+        let after = std::fs::read_to_string(root.join("Card.astro")).unwrap();
+        // The frontmatter, markup, and trailing `<p>` are untouched; only the rule changed.
+        assert!(after.contains("const x = 1;"));
+        assert!(after.contains("<p>after</p>"));
+        assert!(after.contains("padding: 8px;"));
+        assert!(!after.contains("padding: 4px;"));
+    }
+
+    #[test]
+    fn discovery_prunes_build_output_and_dependencies() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let root = dir.path();
+        std::fs::write(root.join("app.css"), "* { margin: 0; }").unwrap();
+        // A built bundle (no .git/.gitignore present) must NOT be discovered, or every
+        // src selector would also match the bundle copy → "multiple files" → read-only.
+        std::fs::create_dir_all(root.join("dist/_astro")).unwrap();
+        std::fs::write(root.join("dist/_astro/index.abc.css"), "* { margin: 0; }").unwrap();
+        std::fs::create_dir_all(root.join("node_modules/pkg")).unwrap();
+        std::fs::write(root.join("node_modules/pkg/reset.css"), "* { margin: 0; }").unwrap();
+
+        let rels: Vec<_> = discover_stylesheets(root)
+            .into_iter()
+            .map(|(r, _)| r)
+            .collect();
+        assert_eq!(rels, vec!["app.css".to_string()]);
+    }
+
+    #[test]
+    fn write_back_to_a_missing_block_is_rejected() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let root = dir.path();
+        std::fs::write(root.join("Card.astro"), "<div></div>\n").unwrap();
+        // No <style> block → index 0 doesn't exist.
+        assert!(load_editable_css(root, "Card.astro?style=0").is_err());
     }
 }

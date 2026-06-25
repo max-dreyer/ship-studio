@@ -96,6 +96,13 @@ interface ReadonlyCard extends CommonHeader {
 type Props = EditableCard | ReadonlyCard;
 
 const basename = (path: string) => path.split('/').pop() ?? path;
+/** A readable file-chip label. Embedded `<style>` blocks are addressed as
+ *  `Foo.astro?style=0`; show them as `Foo.astro › style` rather than the raw query. */
+const fileLabel = (path: string) => {
+  const [file, query] = path.split('?style=');
+  const name = basename(file);
+  return query ? `${name} › style` : name;
+};
 
 /** A top-level rule's selector as ONE intelligent field — just like writing real
  *  CSS. Type a selector (class names autocomplete from the project) to rename the
@@ -676,7 +683,7 @@ export function CascadeRuleCard(props: Props) {
             {props.file && (
               <span className="ss-card__src-chip" title={`${props.file}:${props.line}`}>
                 <FileIcon size={11} />
-                {basename(props.file)}
+                {fileLabel(props.file)}
               </span>
             )}
           </footer>

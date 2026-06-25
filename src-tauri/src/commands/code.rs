@@ -35,7 +35,7 @@ const MAX_ENTRIES: usize = 10_000;
 const MAX_FILE_SIZE: u64 = 500 * 1024;
 
 /// Directories to always skip, even if not in .gitignore.
-const SKIP_DIRS: &[&str] = &[
+pub(crate) const SKIP_DIRS: &[&str] = &[
     ".git",
     "node_modules",
     ".shipstudio",
