@@ -2370,6 +2370,50 @@ mod tests {
     }
 
     #[test]
+    fn edits_a_rule_inside_container_query() {
+        let src = "@container (min-width: 400px) {\n  .card {\n    gap: 1rem;\n  }\n}\n";
+        let out = apply_rule_text_to_source(
+            src,
+            ".card",
+            &None,
+            "\n    gap: 1rem;\n  ",
+            "\n    gap: 2rem;\n  ",
+        )
+        .unwrap();
+        assert_eq!(
+            out,
+            "@container (min-width: 400px) {\n  .card {\n    gap: 2rem;\n  }\n}\n"
+        );
+    }
+
+    #[test]
+    fn edits_the_first_rule_after_a_charset_statement() {
+        let src = "@charset \"utf-8\";\n.real {\n  color: red;\n}\n";
+        let out = apply_rule_text_to_source(
+            src,
+            ".real",
+            &None,
+            "\n  color: red;\n",
+            "\n  color: blue;\n",
+        )
+        .unwrap();
+        assert_eq!(out, "@charset \"utf-8\";\n.real {\n  color: blue;\n}\n");
+    }
+
+    #[test]
+    fn deletes_a_rule_inside_a_layer() {
+        let src = "@layer base {\n  .a { color: red; }\n  .b { color: blue; }\n}\n";
+        let out = remove_rule_from_source(src, ".a", &None, " color: red; ").unwrap();
+        // .a is gone, .b remains, the layer stays intact.
+        assert!(!out.contains(".a {"));
+        assert!(out.contains(".b { color: blue; }"));
+        assert!(out.contains("@layer base {"));
+        // And the file is still valid (balanced) and re-indexable.
+        assert!(braces_balanced(&out));
+        assert_eq!(index_rules(&out).len(), 1);
+    }
+
+    #[test]
     fn writes_nested_css_into_a_rule_body() {
         // A rule with nested children: index_rules still finds the OUTER rule's full
         // span (its nested blocks are balanced), so a nested edit round-trips.
