@@ -775,8 +775,12 @@ fn index_rules(css: &str) -> Vec<RuleSpan> {
     enum Frame {
         /// `@media` block — condition string + byte range of the condition text.
         Media(String, usize, usize),
-        /// Any at-rule we don't index into (keyframes, font-face, supports) or a
-        /// nested/malformed block.
+        /// A grouping at-rule that holds ordinary style rules (`@layer`, `@supports`,
+        /// `@container`): we descend and index the rules inside it so they stay
+        /// editable. (Its condition isn't surfaced as a media context yet.)
+        Transparent,
+        /// An at-rule whose inner blocks are NOT style rules (`@keyframes` stops,
+        /// `@font-face`/`@page` descriptors), or a malformed block — not indexed.
         Other,
         /// A style rule; payload is its index in `rules`.
         Rule(usize),
@@ -814,6 +818,16 @@ fn index_rules(css: &str) -> Vec<RuleSpan> {
             continue;
         }
 
+        // A `;` ends a statement (`@import …;`, `@charset …;`, `@layer a, b;`) or a
+        // declaration. Reset the prelude marker so a completed statement never leaks
+        // into the next rule's selector (which previously made the first rule after an
+        // `@import`/`@charset`/`@layer` statement unindexed → read-only).
+        if c == b';' {
+            i += 1;
+            prelude_start = i;
+            continue;
+        }
+
         if c == b'{' {
             let prelude_clean = strip_css_comments(&css[prelude_start..i]);
             let prelude = prelude_clean.trim();
@@ -823,7 +837,12 @@ fn index_rules(css: &str) -> Vec<RuleSpan> {
             if inside_rule || inside_other {
                 stack.push(Frame::Other);
             } else if let Some(rest) = prelude.strip_prefix('@') {
-                if rest.to_ascii_lowercase().starts_with("media") {
+                let name: String = rest
+                    .chars()
+                    .take_while(|ch| ch.is_ascii_alphanumeric() || *ch == '-')
+                    .collect::<String>()
+                    .to_ascii_lowercase();
+                if name == "media" {
                     let media_prelude = rest["media".len()..].trim().to_string();
                     // Byte range of the condition text within the original source, so
                     // the at-rule can be edited in place.
@@ -847,6 +866,10 @@ fn index_rules(css: &str) -> Vec<RuleSpan> {
                         prelude_start + cs,
                         prelude_start + ce,
                     ));
+                } else if name == "layer" || name == "supports" || name == "container" {
+                    // Grouping at-rules that hold ordinary style rules — descend so
+                    // their contents are editable (keyframes/font-face/page do NOT).
+                    stack.push(Frame::Transparent);
                 } else {
                     stack.push(Frame::Other);
                 }
@@ -1877,6 +1900,52 @@ mod tests {
         // Only `.real` is a style rule; the keyframe stops are not.
         assert_eq!(rules.len(), 1);
         assert_eq!(rules[0].selector, ".real");
+    }
+
+    #[test]
+    fn indexes_rules_after_statements_and_inside_grouping_at_rules() {
+        // The first rule after a `;`-terminated statement must be indexed (it used to
+        // be swallowed into the statement's prelude → read-only).
+        for css in [
+            "@import \"reset.css\";\n.real { color: red; }",
+            "@charset \"utf-8\";\n.real { color: red; }",
+            "@layer a, b, c;\n.real { color: red; }",
+            "@import url(data:text/css;base64,abc);\n.real { color: red; }",
+        ] {
+            let rules = index_rules(css);
+            assert_eq!(rules.len(), 1, "css: {css:?}");
+            assert_eq!(rules[0].selector, ".real", "css: {css:?}");
+            assert!(rules[0].media.is_none());
+        }
+
+        // Rules inside @layer / @supports / @container are now editable.
+        for css in [
+            "@layer base {\n  .real { color: red; }\n}",
+            "@supports (display: grid) {\n  .real { color: red; }\n}",
+            "@container (min-width: 400px) {\n  .real { gap: 1rem; }\n}",
+        ] {
+            let rules = index_rules(css);
+            assert_eq!(rules.len(), 1, "css: {css:?}");
+            assert_eq!(rules[0].selector, ".real", "css: {css:?}");
+        }
+    }
+
+    #[test]
+    fn still_skips_keyframes_and_font_face_inner_blocks() {
+        let css = "@keyframes spin { 0% { opacity: 0; } 100% { opacity: 1; } }\n\
+                   @font-face { font-family: X; }\n.real { color: red; }";
+        let rules = index_rules(css);
+        assert_eq!(rules.len(), 1);
+        assert_eq!(rules[0].selector, ".real");
+    }
+
+    #[test]
+    fn nested_media_inside_layer_keeps_the_media_condition() {
+        let css = "@layer base {\n  @media (min-width: 768px) {\n    .real { color: red; }\n  }\n}";
+        let rules = index_rules(css);
+        assert_eq!(rules.len(), 1);
+        assert_eq!(rules[0].selector, ".real");
+        assert_eq!(rules[0].media.as_deref(), Some("(min-width: 768px)"));
     }
 
     #[test]
