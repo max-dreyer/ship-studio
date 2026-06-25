@@ -1047,3 +1047,39 @@
 .ss-settings__class-remove:hover {
   background: none;
 }
+
+/* ── Ghost selectors (empty-state quick-start cards) ── */
+.ss-cascade-ghost-hint {
+  margin: 0 var(--spacing-xs) var(--spacing-xs);
+  color: var(--text-muted);
+  font-size: var(--font-size-xs);
+}
+.ss-cascade-ghost {
+  all: unset;
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-sm);
+  padding: var(--spacing-sm);
+  border: 1px dashed var(--border);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition:
+    border-color var(--transition),
+    background var(--transition);
+}
+.ss-cascade-ghost:hover {
+  border-color: var(--border-hover);
+  background: var(--tint-subtle);
+}
+.ss-cascade-ghost__add {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px; /* css-ok: icon + label */
+  margin-left: auto;
+  color: var(--text-muted);
+  font-size: var(--font-size-sm);
+}
+.ss-cascade-ghost:hover .ss-cascade-ghost__add {
+  color: var(--text-secondary);
+}

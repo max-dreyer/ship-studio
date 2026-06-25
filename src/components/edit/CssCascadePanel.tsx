@@ -259,7 +259,10 @@ export function CssCascadePanel({
                     <Spinner size="sm" />
                   </div>
                 ) : rows.length === 0 ? (
-                  <p className="ss-cascade-empty">No CSS rules match this element.</p>
+                  <GhostSelectors
+                    selectors={[...classes.map((c) => `.${c}`), selection.signature.tagName]}
+                    onPick={onAddSelector}
+                  />
                 ) : (
                   <div className="ss-cascade-cards">
                     {rows.map((row) => {
@@ -321,6 +324,38 @@ export function CssCascadePanel({
           </>
         )}
       </div>
+    </div>
+  );
+}
+
+/** Empty state for an element with no matching rules: instead of a dead-end message,
+ *  surface the element's own selectors (its classes, then its tag) as one-click cards
+ *  that create an editable rule to start styling. */
+function GhostSelectors({
+  selectors,
+  onPick,
+}: {
+  selectors: string[];
+  onPick: (selector: string) => void;
+}) {
+  const unique = [...new Set(selectors.filter(Boolean))];
+  return (
+    <div className="ss-cascade-cards">
+      <p className="ss-cascade-ghost-hint">No rules yet — start styling one of these:</p>
+      {unique.map((sel) => (
+        <button
+          key={sel}
+          type="button"
+          className="ss-cascade-ghost"
+          title={`Create a rule for ${sel}`}
+          onClick={() => onPick(sel)}
+        >
+          <code className="ss-card__selector-chip">{sel}</code>
+          <span className="ss-cascade-ghost__add">
+            <PlusIcon size={11} /> Add
+          </span>
+        </button>
+      ))}
     </div>
   );
 }
