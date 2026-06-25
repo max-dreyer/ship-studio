@@ -1,39 +1,29 @@
 /**
- * The cascade card's single "+ Add" menu — ONE entry point for adding anything to a
- * rule, grouped by author intent so there's no "add property vs add structure"
- * confusion:
+ * The cascade card's "+ Add" menu — adds CONTENT *inside* a rule (the selector's
+ * identity and scope live elsewhere, on the selector itself). Two groups:
  *
- *   PROPERTY              → a declaration (`color`, `display`, …) with suggestions
- *   ALSO STYLE (nested)   → a related rule (`&:hover`, `& .child`, `&:has()`)
- *   ONLY WHEN (condition) → make it conditional (`@media`, `@container`, `@supports`)
+ *   PROPERTY            → a declaration (`color`, `display`, …) with suggestions
+ *   ALSO STYLE (nested) → a nested rule (`&:hover`, `& .child`, `&:has()`, or any
+ *                         selector / nested `@`-rule you type)
  *
- * What you type routes intent: a word filters properties (+ structure by keyword);
- * leading `@` means a condition; a leading selector char (`&`, `:`, `.`, `>`…) means
- * a nested rule. Free text is always honored and normalized. Portaled + flip-up
- * positioned so it's never clipped by the scrolling panel.
+ * What you type routes intent: a word filters properties; a leading selector char
+ * (`&`, `:`, `.`, `>`…) or `@` means a nested rule. Free text is normalized and
+ * honored. Portaled + flip-up positioned so it's never clipped by the panel.
  */
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { PlusIcon } from '../icons/utility';
 import { suggestProperties } from '../../lib/cssProperties';
-import {
-  NEST_ITEMS,
-  WRAP_ITEMS,
-  searchStructures,
-  classifyFreeText,
-} from '../../lib/cssStructures';
+import { NEST_ITEMS, searchStructures, classifyFreeText } from '../../lib/cssStructures';
 
 interface Props {
   onAddProperty: (prop: string) => void;
-  /** Add a nested rule with this selector/prelude (always available). */
+  /** Add a nested rule with this selector/prelude. */
   onNest: (selector: string) => void;
-  /** Wrap the rule in this at-rule prelude. Absent on nested rules — there a
-   *  condition is added by nesting the at-rule instead. */
-  onWrap?: (prelude: string) => void;
 }
 
-type RowKind = 'prop' | 'nest' | 'wrap';
+type RowKind = 'prop' | 'nest';
 interface MenuRow {
   key: string;
   label: string;
@@ -51,7 +41,7 @@ const MENU_WIDTH = 288;
 const SEL_START = /^[&:>+~.#[*]/;
 const LOOKS_PROP = /^[a-zA-Z-]+$/;
 
-export function AddMenu({ onAddProperty, onNest, onWrap }: Props) {
+export function AddMenu({ onAddProperty, onNest }: Props) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState('');
   const [active, setActive] = useState(0);
@@ -68,8 +58,7 @@ export function AddMenu({ onAddProperty, onNest, onWrap }: Props) {
   };
   const applyRow = (r: MenuRow) => {
     if (r.kind === 'prop') onAddProperty(r.insert);
-    else if (r.kind === 'wrap' && onWrap) onWrap(r.insert);
-    else onNest(r.insert); // nest, or a nested at-rule on cards without onWrap
+    else onNest(r.insert); // a nested selector or nested at-rule
     close();
   };
 
@@ -96,15 +85,16 @@ export function AddMenu({ onAddProperty, onNest, onWrap }: Props) {
       if (rows.length) out.push({ title: 'Property', rows });
     }
 
-    // ALSO STYLE (nested) — catalog matches + a free-typed selector.
-    if (!startsAt) {
+    // ALSO STYLE (nested) — curated selectors + any free-typed selector or nested
+    // `@`-rule. (Conditions that scope the whole rule live on the selector, not here.)
+    {
       const rows: MenuRow[] = [];
-      const items = searchStructures(NEST_ITEMS, typed);
-      if (startsSel) {
+      const items = startsAt ? [] : searchStructures(NEST_ITEMS, typed);
+      if (startsSel || startsAt) {
         const free = classifyFreeText(typed);
-        if (free && free.kind === 'nest' && !items.some((i) => i.insert === free.insert)) {
+        if (free && !items.some((i) => i.insert === free.insert)) {
           rows.push({
-            key: `fn:${free.insert}`,
+            key: `f:${free.insert}`,
             label: free.insert,
             hint: 'new nested rule',
             kind: 'nest',
@@ -121,30 +111,6 @@ export function AddMenu({ onAddProperty, onNest, onWrap }: Props) {
           insert: it.insert,
         });
       if (rows.length) out.push({ title: 'Also style', rows });
-    }
-
-    // ONLY WHEN (condition) — catalog matches + a free-typed at-rule.
-    if (!startsSel) {
-      const rows: MenuRow[] = [];
-      const items = searchStructures(WRAP_ITEMS, typed);
-      if (startsAt && typed.length > 1 && !items.some((i) => i.insert === typed)) {
-        rows.push({
-          key: `fw:${typed}`,
-          label: typed,
-          hint: 'new condition',
-          kind: 'wrap',
-          insert: typed,
-        });
-      }
-      for (const it of items)
-        rows.push({
-          key: `w:${it.insert}`,
-          label: it.label,
-          hint: it.hint,
-          kind: 'wrap',
-          insert: it.insert,
-        });
-      if (rows.length) out.push({ title: 'Only when', rows });
     }
 
     return out;
@@ -219,7 +185,7 @@ export function AddMenu({ onAddProperty, onNest, onWrap }: Props) {
             value={query}
             spellCheck={false}
             autoComplete="off"
-            placeholder="Add a property, &:hover, @media…"
+            placeholder="Add a property or nested rule (&:hover, & .child)…"
             onChange={(e) => {
               setQuery(e.target.value);
               setActive(0);

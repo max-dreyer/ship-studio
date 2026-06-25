@@ -323,9 +323,15 @@
   flex: 1 1 auto;
   min-width: 0;
 }
-.ss-card__chip-edit .ss-card__chip--media-input {
+.ss-card__chip-edit .ss-card__chip--media-input,
+.ss-card__chip-edit .ss-card__selector-chip--input {
   max-width: none;
   width: 100%;
+}
+/* The selector field takes the lead role in the header while editing. */
+.ss-card__selector-edit {
+  flex: 1 1 auto;
+  min-width: 0;
 }
 .ss-card__chip-menu {
   position: absolute;
@@ -333,6 +339,11 @@
   right: 0;
   min-width: 200px;
   z-index: var(--z-dropdown);
+}
+/* Selector autocomplete anchors to the left (the selector sits on the left). */
+.ss-card__chip-menu--left {
+  right: auto;
+  left: 0;
 }
 .ss-card__chip svg {
   flex: 0 0 auto;

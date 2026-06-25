@@ -12,13 +12,14 @@
  * controlled — it emits a new body via `onChange`.
  */
 
-import { useId, useState } from 'react';
+import { useState } from 'react';
 import { ChevronIcon } from '../icons/common';
 import { LayersIcon } from '../icons/utility';
 import { TrashIcon, FileIcon } from '../icons/editor';
 import { DeclarationRow } from './DeclarationRow';
 import { AddMenu } from './AddMenu';
 import { suggestMediaConditions } from '../../lib/cssProperties';
+import { WRAP_ITEMS, searchStructures } from '../../lib/cssStructures';
 import {
   declarations,
   nestedRules,
@@ -77,35 +78,42 @@ type Props = EditableCard | ReadonlyCard;
 
 const basename = (path: string) => path.split('/').pop() ?? path;
 
-/** A top-level rule's selector: a chip you click to edit into ANY selector, with a
- *  native datalist of the project's class names. Commits on Enter/blur. */
+/** A top-level rule's selector as ONE intelligent field — just like writing real
+ *  CSS. Type a selector (class names autocomplete from the project) to rename the
+ *  rule; type `@…` and it suggests conditions (`@media`, `@container`, `@supports`)
+ *  and wraps the rule to scope it. No separate "when" box — one field does both. */
 function SelectorChip({
   selector,
   suggestions,
   onCommit,
+  onWrap,
 }: {
   selector: string;
   suggestions: string[];
   onCommit: (newSelector: string) => void;
+  /** Wrap the rule in a condition when the user types an `@`-rule. */
+  onWrap?: (prelude: string) => void;
 }) {
   const [editing, setEditing] = useState(false);
   const [text, setText] = useState(selector);
-  const listId = useId();
+  const [active, setActive] = useState(0);
 
   if (!editing) {
     return (
       <code
         className="ss-card__selector-chip ss-card__selector-chip--editable"
-        title="Click to edit selector"
+        title="Click to edit — type a selector, or @media (…) to scope this rule"
         role="button"
         tabIndex={0}
         onClick={() => {
           setText(selector);
+          setActive(0);
           setEditing(true);
         }}
         onKeyDown={(e) => {
           if (e.key === 'Enter') {
             setText(selector);
+            setActive(0);
             setEditing(true);
           }
         }}
@@ -115,37 +123,91 @@ function SelectorChip({
     );
   }
 
-  const commit = () => {
-    const v = text.trim();
-    if (v && v !== selector) onCommit(v);
+  const typed = text.trim();
+  const isCondition = typed.startsWith('@');
+  // Typing `@…` switches the field into condition mode (wrap the rule); otherwise
+  // it autocompletes the project's class names (rename the rule).
+  const matches: { label: string; value: string; hint?: string }[] = isCondition
+    ? [
+        ...(typed.length > 1 && !WRAP_ITEMS.some((w) => w.insert === typed)
+          ? [{ label: typed, value: typed, hint: 'new condition' }]
+          : []),
+        ...searchStructures(WRAP_ITEMS, typed).map((w) => ({
+          label: w.label,
+          value: w.insert,
+          hint: w.hint,
+        })),
+      ]
+    : (typed
+        ? suggestions.filter((s) => s.toLowerCase().includes(typed.toLowerCase()))
+        : suggestions
+      )
+        .slice(0, 8)
+        .map((s) => ({ label: s, value: s }));
+
+  const commit = (value: string) => {
+    const v = value.trim();
+    if (!v) {
+      setEditing(false);
+      return;
+    }
+    if (v.startsWith('@'))
+      onWrap?.(v); // scope the rule in a condition
+    else if (v !== selector) onCommit(v); // rename the selector
     setEditing(false);
   };
+
   return (
-    <>
+    <span className="ss-card__chip-edit ss-card__selector-edit">
       <input
         className="ss-card__selector-chip ss-card__selector-chip--input"
         autoFocus
         value={text}
-        list={listId}
         spellCheck={false}
         autoComplete="off"
         aria-label="Rule selector"
-        onChange={(e) => setText(e.target.value)}
+        placeholder="selector, or @media (…) to scope it"
+        onChange={(e) => {
+          setText(e.target.value);
+          setActive(0);
+        }}
         onKeyDown={(e) => {
-          if (e.key === 'Enter') commit();
-          else if (e.key === 'Escape') {
+          if (e.key === 'Enter') {
+            e.preventDefault();
+            commit(matches[active]?.value ?? text);
+          } else if (e.key === 'ArrowDown') {
+            e.preventDefault();
+            setActive((a) => Math.min(a + 1, matches.length - 1));
+          } else if (e.key === 'ArrowUp') {
+            e.preventDefault();
+            setActive((a) => Math.max(a - 1, 0));
+          } else if (e.key === 'Escape') {
+            e.preventDefault();
             setText(selector);
             setEditing(false);
           }
         }}
-        onBlur={commit}
+        onBlur={() => setEditing(false)}
       />
-      <datalist id={listId}>
-        {suggestions.map((s) => (
-          <option key={s} value={s} />
-        ))}
-      </datalist>
-    </>
+      {matches.length > 0 && (
+        <span className="ss-add-menu ss-card__chip-menu ss-card__chip-menu--left">
+          <span className="ss-add-menu__list">
+            {matches.map((m, i) => (
+              <button
+                key={m.value}
+                type="button"
+                className={`ss-add-menu__item${active === i ? ' is-active' : ''}`}
+                onMouseDown={(e) => e.preventDefault()}
+                onClick={() => commit(m.value)}
+              >
+                <code className="ss-add-menu__label">{m.label}</code>
+                {m.hint && <span className="ss-add-menu__hint">{m.hint}</span>}
+              </button>
+            ))}
+          </span>
+        </span>
+      )}
+    </span>
   );
 }
 
@@ -298,11 +360,12 @@ export function CascadeRuleCard(props: Props) {
           aria-label="Nested selector"
           onChange={(e) => props.onSelectorChange?.(e.target.value)}
         />
-      ) : editable && props.onRename ? (
+      ) : props.editable && props.onRename ? (
         <SelectorChip
           selector={props.selector}
           suggestions={props.selectorSuggestions ?? []}
           onCommit={props.onRename}
+          onWrap={props.onWrap}
         />
       ) : (
         <code className="ss-card__selector-chip" title={props.selector}>
@@ -364,7 +427,7 @@ export function CascadeRuleCard(props: Props) {
     );
   }
 
-  const { body, onChange, overridden, onWrap } = props;
+  const { body, onChange, overridden } = props;
   const decls = declarations(body);
   const nested = nestedRules(body);
 
@@ -417,7 +480,6 @@ export function CascadeRuleCard(props: Props) {
                 onChange(addDeclaration(body, { prop, value: '', important: false }))
               }
               onNest={(sel) => onChange(addNestedRule(body, sel))}
-              onWrap={onWrap}
             />
             {props.file && (
               <span className="ss-card__src-chip" title={`${props.file}:${props.line}`}>
