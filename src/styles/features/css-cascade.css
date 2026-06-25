@@ -409,10 +409,15 @@
 .ss-add-menu__search::placeholder {
   color: var(--text-muted);
 }
-/* Plain block flow — block-level children (the items below are display:flex, which
-   is block-level) stack vertically, full stop. No flex-direction/wrap quirks. */
+/* A single-column grid: `grid-template-columns: 1fr` defines exactly ONE column
+   track and `grid-auto-flow: row` stacks items into it — there is no mechanism for
+   a second column (unlike flex-column, which wraps into columns at a height limit). */
 .ss-add-menu__list {
-  display: block;
+  display: grid;
+  grid-template-columns: 1fr;
+  grid-auto-flow: row;
+  align-content: start;
+  gap: 1px; /* css-ok: menu row gap */
   overflow-y: auto;
   padding: var(--spacing-xs);
   scrollbar-width: thin;
