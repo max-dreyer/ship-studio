@@ -496,15 +496,42 @@ export function useCssCascadeEditor({ iframeRef, projectPath, enabled, onToast }
   /** Create a brand-new rule for `selector` and add it as an editable card you can
    *  style immediately (optimistic — the real cascade refreshes on HMR/reselect). */
   const addSelector = useCallback(
-    async (selector: string) => {
-      const sel = selector.trim();
-      if (!sel) return;
+    async (input: string) => {
+      const raw = input.trim();
+      if (!raw) return;
 
-      // Already shown as a base rule? Don't duplicate or error — it's right there.
-      const alreadyShown = [...rowByKeyRef.current.values()].some(
-        (r) => r.editable && r.selector === sel && !r.mediaText
-      );
-      if (alreadyShown) return;
+      // A condition (`@media (…)`) typed here isn't a selector — create a new rule for
+      // the element's PRIMARY selector scoped to that breakpoint (base styles stay; the
+      // condition overrides). Only `@media` is offered here: index_rules tracks `@media`
+      // context (so the conditional rule stays locatable on save), whereas a rule inside
+      // `@container`/`@supports` would collide with the base on save.
+      const isCondition = raw.startsWith('@');
+      let sel = raw;
+      let atPrelude: string | null = null;
+      let condMediaText: string | null = null;
+      let condMinPx: number | null = null;
+      if (isCondition) {
+        const sig = lastSignatureRef.current;
+        const firstClass = sig?.className.split(/\s+/).filter(Boolean)[0];
+        const primary = firstClass ? `.${firstClass}` : (sig?.tagName ?? null);
+        if (!primary) {
+          onToast('Select an element first to add a conditional rule.', 'error');
+          return;
+        }
+        sel = primary;
+        atPrelude = raw;
+        condMediaText = raw.toLowerCase().startsWith('@media')
+          ? raw.slice('@media'.length).trim()
+          : null;
+        const min = /min-width\s*:\s*([\d.]+)px/i.exec(raw);
+        condMinPx = min ? Math.round(parseFloat(min[1])) : null;
+      } else {
+        // Already shown as a base rule? Don't duplicate or error — it's right there.
+        const alreadyShown = [...rowByKeyRef.current.values()].some(
+          (r) => r.editable && r.selector === sel && !r.mediaText
+        );
+        if (alreadyShown) return;
+      }
 
       let targetFile = [...rowByKeyRef.current.values()].find((r) => r.editable && r.file)?.file;
       if (!targetFile) {
@@ -527,8 +554,8 @@ export function useCssCascadeEditor({ iframeRef, projectPath, enabled, onToast }
           selector: sel,
           declarations: [],
           specificity: [0, 0, 0],
-          mediaText: null,
-          mediaMinPx: null,
+          mediaText: condMediaText,
+          mediaMinPx: condMinPx,
           inactiveMedia: false,
           layer: null,
           origin: 'author',
@@ -549,9 +576,13 @@ export function useCssCascadeEditor({ iframeRef, projectPath, enabled, onToast }
 
       post({ type: 'ss:suppressReload' });
       try {
-        await createCssRule(projectPath, targetFile, sel);
+        await createCssRule(projectPath, targetFile, sel, atPrelude);
         pin(targetFile, '\n');
-        void trackEvent('visual_style_saved', { mode: 'css-code', created_rule: true });
+        void trackEvent('visual_style_saved', {
+          mode: 'css-code',
+          created_rule: true,
+          conditional: isCondition,
+        });
       } catch (err) {
         const msg = String(err);
         // The rule already exists in source but doesn't match this element (so it

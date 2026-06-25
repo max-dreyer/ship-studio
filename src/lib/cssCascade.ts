@@ -112,14 +112,21 @@ export function applyCssRuleText(
   });
 }
 
-/** Create a new (empty) rule for `selector` in `file` (reuses the CSS-mode command). */
-export function createCssRule(projectPath: string, file: string, selector: string): Promise<void> {
+/** Create a new (empty) rule for `selector` in `file`, optionally wrapped in an
+ *  at-rule condition (`@media (max-width: …)`, `@container …`, `@supports …`). */
+export function createCssRule(
+  projectPath: string,
+  file: string,
+  selector: string,
+  atPrelude?: string | null
+): Promise<void> {
   return invoke<void>('create_css_class', {
     projectPath,
     file,
     selector,
     declarations: [],
     breakpointMinPx: null,
+    atPrelude: atPrelude ?? null,
   });
 }
 

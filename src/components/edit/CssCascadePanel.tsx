@@ -18,6 +18,7 @@ import { ElementSettingsPanel } from './ElementSettingsPanel';
 import { CssVariablesPanel } from './CssVariablesPanel';
 import { CssAnimationsPanel } from './CssAnimationsPanel';
 import { SuggestionPopover, type Suggestion } from './SuggestionPopover';
+import { WRAP_ITEMS, searchStructures } from '../../lib/cssStructures';
 import { mediaChipLabel, rowKey, type CascadeRow } from '../../lib/cssCascade';
 import type { RuleBody } from '../../lib/cssBody';
 import type { CascadeSelection } from '../../hooks/useCssCascadeEditor';
@@ -370,24 +371,37 @@ function AddSelectorBar({
 
   const typed = text.trim();
   const existingSet = new Set(existing);
-  // Element-scoped selectors only — a `@keyframes` animation isn't a rule that targets
-  // this element (it lives in the stylesheet, referenced via `animation`), so `@`-rules
-  // are intentionally not offered here.
-  const selectorMatches = (
-    typed ? suggestions.filter((s) => s.toLowerCase().includes(typed.toLowerCase())) : suggestions
-  )
-    .filter((s) => !s.trim().startsWith('@'))
-    .slice(0, 10);
-  const showCreate = typed.length > 0 && !typed.startsWith('@') && !selectorMatches.includes(typed);
-  const items: Suggestion[] = [
-    ...(showCreate ? [{ value: typed, label: typed, hint: 'new rule' }] : []),
-    // Existing rules are tagged so it's clear picking one re-opens it (no duplicate).
-    ...selectorMatches.map((s) => ({
-      value: s,
-      label: s,
-      hint: existingSet.has(s) ? 'existing' : undefined,
-    })),
-  ];
+  // Typing `@` switches to CONDITIONS: create a new rule for this element scoped to a
+  // breakpoint. Only `@media` is offered (a rule inside `@container`/`@supports` would
+  // collide with the element's base rule on save); use the selector chip's `@`-wrap to
+  // scope an existing rule under those. `@keyframes` isn't an element rule at all.
+  let items: Suggestion[];
+  if (typed.startsWith('@')) {
+    const mediaItems = searchStructures(WRAP_ITEMS, typed).filter((w) =>
+      w.insert.startsWith('@media')
+    );
+    const showFree = typed.length > 1 && !mediaItems.some((w) => w.insert === typed);
+    items = [
+      ...(showFree ? [{ value: typed, label: typed, hint: 'new condition' }] : []),
+      ...mediaItems.map((w) => ({ value: w.insert, label: w.label, hint: w.hint })),
+    ];
+  } else {
+    const selectorMatches = (
+      typed ? suggestions.filter((s) => s.toLowerCase().includes(typed.toLowerCase())) : suggestions
+    )
+      .filter((s) => !s.trim().startsWith('@'))
+      .slice(0, 10);
+    const showCreate = typed.length > 0 && !selectorMatches.includes(typed);
+    items = [
+      ...(showCreate ? [{ value: typed, label: typed, hint: 'new rule' }] : []),
+      // Existing rules are tagged so it's clear picking one re-opens it (no duplicate).
+      ...selectorMatches.map((s) => ({
+        value: s,
+        label: s,
+        hint: existingSet.has(s) ? 'existing' : undefined,
+      })),
+    ];
+  }
 
   return (
     <div className="ss-cascade-add-selector__wrap">
@@ -397,7 +411,7 @@ function AddSelectorBar({
         value={text}
         spellCheck={false}
         autoComplete="off"
-        placeholder="New selector, e.g. .card or h1.title"
+        placeholder="New selector (.card, h1.title) or @media (…)"
         onFocus={(e) => setAnchorEl(e.currentTarget)}
         onChange={(e) => {
           setText(e.target.value);

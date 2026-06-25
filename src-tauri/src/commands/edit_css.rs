@@ -737,13 +737,9 @@ fn rename_at_rule_in_source(
 /// [`wrap_css_rule`]. The inner rule stays editable afterward for `@media`
 /// (condition surfaced) and for the descended grouping at-rules `@layer`/
 /// `@supports`/`@container`.
-fn wrap_rule_in_source(
-    src: &str,
-    selector: &str,
-    media_text: &Option<String>,
-    at_prelude: &str,
-    old_inner: &str,
-) -> Result<String, CommandError> {
+/// An at-rule prelude must start with `@` and carry no braces (a brace would let it
+/// break out of the wrapper). Shared by `wrap_css_rule` and conditional rule creation.
+fn validate_at_prelude(at_prelude: &str) -> Result<(), CommandError> {
     let at = at_prelude.trim();
     if !at.starts_with('@') || at.contains('{') || at.contains('}') {
         return Err(CommandError::Validation {
@@ -751,6 +747,18 @@ fn wrap_rule_in_source(
             reason: "invalid at-rule prelude".into(),
         });
     }
+    Ok(())
+}
+
+fn wrap_rule_in_source(
+    src: &str,
+    selector: &str,
+    media_text: &Option<String>,
+    at_prelude: &str,
+    old_inner: &str,
+) -> Result<String, CommandError> {
+    validate_at_prelude(at_prelude)?;
+    let at = at_prelude.trim();
     let rules = index_rules(src);
     let rule = locate_one_editable(&rules, src, selector, media_text, old_inner)?;
     let bytes = src.as_bytes();
@@ -1165,11 +1173,17 @@ fn set_declaration_in_block(
 }
 
 /// Render a new rule (optionally wrapped in an `@media` block) ready to append.
-fn build_rule_text(selector: &str, declarations: &[Declaration], min_px: Option<u32>) -> String {
-    let (base, decl_indent) = match min_px {
-        Some(_) => ("  ", "    "),
-        None => ("", "  "),
-    };
+fn build_rule_text(
+    selector: &str,
+    declarations: &[Declaration],
+    min_px: Option<u32>,
+    at_prelude: Option<&str>,
+) -> String {
+    // The rule is wrapped (and so indented) when it sits inside an at-rule — either an
+    // explicit `at_prelude` (`@media (max-width: …)`, `@container`, `@supports`) or the
+    // `min_px` shorthand that builds a `@media (min-width: …)`.
+    let wrapped = at_prelude.is_some() || min_px.is_some();
+    let (base, decl_indent) = if wrapped { ("  ", "    ") } else { ("", "  ") };
     let mut body = String::new();
     body.push_str(base);
     body.push_str(selector);
@@ -1187,9 +1201,12 @@ fn build_rule_text(selector: &str, declarations: &[Declaration], min_px: Option<
     body.push_str(base);
     body.push('}');
 
-    match min_px {
-        Some(px) => format!("@media (min-width: {px}px) {{\n{body}\n}}"),
-        None => body,
+    if let Some(prelude) = at_prelude {
+        format!("{} {{\n{body}\n}}", prelude.trim())
+    } else if let Some(px) = min_px {
+        format!("@media (min-width: {px}px) {{\n{body}\n}}")
+    } else {
+        body
     }
 }
 
@@ -1642,9 +1659,13 @@ pub fn set_css_declaration(
     Ok(())
 }
 
-/// Append a new rule for `selector` (optionally inside an `@media` block) to the
-/// authored stylesheet. The class-attribute attach on the element itself is
-/// handled separately (Phase 2). Fail-closed if the rule already exists.
+/// Append a new rule for `selector` to the authored stylesheet — optionally wrapped
+/// in an at-rule condition: `breakpoint_min_px` is the `@media (min-width: …)`
+/// shorthand, while `at_prelude` takes an arbitrary condition (`@media (max-width:
+/// …)`, `@container …`, `@supports …`). The class-attribute attach on the element is
+/// handled separately. Fail-closed if an identical *base* rule already exists; a
+/// conditional rule is always distinct from the base, so the dup-check is skipped
+/// when wrapping.
 #[tauri::command]
 #[tracing::instrument(skip(declarations), fields(project = %project_path, file = %file, selector = %selector))]
 pub fn create_css_class(
@@ -1653,17 +1674,22 @@ pub fn create_css_class(
     selector: String,
     declarations: Vec<Declaration>,
     breakpoint_min_px: Option<u32>,
+    at_prelude: Option<String>,
 ) -> Result<(), CommandError> {
     validate_selector(&selector)?;
     for d in &declarations {
         validate_declaration(&d.property, Some(&d.value))?;
     }
+    if let Some(p) = at_prelude.as_deref() {
+        validate_at_prelude(p)?;
+    }
     let root = validate_project_path(&project_path)?;
     let ec = load_editable_css(&root, &file)?;
 
-    let already = index_rules(&ec.css).into_iter().any(|r| {
-        selector_has_part(&r.selector, &selector) && media_matches(&r.media, breakpoint_min_px)
-    });
+    let already = at_prelude.is_none()
+        && index_rules(&ec.css).into_iter().any(|r| {
+            selector_has_part(&r.selector, &selector) && media_matches(&r.media, breakpoint_min_px)
+        });
     if already {
         return Err(CommandError::Validation {
             field: "selector".into(),
@@ -1671,7 +1697,12 @@ pub fn create_css_class(
         });
     }
 
-    let rule = build_rule_text(&selector, &declarations, breakpoint_min_px);
+    let rule = build_rule_text(
+        &selector,
+        &declarations,
+        breakpoint_min_px,
+        at_prelude.as_deref(),
+    );
     let mut out = ec.css.clone();
     if !out.is_empty() && !out.ends_with('\n') {
         out.push('\n');
@@ -2534,7 +2565,7 @@ mod tests {
                 important: true,
             },
         ];
-        let out = build_rule_text(".hero", &decls, None);
+        let out = build_rule_text(".hero", &decls, None, None);
         assert_eq!(
             out,
             ".hero {\n  color: red;\n  padding: 24px !important;\n}"
@@ -2548,10 +2579,24 @@ mod tests {
             value: "red".into(),
             important: false,
         }];
-        let out = build_rule_text(".hero", &decls, Some(768));
+        let out = build_rule_text(".hero", &decls, Some(768), None);
         assert_eq!(
             out,
             "@media (min-width: 768px) {\n  .hero {\n    color: red;\n  }\n}"
+        );
+    }
+
+    #[test]
+    fn builds_rule_wrapped_in_an_arbitrary_condition() {
+        let decls = vec![Declaration {
+            property: "padding".into(),
+            value: "0".into(),
+            important: false,
+        }];
+        let out = build_rule_text(".card", &decls, None, Some("@media (max-width: 768px)"));
+        assert_eq!(
+            out,
+            "@media (max-width: 768px) {\n  .card {\n    padding: 0;\n  }\n}"
         );
     }
 
