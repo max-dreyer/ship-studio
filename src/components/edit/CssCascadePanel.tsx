@@ -122,6 +122,16 @@ export function CssCascadePanel({
     ...new Set([...classes.map((c) => `.${c}`), ...selectorSuggestions, ...existingSelectors]),
   ];
 
+  // The element's own selectors (its classes, then its tag) that don't yet have a
+  // base rule — offered as one-click "start styling" cards so every class/tag on the
+  // element is reachable, not just the ones that already have CSS.
+  const styledBase = new Set(rows.filter((r) => !r.mediaText && r.selector).map((r) => r.selector));
+  const unstyledSelectors = [
+    ...new Set(
+      [...classes.map((c) => `.${c}`), selection?.signature.tagName ?? ''].filter(Boolean)
+    ),
+  ].filter((s) => !styledBase.has(s));
+
   return (
     <div
       ref={rootRef}
@@ -258,11 +268,6 @@ export function CssCascadePanel({
                   <div className="ss-cascade-loading">
                     <Spinner size="sm" />
                   </div>
-                ) : rows.length === 0 ? (
-                  <GhostSelectors
-                    selectors={[...classes.map((c) => `.${c}`), selection.signature.tagName]}
-                    onPick={onAddSelector}
-                  />
                 ) : (
                   <div className="ss-cascade-cards">
                     {rows.map((row) => {
@@ -317,6 +322,18 @@ export function CssCascadePanel({
                         />
                       );
                     })}
+
+                    {unstyledSelectors.length > 0 && (
+                      <GhostSelectors
+                        selectors={unstyledSelectors}
+                        onPick={onAddSelector}
+                        leadIn={
+                          rows.length > 0
+                            ? 'Also on this element:'
+                            : 'No rules yet — start styling one of these:'
+                        }
+                      />
+                    )}
                   </div>
                 )}
               </>
@@ -328,20 +345,22 @@ export function CssCascadePanel({
   );
 }
 
-/** Empty state for an element with no matching rules: instead of a dead-end message,
- *  surface the element's own selectors (its classes, then its tag) as one-click cards
- *  that create an editable rule to start styling. */
+/** The element's own selectors that aren't styled yet (its classes, then its tag) as
+ *  one-click "start styling" cards — so every class/tag on the element is reachable,
+ *  whether or not it already has CSS. Each click creates an editable rule. */
 function GhostSelectors({
   selectors,
   onPick,
+  leadIn,
 }: {
   selectors: string[];
   onPick: (selector: string) => void;
+  leadIn: string;
 }) {
   const unique = [...new Set(selectors.filter(Boolean))];
   return (
-    <div className="ss-cascade-cards">
-      <p className="ss-cascade-ghost-hint">No rules yet — start styling one of these:</p>
+    <>
+      <p className="ss-cascade-ghost-hint">{leadIn}</p>
       {unique.map((sel) => (
         <button
           key={sel}
@@ -356,7 +375,7 @@ function GhostSelectors({
           </span>
         </button>
       ))}
-    </div>
+    </>
   );
 }
 
