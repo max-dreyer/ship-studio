@@ -162,7 +162,7 @@ function MediaChip({
 }) {
   const [editing, setEditing] = useState(false);
   const [text, setText] = useState(condition);
-  const listId = useId();
+  const [active, setActive] = useState(0);
   if (!editing) {
     return (
       <span
@@ -172,11 +172,13 @@ function MediaChip({
         tabIndex={0}
         onClick={() => {
           setText(condition);
+          setActive(0);
           setEditing(true);
         }}
         onKeyDown={(e) => {
           if (e.key === 'Enter') {
             setText(condition);
+            setActive(0);
             setEditing(true);
           }
         }}
@@ -185,37 +187,61 @@ function MediaChip({
       </span>
     );
   }
-  const commit = () => {
-    const v = text.trim();
+  const commit = (value: string) => {
+    const v = value.trim();
     if (v && v !== condition) onCommit(v);
     setEditing(false);
   };
+  const matches = suggestMediaConditions(text);
   return (
-    <>
+    <span className="ss-card__chip-edit">
       <input
         className="ss-card__chip ss-card__chip--media-input"
         autoFocus
         value={text}
-        list={listId}
         spellCheck={false}
         autoComplete="off"
         aria-label="Media condition"
-        onChange={(e) => setText(e.target.value)}
+        onChange={(e) => {
+          setText(e.target.value);
+          setActive(0);
+        }}
         onKeyDown={(e) => {
-          if (e.key === 'Enter') commit();
-          else if (e.key === 'Escape') {
+          if (e.key === 'Enter') {
+            e.preventDefault();
+            commit(matches[active] ?? text);
+          } else if (e.key === 'ArrowDown') {
+            e.preventDefault();
+            setActive((a) => Math.min(a + 1, matches.length - 1));
+          } else if (e.key === 'ArrowUp') {
+            e.preventDefault();
+            setActive((a) => Math.max(a - 1, 0));
+          } else if (e.key === 'Escape') {
+            e.preventDefault();
             setText(condition);
             setEditing(false);
           }
         }}
-        onBlur={commit}
+        onBlur={() => setEditing(false)}
       />
-      <datalist id={listId}>
-        {suggestMediaConditions('').map((m) => (
-          <option key={m} value={m} />
-        ))}
-      </datalist>
-    </>
+      {matches.length > 0 && (
+        <span className="ss-add-menu ss-card__chip-menu">
+          <span className="ss-add-menu__list">
+            {matches.map((m, i) => (
+              <button
+                key={m}
+                type="button"
+                className={`ss-add-menu__item${active === i ? ' is-active' : ''}`}
+                onMouseDown={(e) => e.preventDefault()}
+                onClick={() => commit(m)}
+              >
+                <code className="ss-add-menu__label">{m}</code>
+              </button>
+            ))}
+          </span>
+        </span>
+      )}
+    </span>
   );
 }
 
