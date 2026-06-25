@@ -174,8 +174,19 @@ export function EditPopover({ anchor, initial, options, placeholder, onCommit, o
   );
 }
 
+/** Per-pixel step scaled to the value's magnitude, so big numbers (700) move fast and
+ *  small ones (1, 20, 50) stay gentle. Roughly 1% of the order of magnitude. */
+function magnitudeStep(v: number): number {
+  const a = Math.abs(v);
+  if (a < 10) return 0.1; // 0–9    → 0.1 / px
+  if (a < 100) return 1; //  10–99  → 1 / px
+  if (a < 1000) return 10; // 100–999 → 10 / px
+  return 100; //              1000+   → 100 / px
+}
+
 /** Drag-to-scrub a numeric value (devtools-style). Horizontal drag adjusts the
- *  number live, preserving the unit; Shift ×10, Alt ÷10 for coarse/fine control. */
+ *  number live, preserving the unit; the step scales with the value's magnitude, and
+ *  Shift ×10 / Alt ÷10 give coarse/fine control. */
 function ScrubHandle({ value, onScrub }: { value: string; onScrub: (v: string) => void }) {
   const drag = useRef<{ x: number; num: number; unit: string; decimals: number } | null>(null);
   return (
@@ -192,7 +203,7 @@ function ScrubHandle({ value, onScrub }: { value: string; onScrub: (v: string) =
       onPointerMove={(e) => {
         const d = drag.current;
         if (!d) return;
-        const base = d.decimals > 0 ? 0.1 : 1;
+        const base = magnitudeStep(d.num);
         const step = e.shiftKey ? base * 10 : e.altKey ? base / 10 : base;
         const stepDecimals = step >= 1 ? 0 : step >= 0.1 ? 1 : 2;
         const next = d.num + (e.clientX - d.x) * step;
