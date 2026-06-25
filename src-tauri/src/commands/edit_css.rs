@@ -768,9 +768,10 @@ fn wrap_rule_in_source(
 
 // ───────────────────────────── Locator ─────────────────────────────
 
-/// Index every top-level (and single-level `@media`-nested) style rule in a
-/// stylesheet. Comments, strings, `@keyframes`/`@font-face`/`@supports` bodies,
-/// and nested blocks are skipped rather than mis-read as rules.
+/// Index every style rule in a stylesheet, including those nested in `@media` and
+/// the grouping at-rules `@layer`/`@supports`/`@container` (descended into). Comments,
+/// strings, `;`-statements (`@import`/`@charset`), `@keyframes`/`@font-face`/`@page`
+/// inner blocks, and CSS-nested child rules are skipped rather than mis-read as rules.
 fn index_rules(css: &str) -> Vec<RuleSpan> {
     enum Frame {
         /// `@media` block — condition string + byte range of the condition text.
@@ -2384,6 +2385,24 @@ mod tests {
             out,
             "@container (min-width: 400px) {\n  .card {\n    gap: 2rem;\n  }\n}\n"
         );
+    }
+
+    #[test]
+    fn wraps_a_rule_and_it_stays_indexable_under_the_condition() {
+        let src = ".hero {\n  font-size: 3rem;\n}\n";
+        let out = wrap_rule_in_source(
+            src,
+            ".hero",
+            &None,
+            "@media (max-width: 600px)",
+            "\n  font-size: 3rem;\n",
+        )
+        .unwrap();
+        assert!(braces_balanced(&out));
+        let rules = index_rules(&out);
+        assert_eq!(rules.len(), 1);
+        assert_eq!(rules[0].selector, ".hero");
+        assert_eq!(rules[0].media.as_deref(), Some("(max-width: 600px)"));
     }
 
     #[test]
