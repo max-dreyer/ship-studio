@@ -10,7 +10,7 @@ import { createPortal } from 'react-dom';
 import { CloseIcon } from '../icons/common';
 import { PlusIcon } from '../icons/utility';
 import { EditPopover } from './EditPopover';
-import { CSS_PROPERTIES, colorSwatch } from '../../lib/cssProperties';
+import { CSS_PROPERTIES, colorSwatch, suggestValues } from '../../lib/cssProperties';
 import type { Decl } from '../../lib/cssBody';
 
 interface EditableProps {
@@ -25,6 +25,8 @@ interface EditableProps {
   nestTargets: string[];
   /** Move this declaration into a nested rule for `selector` (created if missing). */
   onNest: (selector: string) => void;
+  /** Project CSS variables (e.g. `--accent`) for `var(--…)` value autocomplete. */
+  variables?: string[];
 }
 interface ReadonlyProps {
   decl: Decl;
@@ -154,6 +156,7 @@ export function DeclarationRow(props: Props) {
         <EditPopover
           anchor={editing.anchor}
           initial={decl.value}
+          options={suggestValues(decl.prop, props.variables ?? [])}
           placeholder="value"
           onCommit={(value) => onChange({ ...decl, value })}
           onClose={() => setEditing(null)}

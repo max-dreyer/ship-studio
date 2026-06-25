@@ -316,6 +316,149 @@ export const CSS_PROPERTIES: string[] = [
 /** CSS-wide keywords valid on any property. */
 export const CSS_WIDE_KEYWORDS = ['inherit', 'initial', 'unset', 'revert', 'revert-layer'];
 
+/** Keyword value suggestions per property (the enumerated values that property
+ *  accepts). Not exhaustive — the high-frequency ones that benefit from autocomplete. */
+const VALUE_KEYWORDS: Record<string, string[]> = {
+  display: [
+    'block',
+    'inline',
+    'inline-block',
+    'flex',
+    'inline-flex',
+    'grid',
+    'inline-grid',
+    'flow-root',
+    'contents',
+    'none',
+  ],
+  position: ['static', 'relative', 'absolute', 'fixed', 'sticky'],
+  'box-sizing': ['border-box', 'content-box'],
+  'flex-direction': ['row', 'row-reverse', 'column', 'column-reverse'],
+  'flex-wrap': ['nowrap', 'wrap', 'wrap-reverse'],
+  'justify-content': [
+    'flex-start',
+    'flex-end',
+    'center',
+    'space-between',
+    'space-around',
+    'space-evenly',
+    'start',
+    'end',
+    'stretch',
+  ],
+  'align-items': ['stretch', 'flex-start', 'flex-end', 'center', 'baseline', 'start', 'end'],
+  'align-content': ['stretch', 'flex-start', 'flex-end', 'center', 'space-between', 'space-around'],
+  'align-self': ['auto', 'stretch', 'flex-start', 'flex-end', 'center', 'baseline'],
+  'text-align': ['left', 'right', 'center', 'justify', 'start', 'end'],
+  'font-weight': [
+    '100',
+    '200',
+    '300',
+    '400',
+    '500',
+    '600',
+    '700',
+    '800',
+    '900',
+    'normal',
+    'bold',
+    'lighter',
+    'bolder',
+  ],
+  'font-style': ['normal', 'italic', 'oblique'],
+  'text-transform': ['none', 'uppercase', 'lowercase', 'capitalize'],
+  'text-decoration': ['none', 'underline', 'overline', 'line-through'],
+  'text-overflow': ['clip', 'ellipsis'],
+  'white-space': ['normal', 'nowrap', 'pre', 'pre-wrap', 'pre-line', 'break-spaces'],
+  'word-break': ['normal', 'break-all', 'keep-all', 'break-word'],
+  'overflow-wrap': ['normal', 'break-word', 'anywhere'],
+  overflow: ['visible', 'hidden', 'scroll', 'auto', 'clip'],
+  'overflow-x': ['visible', 'hidden', 'scroll', 'auto', 'clip'],
+  'overflow-y': ['visible', 'hidden', 'scroll', 'auto', 'clip'],
+  visibility: ['visible', 'hidden', 'collapse'],
+  cursor: [
+    'pointer',
+    'default',
+    'text',
+    'move',
+    'grab',
+    'grabbing',
+    'not-allowed',
+    'wait',
+    'help',
+    'crosshair',
+    'zoom-in',
+    'zoom-out',
+    'none',
+  ],
+  'pointer-events': ['auto', 'none'],
+  'user-select': ['auto', 'none', 'text', 'all'],
+  resize: ['none', 'both', 'horizontal', 'vertical'],
+  'object-fit': ['fill', 'contain', 'cover', 'none', 'scale-down'],
+  'border-style': [
+    'none',
+    'solid',
+    'dashed',
+    'dotted',
+    'double',
+    'groove',
+    'ridge',
+    'inset',
+    'outset',
+  ],
+  'list-style-type': ['none', 'disc', 'circle', 'square', 'decimal'],
+  'background-repeat': ['repeat', 'no-repeat', 'repeat-x', 'repeat-y', 'space', 'round'],
+  'background-size': ['auto', 'cover', 'contain'],
+  'background-position': ['center', 'top', 'bottom', 'left', 'right'],
+  'flex-grow': ['0', '1'],
+  'flex-shrink': ['0', '1'],
+  'mix-blend-mode': ['normal', 'multiply', 'screen', 'overlay', 'darken', 'lighten', 'difference'],
+};
+
+/** Property names whose value is typically a color (so `var(--…)` colors / named
+ *  colors are worth suggesting). */
+const COLOR_PROPS = new Set([
+  'color',
+  'background',
+  'background-color',
+  'border-color',
+  'border-top-color',
+  'border-right-color',
+  'border-bottom-color',
+  'border-left-color',
+  'outline-color',
+  'fill',
+  'stroke',
+  'caret-color',
+  'text-decoration-color',
+  'column-rule-color',
+  'accent-color',
+]);
+
+export function isColorProperty(property: string): boolean {
+  return COLOR_PROPS.has(property.trim().toLowerCase());
+}
+
+/**
+ * Value suggestions for a declaration, in priority order: the project's CSS
+ * variables (as `var(--x)`, color vars first for color properties), the property's
+ * enumerated keywords, then the CSS-wide keywords. The caller filters by typed text.
+ */
+export function suggestValues(property: string, variables: string[] = []): string[] {
+  const p = property.trim().toLowerCase();
+  const vars = variables.map((v) => (v.startsWith('var(') ? v : `var(${v})`));
+  const keywords = VALUE_KEYWORDS[p] ?? [];
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const v of [...vars, ...keywords, ...CSS_WIDE_KEYWORDS]) {
+    if (!seen.has(v)) {
+      seen.add(v);
+      out.push(v);
+    }
+  }
+  return out;
+}
+
 const COLOR_FN = /^(rgb|rgba|hsl|hsla|hwb|lab|lch|oklab|oklch|color)\(/i;
 const HEX = /^#([0-9a-f]{3,4}|[0-9a-f]{6}|[0-9a-f]{8})$/i;
 const NAMED_COLORS = new Set([

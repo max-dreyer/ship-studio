@@ -643,6 +643,14 @@
   font-family: var(--font-mono);
   font-size: var(--font-size-sm);
 }
+/* Autocomplete list under the value input (var(--…), keywords). */
+.ss-value-pop__menu {
+  margin-top: var(--spacing-xs);
+  border: none;
+  background: none;
+  box-shadow: none;
+  max-height: 220px;
+}
 
 /* row action buttons (! / nest / ✕) — reveal on row hover */
 .ss-decl__imp-toggle,

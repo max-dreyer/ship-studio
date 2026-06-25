@@ -3,12 +3,13 @@
  * convention: click a value → this opens right beside it with the current value
  * pre-selected; type and press Enter to save, Escape cancels, click-away commits.
  *
- * It's the seam for value-type-specific editors. The first one: when the value is a
- * color, it shows the Tailwind editor's `ColorPicker`; otherwise a plain text input
- * (with optional autocomplete). Lengths/draggers etc. can slot in the same way.
+ * It's the seam for value-type-specific editors. When the value is a color it shows
+ * the Tailwind editor's `ColorPicker`; otherwise a text input with a custom
+ * autocomplete (property names, value keywords, `var(--…)` variables) — the same
+ * menu styling as the rest of the editor. Lengths/draggers etc. can slot in too.
  */
 
-import { useEffect, useId, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { ColorPicker } from './ColorPicker';
 import { colorSwatch } from '../../lib/cssProperties';
@@ -16,7 +17,7 @@ import { colorSwatch } from '../../lib/cssProperties';
 interface Props {
   anchor: HTMLElement | null;
   initial: string;
-  /** Optional native autocomplete options (text mode). */
+  /** Autocomplete options (text mode) — filtered as you type. */
   options?: string[];
   placeholder?: string;
   onCommit: (value: string) => void;
@@ -25,16 +26,26 @@ interface Props {
 
 export function EditPopover({ anchor, initial, options, placeholder, onCommit, onClose }: Props) {
   const [text, setText] = useState(initial);
+  const [active, setActive] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
   const popRef = useRef<HTMLDivElement>(null);
   const textRef = useRef(text);
   useEffect(() => {
     textRef.current = text;
   }, [text]);
-  const listId = useId();
 
   const isColor = colorSwatch(initial) !== null;
-  const width = isColor ? 224 : 200;
+  const width = isColor ? 224 : 220;
+
+  // Filter the options by what's typed; hide the menu when the sole match is exactly
+  // the current text (nothing left to suggest).
+  const matches = useMemo(() => {
+    if (!options || isColor) return [];
+    const q = text.trim().toLowerCase();
+    const list = q ? options.filter((o) => o.toLowerCase().includes(q)) : options;
+    return list.slice(0, 8);
+  }, [options, text, isColor]);
+  const showMenu = matches.length > 0 && !(matches.length === 1 && matches[0] === text);
 
   // Position just below-left of the anchor, clamped into the viewport. Computed
   // from the anchor's measured rect at open time (anchor is stable while open).
@@ -98,30 +109,54 @@ export function EditPopover({ anchor, initial, options, placeholder, onCommit, o
           }}
         />
       ) : (
-        <input
-          ref={inputRef}
-          className="ss-value-pop__input"
-          value={text}
-          list={options ? listId : undefined}
-          spellCheck={false}
-          autoComplete="off"
-          placeholder={placeholder}
-          onChange={(e) => setText(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter') {
-              e.preventDefault();
-              onCommit(text);
-              onClose();
-            }
-          }}
-        />
-      )}
-      {options && !isColor && (
-        <datalist id={listId}>
-          {options.map((o) => (
-            <option key={o} value={o} />
-          ))}
-        </datalist>
+        <>
+          <input
+            ref={inputRef}
+            className="ss-value-pop__input"
+            value={text}
+            spellCheck={false}
+            autoComplete="off"
+            placeholder={placeholder}
+            onChange={(e) => {
+              setText(e.target.value);
+              setActive(0);
+            }}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') {
+                e.preventDefault();
+                const pick = showMenu ? (matches[active] ?? text) : text;
+                onCommit(pick);
+                onClose();
+              } else if (e.key === 'ArrowDown' && showMenu) {
+                e.preventDefault();
+                setActive((a) => Math.min(a + 1, matches.length - 1));
+              } else if (e.key === 'ArrowUp' && showMenu) {
+                e.preventDefault();
+                setActive((a) => Math.max(a - 1, 0));
+              }
+            }}
+          />
+          {showMenu && (
+            <div className="ss-add-menu ss-value-pop__menu">
+              <div className="ss-add-menu__list">
+                {matches.map((o, i) => (
+                  <button
+                    key={o}
+                    type="button"
+                    className={`ss-add-menu__item${active === i ? ' is-active' : ''}`}
+                    onMouseDown={(e) => e.preventDefault()}
+                    onClick={() => {
+                      onCommit(o);
+                      onClose();
+                    }}
+                  >
+                    <code className="ss-add-menu__label">{o}</code>
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+        </>
       )}
     </div>,
     document.body
