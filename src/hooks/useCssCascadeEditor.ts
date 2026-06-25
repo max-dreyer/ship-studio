@@ -85,6 +85,12 @@ export function useCssCascadeEditor({ iframeRef, projectPath, enabled, onToast }
   // Synthetic indices for optimistically-added rules (kept clear of real cascade
   // indices, which start at 0).
   const synthIndex = useRef(1_000_000);
+  // Locally-created rules (via "Add selector") keyed by rowKey. They're kept pinned
+  // in the panel across cascade refreshes — even if the new selector doesn't match
+  // the element yet — so a freshly-added rule never silently vanishes. Cleared when
+  // a different element is selected; an entry is dropped once the real cascade
+  // includes it (confirmed).
+  const createdRowsRef = useRef<Map<string, CascadeRow>>(new Map());
   const editModeOnRef = useRef(false);
   useEffect(() => {
     editModeOnRef.current = editModeOn;
@@ -164,6 +170,7 @@ export function useCssCascadeEditor({ iframeRef, projectPath, enabled, onToast }
         clearTimers();
         post({ type: 'ss:clearRulePreview' });
         setSelection({ signature: d.signature, instanceCount: d.count ?? 1 });
+        createdRowsRef.current = new Map();
         setRows([]);
         setBodies({});
         bodiesRef.current = {};
@@ -203,7 +210,25 @@ export function useCssCascadeEditor({ iframeRef, projectPath, enabled, onToast }
                 nextBaseline[key] = row.innerText;
               }
             });
-            setRows(merged);
+
+            // Pin locally-created rules the cascade doesn't include (a new selector
+            // that doesn't match this element yet) so they never silently vanish.
+            // Drop any that the real cascade now confirms (dedup by key).
+            const mergedKeys = new Set(merged.map(rowKey));
+            const extraRows: CascadeRow[] = [];
+            for (const [key, createdRow] of createdRowsRef.current) {
+              if (mergedKeys.has(key)) {
+                createdRowsRef.current.delete(key);
+                continue;
+              }
+              extraRows.push(createdRow);
+              nextBodies[key] =
+                bodiesRef.current[key] ?? parseRuleBody(createdRow.innerText ?? '\n');
+              nextBaseline[key] = baselineInner.current[key] ?? createdRow.innerText ?? '\n';
+              nextOverridden[key] = new Map();
+            }
+            const finalRows = [...extraRows, ...merged];
+            setRows(finalRows);
             setBodies(nextBodies);
             bodiesRef.current = nextBodies;
             baselineInner.current = nextBaseline;
@@ -376,8 +401,14 @@ export function useCssCascadeEditor({ iframeRef, projectPath, enabled, onToast }
     async (selector: string) => {
       const sel = selector.trim();
       if (!sel) return;
-      const existing = [...rowByKeyRef.current.values()].find((r) => r.editable && r.file)?.file;
-      let targetFile = existing;
+
+      // Already shown as a base rule? Don't duplicate or error — it's right there.
+      const alreadyShown = [...rowByKeyRef.current.values()].some(
+        (r) => r.editable && r.selector === sel && !r.mediaText
+      );
+      if (alreadyShown) return;
+
+      let targetFile = [...rowByKeyRef.current.values()].find((r) => r.editable && r.file)?.file;
       if (!targetFile) {
         try {
           targetFile = (await listStylesheets(projectPath))[0];
@@ -389,12 +420,12 @@ export function useCssCascadeEditor({ iframeRef, projectPath, enabled, onToast }
         onToast('No stylesheet found to add the rule to.', 'error');
         return;
       }
-      post({ type: 'ss:suppressReload' });
-      try {
-        await createCssRule(projectPath, targetFile, sel);
-        const index = ++synthIndex.current;
+
+      // Pin a rule into the panel as an editable card. Created rules persist across
+      // cascade refreshes (see createdRowsRef) so they never silently vanish.
+      const pin = (file: string, innerText: string) => {
         const newRow: CascadeRow = {
-          index,
+          index: ++synthIndex.current,
           selector: sel,
           declarations: [],
           specificity: [0, 0, 0],
@@ -404,20 +435,43 @@ export function useCssCascadeEditor({ iframeRef, projectPath, enabled, onToast }
           layer: null,
           origin: 'author',
           editable: true,
-          file: targetFile,
+          file,
           line: 0,
-          innerText: '\n',
+          innerText,
         };
         const key = rowKey(newRow);
-        const body = parseRuleBody('\n');
-        setRows((prev) => [newRow, ...prev]);
+        const body = parseRuleBody(innerText);
+        createdRowsRef.current.set(key, newRow);
+        setRows((prev) => [newRow, ...prev.filter((r) => rowKey(r) !== key)]);
         setBodies((prev) => ({ ...prev, [key]: body }));
         bodiesRef.current[key] = body;
-        baselineInner.current[key] = '\n';
+        baselineInner.current[key] = innerText;
         setOverridden((prev) => ({ ...prev, [key]: new Map() }));
+      };
+
+      post({ type: 'ss:suppressReload' });
+      try {
+        await createCssRule(projectPath, targetFile, sel);
+        pin(targetFile, '\n');
         void trackEvent('visual_style_saved', { mode: 'css-code', created_rule: true });
       } catch (err) {
-        logger.error('[CssCascade] add selector failed', { error: String(err) });
+        const msg = String(err);
+        // The rule already exists in source but doesn't match this element (so it
+        // isn't in the cascade). Surface the real rule for editing instead of erroring.
+        if (msg.includes('already exists')) {
+          try {
+            const [loc] = await locateCssRules(projectPath, [
+              { selector: sel, mediaText: null, href: null },
+            ]);
+            if (loc?.status === 'resolved') {
+              pin(loc.file, loc.inner_text);
+              return;
+            }
+          } catch {
+            /* fall through to the toast */
+          }
+        }
+        logger.error('[CssCascade] add selector failed', { error: msg });
         onToast(toastText(err), 'error');
       }
     },
