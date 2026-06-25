@@ -18,7 +18,8 @@ import {
   applyClassnameEditMulti,
   type ElementSignature,
 } from '../lib/edit';
-import { resolveElementHtml } from '../lib/edit-html';
+import { resolveElementHtml, applyElementHtml } from '../lib/edit-html';
+import { setAttribute as setAttrInHtml } from '../lib/htmlAttrs';
 import { logger } from '../lib/logger';
 import { trackEvent } from '../lib/analytics';
 import { asCommandError, formatCommandError } from '../lib/errors';
@@ -38,6 +39,11 @@ export interface ElementSettings {
   attributes: ElementAttr[];
   addClass: (name: string) => void;
   removeClass: (name: string) => void;
+  /** Set or add an attribute on the element's opening tag (written to source). */
+  setAttribute: (name: string, value: string) => void;
+  removeAttribute: (name: string) => void;
+  /** Whether the element resolved to editable source markup (attributes editable). */
+  canEditAttributes: boolean;
   busy: boolean;
 }
 
@@ -75,10 +81,13 @@ export function useElementSettings({
 }: Params): ElementSettings {
   const [classes, setClasses] = useState<string[]>([]);
   const [attributes, setAttributes] = useState<ElementAttr[]>([]);
+  const [canEditAttributes, setCanEditAttributes] = useState(false);
   const [busy, setBusy] = useState(false);
 
   const sigRef = useRef<ElementSignature | null>(signature);
   sigRef.current = signature;
+  // The element's current source markup (drift-guard baseline for attribute writes).
+  const htmlRef = useRef<string | null>(null);
   const tag = signature?.tagName ?? '';
 
   const post = useCallback(
@@ -91,17 +100,57 @@ export function useElementSettings({
     if (!enabled || !signature) {
       setClasses([]);
       setAttributes([]);
+      setCanEditAttributes(false);
+      htmlRef.current = null;
       return;
     }
     setClasses(signature.className.split(/\s+/).filter(Boolean));
     let cancelled = false;
     void resolveElementHtml(projectPath, signature)
-      .then((res) => !cancelled && setAttributes(parseAttributes(res.html)))
-      .catch(() => !cancelled && setAttributes([]));
+      .then((res) => {
+        if (cancelled) return;
+        htmlRef.current = res.html;
+        setAttributes(parseAttributes(res.html));
+        setCanEditAttributes(true);
+      })
+      .catch(() => {
+        if (cancelled) return;
+        htmlRef.current = null;
+        setAttributes([]);
+        setCanEditAttributes(false);
+      });
     return () => {
       cancelled = true;
     };
   }, [enabled, projectPath, signature]);
+
+  /** Set/add/remove (value === null) an attribute on the element's opening tag,
+   *  drift-guarded against the resolved markup, then refresh the local list. */
+  const applyAttr = useCallback(
+    async (name: string, value: string | null) => {
+      const sig = sigRef.current;
+      const oldHtml = htmlRef.current;
+      if (!sig || oldHtml == null) {
+        onToast("Can't edit this element's attributes in source.", 'error');
+        return;
+      }
+      const newHtml = setAttrInHtml(oldHtml, name, value);
+      if (newHtml == null || newHtml === oldHtml) return;
+      setBusy(true);
+      try {
+        await applyElementHtml(projectPath, sig, oldHtml, newHtml);
+        htmlRef.current = newHtml;
+        setAttributes(parseAttributes(newHtml));
+        void trackEvent('visual_style_saved', { mode: 'css-code', attr_edit: true });
+      } catch (err) {
+        logger.error('[ElementSettings] attribute edit failed', { error: String(err) });
+        onToast(toastText(err), 'error');
+      } finally {
+        setBusy(false);
+      }
+    },
+    [projectPath, onToast]
+  );
 
   /** Rewrite the element's `class` attribute in source (and live in the preview). */
   const writeClassAttr = useCallback(
@@ -176,6 +225,9 @@ export function useElementSettings({
     attributes,
     addClass: (n) => void addClass(n),
     removeClass: (n) => void removeClass(n),
+    setAttribute: (name, value) => void applyAttr(name, value),
+    removeAttribute: (name) => void applyAttr(name, null),
+    canEditAttributes,
     busy,
   };
 }
