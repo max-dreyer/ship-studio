@@ -17,7 +17,9 @@ import { ChevronIcon } from '../icons/common';
 import { LayersIcon } from '../icons/utility';
 import { TrashIcon, FileIcon } from '../icons/editor';
 import { DeclarationRow } from './DeclarationRow';
+import { CascadeProposal } from './CascadeProposal';
 import { AddMenu } from './AddMenu';
+import type { CssProposal } from '../../hooks/useCssProposals';
 import { suggestMediaConditions } from '../../lib/cssProperties';
 import {
   NEST_ITEMS,
@@ -91,6 +93,15 @@ interface ReadonlyCard extends CommonHeader {
   decls: Decl[];
   overridden: Map<string, string>;
   readonlyReason?: string;
+  /** "Send to agent": when present, the card can host a preview-only proposal that's
+   *  handed to the agent to implement (for rules we can't write deterministically). */
+  proposal?: {
+    active?: CssProposal;
+    begin: () => void;
+    edit: (prop: string, to: string) => void;
+    send: () => void;
+    discard: () => void;
+  };
 }
 
 type Props = EditableCard | ReadonlyCard;
@@ -579,7 +590,12 @@ export function CascadeRuleCard(props: Props) {
           new
         </span>
       )}
-      {!editable && <span className="ss-card__src ss-card__src--ro">read-only</span>}
+      {!editable &&
+        ('proposal' in props && props.proposal?.active ? (
+          <span className="ss-card__src ss-card__src--proposing">✎ proposing</span>
+        ) : (
+          <span className="ss-card__src ss-card__src--ro">read-only</span>
+        ))}
       {editable && props.onDelete && !props.draft && (
         <button
           type="button"
@@ -603,16 +619,32 @@ export function CascadeRuleCard(props: Props) {
         <header className="ss-card__head">{selectorRow}</header>
         {!collapsed && (
           <div className="ss-card__body">
-            {props.decls.map((d, i) => (
-              <DeclarationRow
-                key={`${d.prop}-${i}`}
-                editable={false}
-                decl={d}
-                overridden={props.overridden.has(d.prop.toLowerCase())}
-                overriddenBy={props.overridden.get(d.prop.toLowerCase())}
+            {props.proposal?.active ? (
+              <CascadeProposal
+                proposal={props.proposal.active}
+                onEdit={props.proposal.edit}
+                onSend={props.proposal.send}
+                onDiscard={props.proposal.discard}
               />
-            ))}
-            {props.readonlyReason && <p className="ss-card__note">{props.readonlyReason}</p>}
+            ) : (
+              <>
+                {props.decls.map((d, i) => (
+                  <DeclarationRow
+                    key={`${d.prop}-${i}`}
+                    editable={false}
+                    decl={d}
+                    overridden={props.overridden.has(d.prop.toLowerCase())}
+                    overriddenBy={props.overridden.get(d.prop.toLowerCase())}
+                  />
+                ))}
+                {props.readonlyReason && <p className="ss-card__note">{props.readonlyReason}</p>}
+                {props.proposal && props.decls.length > 0 && (
+                  <button type="button" className="ss-card__propose" onClick={props.proposal.begin}>
+                    Suggest edit → send to agent
+                  </button>
+                )}
+              </>
+            )}
           </div>
         )}
       </section>
