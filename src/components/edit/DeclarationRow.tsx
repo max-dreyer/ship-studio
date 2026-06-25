@@ -1,0 +1,204 @@
+/**
+ * One `property: value` row. The prop and value render as plain (wrapping) text;
+ * clicking either opens an `EditPopover` next to it — the editing convention (a text
+ * input now; a color picker / dragger later). `!` toggles `!important`, ✕ removes it.
+ * Overridden declarations render struck-through, with a tooltip naming what wins.
+ */
+
+import { useState } from 'react';
+import { CloseIcon } from '../icons/common';
+import { PlusIcon } from '../icons/utility';
+import { EditPopover } from './EditPopover';
+import { CSS_PROPERTIES, colorSwatch } from '../../lib/cssProperties';
+import type { Decl } from '../../lib/cssBody';
+
+interface EditableProps {
+  decl: Decl;
+  overridden: boolean;
+  /** What wins the cascade for this property (for the overridden tooltip). */
+  overriddenBy?: string;
+  editable: true;
+  onChange: (decl: Decl) => void;
+  onRemove: () => void;
+  /** Existing nested-rule selectors in this card (targets to nest this decl into). */
+  nestTargets: string[];
+  /** Move this declaration into a nested rule for `selector` (created if missing). */
+  onNest: (selector: string) => void;
+}
+interface ReadonlyProps {
+  decl: Decl;
+  overridden: boolean;
+  overriddenBy?: string;
+  editable: false;
+}
+type Props = EditableProps | ReadonlyProps;
+
+/** A color swatch chip when the value is a color. */
+function Swatch({ value }: { value: string }) {
+  const c = colorSwatch(value);
+  if (!c) return null;
+  return <span className="ss-decl__swatch" style={{ background: c }} aria-hidden="true" />;
+}
+
+export function DeclarationRow(props: Props) {
+  const { decl, overridden } = props;
+  const overriddenTitle =
+    overridden && props.overriddenBy ? `Overridden by ${props.overriddenBy}` : undefined;
+  // The anchor element is captured from the click event (never read from a ref
+  // during render). Clicking the same field again toggles the popover closed.
+  const [editing, setEditing] = useState<null | { field: 'prop' | 'value'; anchor: HTMLElement }>(
+    null
+  );
+  const toggle = (field: 'prop' | 'value') => (e: React.MouseEvent<HTMLButtonElement>) => {
+    const anchor = e.currentTarget;
+    setEditing((cur) => (cur?.field === field ? null : { field, anchor }));
+  };
+
+  if (!props.editable) {
+    return (
+      <div
+        className={`ss-decl is-readonly${overridden ? ' is-overridden' : ''}`}
+        title={overriddenTitle}
+      >
+        <span className="ss-decl__prop">{decl.prop}</span>
+        <span className="ss-decl__colon">:</span>
+        <span className="ss-decl__value">
+          <Swatch value={decl.value} />
+          {decl.value}
+          {decl.important && <span className="ss-decl__imp"> !important</span>}
+        </span>
+      </div>
+    );
+  }
+
+  const { onChange, onRemove, onNest, nestTargets } = props;
+
+  return (
+    <div className={`ss-decl${overridden ? ' is-overridden' : ''}`} title={overriddenTitle}>
+      <button type="button" className="ss-decl__prop ss-decl__edit" onClick={toggle('prop')}>
+        {decl.prop || <span className="ss-decl__ph">property</span>}
+      </button>
+      <span className="ss-decl__colon">:</span>
+      <button type="button" className="ss-decl__value ss-decl__edit" onClick={toggle('value')}>
+        <Swatch value={decl.value} />
+        {decl.value || <span className="ss-decl__ph">value</span>}
+        {decl.important && <span className="ss-decl__imp"> !important</span>}
+      </button>
+
+      <span className="ss-decl__actions">
+        <button
+          type="button"
+          className={`ss-decl__imp-toggle${decl.important ? ' is-on' : ''}`}
+          title={decl.important ? 'Remove !important' : 'Add !important'}
+          aria-pressed={decl.important}
+          onClick={() => onChange({ ...decl, important: !decl.important })}
+        >
+          !
+        </button>
+        <NestControl nestTargets={nestTargets} onNest={onNest} />
+        <button
+          type="button"
+          className="ss-decl__remove"
+          title="Remove property"
+          aria-label="Remove property"
+          onClick={onRemove}
+        >
+          <CloseIcon size={11} />
+        </button>
+      </span>
+
+      {editing?.field === 'prop' && (
+        <EditPopover
+          anchor={editing.anchor}
+          initial={decl.prop}
+          options={CSS_PROPERTIES}
+          placeholder="property"
+          onCommit={(prop) => onChange({ ...decl, prop })}
+          onClose={() => setEditing(null)}
+        />
+      )}
+      {editing?.field === 'value' && (
+        <EditPopover
+          anchor={editing.anchor}
+          initial={decl.value}
+          placeholder="value"
+          onCommit={(value) => onChange({ ...decl, value })}
+          onClose={() => setEditing(null)}
+        />
+      )}
+    </div>
+  );
+}
+
+/** "Nest this declaration" control: a ⤵ button opening a tiny menu of this card's
+ *  existing nested selectors plus a "new nested rule" option. */
+function NestControl({
+  nestTargets,
+  onNest,
+}: {
+  nestTargets: string[];
+  onNest: (selector: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  return (
+    <span className="ss-decl__nest">
+      <button
+        type="button"
+        className={`ss-decl__nest-btn${open ? ' is-open' : ''}`}
+        title="Move into a nested rule"
+        aria-label="Move into a nested rule"
+        aria-expanded={open}
+        onClick={() => setOpen((o) => !o)}
+      >
+        <NestGlyph />
+      </button>
+      {open && (
+        <span className="ss-decl__nest-menu" onMouseLeave={() => setOpen(false)}>
+          {nestTargets.map((sel) => (
+            <button
+              key={sel}
+              type="button"
+              className="ss-decl__nest-item"
+              onClick={() => {
+                onNest(sel);
+                setOpen(false);
+              }}
+            >
+              {sel}
+            </button>
+          ))}
+          <button
+            type="button"
+            className="ss-decl__nest-item ss-decl__nest-item--new"
+            onClick={() => {
+              onNest('&:hover');
+              setOpen(false);
+            }}
+          >
+            <PlusIcon size={10} /> new nested rule
+          </button>
+        </span>
+      )}
+    </span>
+  );
+}
+
+/** "Move into a nested rule" affordance — a corner-down-right turn arrow. */
+function NestGlyph() {
+  return (
+    <svg
+      width={11}
+      height={11}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <polyline points="9 10 4 15 9 20" />
+      <path d="M20 4v7a4 4 0 0 1-4 4H4" />
+    </svg>
+  );
+}

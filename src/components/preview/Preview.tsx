@@ -40,8 +40,9 @@ import { BrowserTools } from './BrowserTools';
 import { HealthTabPanel, type HealthTabPanelRef } from '../code/HealthTabPanel';
 import { BrowserDropdown } from './BrowserDropdown';
 import { useVisualEditor } from '../../hooks/useVisualEditor';
-import { useCssEditor } from '../../hooks/useCssEditor';
-import { CssEditorPanel } from '../edit/CssEditorPanel';
+import { useCssCascadeEditor } from '../../hooks/useCssCascadeEditor';
+import { useElementSettings } from '../../hooks/useElementSettings';
+import { CssCascadePanel } from '../edit/CssCascadePanel';
 import { useBreakpoints } from '../../hooks/useBreakpoints';
 import {
   BASE_BREAKPOINT,
@@ -558,17 +559,26 @@ export const Preview = forwardRef<PreviewHandle, PreviewProps>(function Preview(
     onToast,
   });
 
-  // CSS-Mode editor — a SEPARATE feature for class-based CSS projects (vanilla
-  // Astro: no Tailwind). Mutually exclusive with the Tailwind editor above:
-  // Astro+Tailwind → `editor`; Astro without Tailwind → `cssEditor`. Same toggle
-  // and selection experience; edits write CSS rules instead of utility classes.
+  // Code-first CSS editor — a SEPARATE feature for vanilla-CSS projects (Astro
+  // without Tailwind, or plain HTML/CSS). Mutually exclusive with the Tailwind
+  // editor above: Astro+Tailwind → `editor`; vanilla CSS → `cssEditor`. Same
+  // toggle and selection experience; it surfaces the clicked element's full
+  // cascade and edits the real `.css` source (not utility classes).
   const cssEditorEnabled =
     conn.serverReady &&
     ((projectType === 'astro' && !tailwindActive) || projectType === 'statichtml');
-  const cssEditor = useCssEditor({
+  const cssEditor = useCssCascadeEditor({
     iframeRef,
     projectPath,
     enabled: cssEditorEnabled,
+    onToast,
+  });
+  // Settings tab (element tag/classes/attributes) — shares the cascade selection.
+  const elementSettings = useElementSettings({
+    iframeRef,
+    projectPath,
+    enabled: cssEditorEnabled,
+    signature: cssEditor.selection?.signature ?? null,
     onToast,
   });
   // Which editor (if any) the toolbar toggle and panel drive.
@@ -1243,31 +1253,20 @@ export const Preview = forwardRef<PreviewHandle, PreviewProps>(function Preview(
         (() => {
           // Same floating-vs-pinned strategy as the Tailwind panel above.
           const panel = (
-            <CssEditorPanel
+            <CssCascadePanel
               selection={cssEditor.selection}
-              authoredSheets={cssEditor.authoredSheets}
-              saving={cssEditor.saving}
-              onPreview={cssEditor.previewDeclaration}
-              onSave={(prop, value) => void cssEditor.saveDeclaration(prop, value)}
-              onSaveMany={(changes) => void cssEditor.saveDeclarations(changes)}
-              onCreateRule={(file, selector, decls) =>
-                void cssEditor.createRule(file, selector, decls)
-              }
-              onSendToClaude={onSendToClaude}
-              targetClass={cssEditor.targetClass}
-              pseudo={cssEditor.pseudo}
-              allClasses={cssEditor.allClasses}
-              breakpointMinPx={cssEditor.breakpointMinPx}
-              onSelectClass={cssEditor.setTargetClass}
-              onAddClass={(name) => void cssEditor.addClass(name)}
-              onRemoveClass={(name) => void cssEditor.removeClass(name)}
-              onSetPseudo={cssEditor.setPseudo}
-              onSetBreakpoint={(minPx) => {
-                cssEditor.setBreakpoint(minPx);
-                // Jump the canvas to the breakpoint width so you can see it (Base
-                // applies at all widths — leave the canvas where it is).
-                if (minPx) resize.previewAtWidth(minPx);
-              }}
+              rows={cssEditor.rows}
+              loading={cssEditor.loading}
+              bodies={cssEditor.bodies}
+              overridden={cssEditor.overridden}
+              onChangeBody={cssEditor.setBody}
+              onDeleteRule={(key) => void cssEditor.deleteRule(key)}
+              onWrapRule={(key, at) => void cssEditor.wrapRule(key, at)}
+              onRenameRule={(key, sel) => void cssEditor.renameSelector(key, sel)}
+              onRenameAtRule={(key, m) => void cssEditor.renameAtRule(key, m)}
+              onAddSelector={(sel) => void cssEditor.addSelector(sel)}
+              selectorSuggestions={cssEditor.classSuggestions.map((c) => `.${c}`)}
+              settings={elementSettings}
               onClose={cssEditor.toggleEditMode}
               pinned={editorPinned}
               onTogglePin={toggleEditorPinned}

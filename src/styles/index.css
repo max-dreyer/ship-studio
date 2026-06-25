@@ -28,6 +28,7 @@
 @import './features/visual-editor-image.css';
 @import './features/visual-editor-classes.css';
 @import './features/visual-editor-css-mode.css';
+@import './features/css-cascade.css';
 @import './features/element-tree.css';
 @import './features/device-mirror.css';
 @import './features/browser-tools.css';

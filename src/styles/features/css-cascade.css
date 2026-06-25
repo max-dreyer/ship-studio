@@ -1,0 +1,814 @@
+/**
+ * Code-first CSS editor — cascade card GUI. Styled to match the Tailwind Visual
+ * Editor panel (visual-editor.css): same tokens and control patterns — bg-tertiary
+ * controls with 1px borders and radius-sm, `--action` (green) focus/active accents,
+ * `--tint` active fills, segmented tabs, enum-style menus, uppercase section labels.
+ * Renders inside the shared `ss-edit-panel` chrome. Tokens only.
+ */
+
+:root {
+  /* Chevron rail width — the @ affordances align under it. File-local one-off. */
+  --cascade-rail: 14px;
+}
+
+/* The shared `.ss-edit-panel__body` pads + gaps with --spacing-md; the cascade
+   sections provide their own (single) insets, so reset that here. */
+.ss-cascade-panel .ss-edit-panel__body {
+  padding: 0;
+  gap: 0;
+}
+
+/* ── Selected-element header ── */
+.ss-cascade-target {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--spacing-xs);
+  padding: var(--spacing-sm) var(--spacing-md);
+  border-bottom: 1px solid var(--border);
+  font-family: var(--font-mono);
+  font-size: var(--font-size-sm);
+}
+.ss-cascade-target__tag {
+  padding: 1px 6px; /* css-ok: chip padding below scale */
+  border-radius: var(--radius-sm);
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+  font-weight: 600;
+}
+.ss-cascade-target__classes {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: var(--spacing-xs);
+  color: var(--text-secondary);
+}
+.ss-cascade-target__count {
+  margin-left: auto;
+  color: var(--text-muted);
+  font-size: var(--font-size-xs);
+}
+
+/* ── Style / Settings tabs (segmented control, matching the editor) ── */
+.ss-cascade-tabs {
+  display: flex;
+  gap: 2px; /* css-ok: segmented tray gap */
+  margin: var(--spacing-sm) var(--spacing-md) 0;
+  padding: 2px; /* css-ok: segmented tray inset */
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+}
+.ss-cascade-tab {
+  all: unset;
+  flex: 1 1 0;
+  text-align: center;
+  padding: 4px 0; /* css-ok: segment height */
+  border-radius: calc(var(--radius-sm) - 1px);
+  color: var(--text-secondary);
+  font-size: var(--font-size-sm);
+  font-weight: 500;
+  cursor: pointer;
+  transition:
+    background var(--transition),
+    color var(--transition);
+}
+.ss-cascade-tab:hover {
+  color: var(--text-primary);
+  background: var(--tint-subtle);
+}
+.ss-cascade-tab.is-active {
+  color: var(--text-primary);
+  background: var(--tint-strong);
+  box-shadow: inset 0 0 0 1px var(--tint);
+}
+
+/* ── Add selector ── */
+.ss-cascade-add-selector {
+  all: unset;
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--spacing-xs);
+  margin: var(--spacing-sm) var(--spacing-md) 0;
+  padding: 5px var(--spacing-sm); /* css-ok: matches control height */
+  border: 1px dashed var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text-muted);
+  font-size: var(--font-size-sm);
+  cursor: pointer;
+  transition:
+    color var(--transition),
+    border-color var(--transition);
+}
+.ss-cascade-add-selector:hover {
+  color: var(--text-secondary);
+  border-color: var(--border-hover);
+}
+.ss-cascade-add-selector__input {
+  box-sizing: border-box;
+  display: block;
+  margin: var(--spacing-sm) var(--spacing-md) 0;
+  width: calc(100% - 2 * var(--spacing-md));
+  height: 26px;
+  padding: 0 var(--spacing-sm);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+  font-family: var(--font-mono);
+  font-size: var(--font-size-sm);
+}
+.ss-cascade-add-selector__input:focus {
+  outline: 1px solid var(--action);
+}
+.ss-cascade-add-selector__input::placeholder {
+  color: var(--text-muted);
+}
+
+.ss-cascade-empty {
+  margin: 0;
+  padding: var(--spacing-lg);
+  color: var(--text-muted);
+  font-size: var(--font-size-sm);
+  line-height: 1.5;
+  text-align: center;
+}
+.ss-cascade-loading {
+  display: flex;
+  justify-content: center;
+  padding: var(--spacing-lg);
+}
+
+/* ── Card list ── */
+.ss-cascade-cards {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-sm);
+  padding: var(--spacing-sm) var(--spacing-md) var(--spacing-md);
+}
+
+.ss-card {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-secondary);
+  /* No `overflow: hidden` — autocomplete/at-rule menus must expand BEYOND the card. */
+  transition: border-color var(--transition);
+}
+.ss-card.is-readonly {
+  background: var(--bg-primary);
+}
+.ss-card.is-nested {
+  margin-top: var(--spacing-xs);
+  margin-left: var(--spacing-sm);
+  background: var(--bg-tertiary);
+}
+
+/* ── Card header (selector chip flanked by + Add parent / + Add child) ── */
+.ss-card__head {
+  display: flex;
+  flex-direction: column;
+  gap: 3px; /* css-ok: tight stack of affordance / selector / affordance */
+  padding: var(--spacing-sm);
+}
+.ss-card:not(.is-collapsed) .ss-card__head {
+  border-bottom: 1px solid var(--border);
+}
+.ss-card__selector-row {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-xs);
+  min-width: 0;
+}
+.ss-card__collapse {
+  all: unset;
+  cursor: pointer;
+  flex: 0 0 auto;
+  width: var(--cascade-rail);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-muted);
+  transition:
+    transform var(--transition-fast),
+    color var(--transition-fast);
+}
+.ss-card__collapse.is-collapsed {
+  transform: rotate(-90deg);
+}
+.ss-card__collapse:hover {
+  color: var(--text-secondary);
+}
+.ss-card__selector-chip {
+  display: inline-block;
+  /* Content-width and never shrink below the selector — the class name is the
+     rule's identity and must stay readable even when a long media chip is present. */
+  flex: 0 0 auto;
+  max-width: 70%;
+  padding: 1px 6px; /* css-ok: chip padding below scale */
+  border-radius: var(--radius-sm);
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+  font-family: var(--font-mono);
+  font-size: var(--font-size-sm);
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.is-readonly .ss-card__selector-chip {
+  background: transparent;
+  color: var(--text-secondary);
+  font-weight: 500;
+}
+/* Click-to-edit selector (top-level rules) — a subtle ring hints it's editable. */
+.ss-card__selector-chip--editable {
+  cursor: text;
+  transition: box-shadow var(--transition-fast);
+}
+.ss-card__selector-chip--editable:hover {
+  box-shadow: inset 0 0 0 1px var(--border-hover);
+}
+.ss-card__selector-chip--input {
+  all: unset;
+  box-sizing: border-box;
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 1px 6px; /* css-ok: matches the chip */
+  border-radius: var(--radius-sm);
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+  font-family: var(--font-mono);
+  font-size: var(--font-size-sm);
+  font-weight: 600;
+}
+.ss-card__selector-chip--input:focus {
+  outline: 1px solid var(--action);
+}
+.ss-card__head-spacer {
+  flex: 1 1 auto;
+}
+.ss-card__chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px; /* css-ok: icon + label */
+  /* Shrinks + ellipsizes when long (e.g. a prefers-color-scheme query) so it never
+     squeezes the selector chip. */
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 45%;
+  padding: 1px var(--spacing-xs); /* css-ok: chip padding below scale */
+  border-radius: var(--radius-sm);
+  background: var(--bg-tertiary);
+  color: var(--text-secondary);
+  font-family: var(--font-mono);
+  font-size: var(--font-size-xs);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.is-nested .ss-card__chip {
+  background: var(--bg-secondary);
+}
+.ss-card__chip--editable {
+  cursor: text;
+  transition: box-shadow var(--transition-fast);
+}
+.ss-card__chip--editable:hover {
+  box-shadow: inset 0 0 0 1px var(--border-hover);
+}
+.ss-card__chip--media-input {
+  all: unset;
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 60%;
+  padding: 1px var(--spacing-xs); /* css-ok: chip padding below scale */
+  border-radius: var(--radius-sm);
+  background: var(--bg-tertiary);
+  color: var(--text-secondary);
+  font-family: var(--font-mono);
+  font-size: var(--font-size-xs);
+}
+.ss-card__chip--media-input:focus {
+  outline: 1px solid var(--action);
+}
+.ss-card__chip svg {
+  flex: 0 0 auto;
+  opacity: 0.8;
+}
+.ss-card__src--ro {
+  flex: 0 0 auto;
+  color: var(--text-muted);
+  font-size: var(--font-size-xs);
+  font-style: italic;
+}
+/* trash — quiet until the card is hovered, red on hover (editor icon-button pattern) */
+.ss-card__trash {
+  all: unset;
+  cursor: pointer;
+  flex: 0 0 auto;
+  width: 16px;
+  height: 16px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius-sm);
+  color: var(--text-muted);
+  opacity: 0;
+  transition:
+    opacity var(--transition-fast),
+    color var(--transition-fast),
+    background var(--transition-fast);
+}
+.ss-card:hover .ss-card__trash {
+  opacity: 1;
+}
+.ss-card__trash:hover {
+  color: var(--error);
+  background: color-mix(in srgb, var(--error) 14%, transparent);
+}
+
+/* + Add parent / + Add child affordances */
+.ss-card__at {
+  all: unset;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 2px; /* css-ok: icon + label */
+  margin-left: calc(var(--cascade-rail) + var(--spacing-xs));
+  color: var(--text-muted);
+  font-size: var(--font-size-xs);
+  opacity: 0.5;
+  transition:
+    color var(--transition-fast),
+    opacity var(--transition-fast);
+}
+.ss-card:hover .ss-card__at {
+  opacity: 0.85;
+}
+.ss-card__at:hover {
+  color: var(--text-secondary);
+  opacity: 1;
+}
+.ss-card__at-input {
+  margin-left: calc(var(--cascade-rail) + var(--spacing-xs));
+}
+
+/* ── Card body ── */
+.ss-card__body {
+  padding: 6px var(--spacing-sm) var(--spacing-sm); /* css-ok: tight body top */
+}
+.ss-card__note {
+  margin: var(--spacing-xs) 0 0;
+  color: var(--text-muted);
+  font-size: var(--font-size-xs);
+}
+.ss-card__foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: var(--spacing-xs) var(--spacing-sm);
+  margin-top: 6px; /* css-ok: footer gap */
+  padding-top: 6px; /* css-ok: footer gap */
+  border-top: 1px solid var(--border);
+}
+/* When the add-property combobox opens it takes the whole footer row (the source
+   chip wraps below) instead of being squeezed beside it. */
+.ss-card__foot .ss-combo {
+  flex: 1 1 100%;
+  margin-top: 0;
+}
+.ss-card__add {
+  all: unset;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--spacing-xs);
+  color: var(--text-muted);
+  font-size: var(--font-size-sm);
+  transition: color var(--transition-fast);
+}
+.ss-card__add:hover {
+  color: var(--text-secondary);
+}
+.ss-card__src-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--spacing-xs);
+  min-width: 0;
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  font-size: var(--font-size-xs);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.ss-card__src-chip svg {
+  flex: 0 0 auto;
+  opacity: 0.7;
+}
+
+/* ── Declaration rows ── */
+/* Prop + value are plain WRAPPING text (clicking opens the edit popover), so a long
+   prop or value just wraps and is never cut off; a short one reads `prop: value`. */
+.ss-decl {
+  display: flex;
+  align-items: baseline;
+  gap: var(--spacing-xs);
+  padding: 2px 4px; /* css-ok: dense row */
+  margin: 0 -4px; /* css-ok: edge-to-edge row */
+  border-radius: var(--radius-sm);
+  font-family: var(--font-mono);
+  font-size: var(--font-size-sm);
+  line-height: 1.5;
+}
+.ss-decl.is-overridden {
+  color: var(--text-muted);
+}
+.ss-decl.is-overridden .ss-decl__prop,
+.ss-decl.is-overridden .ss-decl__value {
+  text-decoration: line-through;
+}
+.ss-decl.is-readonly {
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+/* Clickable display text (button reset to read as plain text). */
+.ss-decl__edit {
+  all: unset;
+  cursor: text;
+  border-radius: var(--radius-sm);
+}
+.ss-decl__edit:hover {
+  background: var(--tint-subtle);
+}
+.ss-decl__prop {
+  flex: 0 0 auto;
+  max-width: 70%;
+  color: var(--code-property);
+  white-space: normal;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+.ss-decl__colon {
+  flex: 0 0 auto;
+  color: var(--text-muted);
+}
+.ss-decl__value {
+  display: inline-flex;
+  align-items: baseline;
+  gap: var(--spacing-xs);
+  flex: 1 1 auto;
+  min-width: 0;
+  color: var(--text-primary);
+  white-space: normal;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+.ss-decl__ph {
+  color: var(--text-muted);
+}
+.ss-decl__swatch {
+  align-self: center;
+  width: 11px;
+  height: 11px;
+  border-radius: 2px; /* css-ok: tiny swatch */
+  border: 1px solid var(--border);
+  flex: 0 0 auto;
+}
+.ss-decl__imp {
+  color: var(--warning);
+}
+.ss-decl__actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 1px; /* css-ok: tight action cluster */
+  flex: 0 0 auto;
+  align-self: center;
+}
+
+/* Edit popover (click a prop/value) */
+.ss-value-pop {
+  z-index: var(--z-tooltip);
+  padding: var(--spacing-xs);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-secondary);
+  box-shadow: var(--shadow-md);
+}
+.ss-value-pop__input {
+  all: unset;
+  box-sizing: border-box;
+  width: 100%;
+  padding: var(--spacing-xs) var(--spacing-sm);
+  border: 1px solid var(--action);
+  border-radius: var(--radius-sm);
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+  font-family: var(--font-mono);
+  font-size: var(--font-size-sm);
+}
+
+/* row action buttons (! / nest / ✕) — reveal on row hover */
+.ss-decl__imp-toggle,
+.ss-decl__remove,
+.ss-decl__nest-btn {
+  all: unset;
+  cursor: pointer;
+  width: 16px;
+  height: 16px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius-sm);
+  color: var(--text-muted);
+  font-size: var(--font-size-xs);
+  opacity: 0;
+  transition:
+    opacity var(--transition-fast),
+    color var(--transition-fast),
+    background var(--transition-fast);
+}
+.ss-decl:hover .ss-decl__imp-toggle,
+.ss-decl:hover .ss-decl__remove,
+.ss-decl:hover .ss-decl__nest-btn,
+.ss-decl__imp-toggle.is-on,
+.ss-decl__nest-btn.is-open {
+  opacity: 1;
+}
+.ss-decl__imp-toggle:hover,
+.ss-decl__nest-btn:hover {
+  color: var(--text-primary);
+  background: var(--tint);
+}
+.ss-decl__imp-toggle.is-on {
+  color: var(--warning);
+  font-weight: 700;
+}
+.ss-decl__remove:hover {
+  color: var(--error);
+  background: color-mix(in srgb, var(--error) 14%, transparent);
+}
+
+/* nest-this-declaration menu (enum-style) */
+.ss-decl__nest {
+  position: relative;
+  flex: 0 0 auto;
+}
+.ss-decl__nest-menu {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 2px);
+  z-index: var(--z-dropdown);
+  display: flex;
+  flex-direction: column;
+  gap: 1px; /* css-ok: menu item gap */
+  min-width: 130px;
+  padding: var(--spacing-xs);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-secondary);
+  box-shadow: var(--shadow-md);
+}
+.ss-decl__nest-item {
+  all: unset;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-xs);
+  padding: 4px var(--spacing-sm);
+  border-radius: calc(var(--radius-sm) - 1px);
+  color: var(--text-secondary);
+  font-family: var(--font-mono);
+  font-size: var(--font-size-sm);
+  white-space: nowrap;
+}
+.ss-decl__nest-item:hover {
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+}
+.ss-decl__nest-item--new {
+  color: var(--text-muted);
+}
+
+/* ── Combobox (add property / at-rule) — editor input + enum menu ── */
+.ss-combo {
+  position: relative;
+  margin-top: var(--spacing-xs);
+}
+.ss-combo__input {
+  all: unset;
+  box-sizing: border-box;
+  width: 100%;
+  height: 24px;
+  padding: 0 var(--spacing-sm);
+  border: 1px solid var(--action);
+  border-radius: var(--radius-sm);
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+  font-family: var(--font-mono);
+  font-size: var(--font-size-sm);
+}
+.ss-combo__input::placeholder {
+  color: var(--text-muted);
+}
+.ss-combo__menu {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: calc(100% + 2px);
+  z-index: var(--z-dropdown);
+  display: flex;
+  flex-direction: column;
+  gap: 1px; /* css-ok: menu item gap */
+  max-height: 220px;
+  overflow: auto;
+  scrollbar-width: none;
+  padding: var(--spacing-xs);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-secondary);
+  box-shadow: var(--shadow-md);
+}
+.ss-combo__menu::-webkit-scrollbar {
+  width: 0;
+  height: 0;
+  display: none;
+}
+/* Inline autocomplete (property-name editing): a fixed-width menu under the field,
+   not stretched to the tiny editable's width. */
+.ss-combo__menu--inline {
+  top: calc(100% + 2px);
+  left: 0;
+  right: auto;
+  min-width: 170px;
+  max-width: 240px;
+}
+.ss-combo__create,
+.ss-combo__item {
+  all: unset;
+  cursor: pointer;
+  padding: 4px var(--spacing-sm);
+  border-radius: calc(var(--radius-sm) - 1px);
+  color: var(--text-secondary);
+  font-family: var(--font-mono);
+  font-size: var(--font-size-sm);
+}
+.ss-combo__create {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-xs);
+  margin-bottom: 1px; /* css-ok: separate create row */
+  color: var(--text-primary);
+  border-bottom: 1px solid var(--border);
+  border-radius: 0;
+  padding-bottom: 5px; /* css-ok: align with item rhythm */
+}
+.ss-combo__create-chip {
+  padding: 0 var(--spacing-xs);
+  border-radius: var(--radius-sm);
+  background: var(--bg-tertiary);
+  color: var(--code-property);
+}
+.ss-combo__create:hover,
+.ss-combo__item:hover {
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+}
+
+/* ── Settings tab ── */
+.ss-settings {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-md);
+  padding: var(--spacing-md);
+}
+.ss-settings__group {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-sm);
+}
+.ss-settings__label {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: var(--font-size-sm);
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+.ss-settings__tag {
+  align-self: flex-start;
+  padding: 2px var(--spacing-sm);
+  border-radius: var(--radius-sm);
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border);
+  color: var(--text-primary);
+  font-family: var(--font-mono);
+  font-size: var(--font-size-sm);
+}
+.ss-settings__classes {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--spacing-xs);
+}
+.ss-settings__class-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--spacing-xs);
+  padding: 2px var(--spacing-sm);
+  border-radius: var(--radius-sm);
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border);
+  color: var(--text-primary);
+  font-family: var(--font-mono);
+  font-size: var(--font-size-xs);
+}
+.ss-settings__class-remove {
+  all: unset;
+  cursor: pointer;
+  display: inline-flex;
+  color: var(--text-muted);
+  transition: color var(--transition-fast);
+}
+.ss-settings__class-remove:hover {
+  color: var(--error);
+}
+.ss-settings__class-add {
+  all: unset;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 2px; /* css-ok: icon + label */
+  padding: 2px var(--spacing-sm);
+  border: 1px dashed var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text-muted);
+  font-size: var(--font-size-xs);
+}
+.ss-settings__class-add:hover {
+  color: var(--text-secondary);
+  border-color: var(--border-hover);
+}
+.ss-settings__class-input {
+  all: unset;
+  width: 10ch;
+  padding: 2px var(--spacing-sm);
+  border: 1px solid var(--action);
+  border-radius: var(--radius-sm);
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+  font-family: var(--font-mono);
+  font-size: var(--font-size-xs);
+}
+.ss-settings__attrs {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 2px; /* css-ok: dense rows */
+  font-family: var(--font-mono);
+  font-size: var(--font-size-sm);
+}
+.ss-settings__attr {
+  display: flex;
+  gap: var(--spacing-xs);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.ss-settings__attr-name {
+  color: var(--code-property);
+}
+.ss-settings__attr-eq {
+  color: var(--text-muted);
+}
+.ss-settings__attr-value {
+  color: var(--text-secondary);
+}
+.ss-settings__empty {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: var(--font-size-xs);
+}
+
+/* Hover affordance = brighter text/icon only, NEVER a filled background — this
+   overrides the global `button:hover { background: var(--border) }` (and a couple of
+   tints) for the cascade's trigger/action buttons and rows. Dropdown menu items
+   (`__combo`/`__nest-item`) are intentionally NOT included — they keep the standard
+   bg-hover, matching the Tailwind editor's `ss-enum__item`. */
+.ss-cascade-tab:hover,
+.ss-cascade-add-selector:hover,
+.ss-card__collapse:hover,
+.ss-card__trash:hover,
+.ss-card__at:hover,
+.ss-card__add:hover,
+.ss-decl:hover,
+.ss-decl__imp-toggle:hover,
+.ss-decl__nest-btn:hover,
+.ss-decl__remove:hover,
+.ss-settings__class-add:hover,
+.ss-settings__class-remove:hover {
+  background: none;
+}

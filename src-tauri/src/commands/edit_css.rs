@@ -225,6 +225,48 @@ pub enum CssResolution {
     NotFound { selector: String },
 }
 
+/// One matching rule reported by the in-iframe cascade walker, to be mapped back
+/// to its source location. camelCase to match the `ss:cascade` postMessage shape.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MatchedRuleQuery {
+    /// The (normalized) compound selector the browser matched, e.g. `.btn--primary`
+    /// or `#hero .btn`.
+    pub selector: String,
+    /// The enclosing media condition text (`(max-width: 768px)`), or null for a base
+    /// rule. Matched against the source `@media` prelude so a min-width OR max-width
+    /// (or any) media variant resolves to its OWN rule, not the base one.
+    #[serde(default)]
+    pub media_text: Option<String>,
+    /// The served stylesheet URL (`rule.parentStyleSheet.href`), used only as a
+    /// basename tie-breaker when the same selector lives in several files.
+    #[serde(default)]
+    pub href: Option<String>,
+}
+
+/// Where a cascade rule lives in source — the editable seam for the code panel.
+/// Index-aligned with the `matched` input of [`locate_css_rules`].
+#[derive(Debug, PartialEq, Serialize)]
+#[serde(tag = "status", rename_all = "snake_case")]
+pub enum RuleLocation {
+    /// Pinned to exactly one source rule. `inner_text` is the verbatim text inside
+    /// the braces — what the editor seeds from and drift-guards against.
+    Resolved {
+        /// Project-relative POSIX stylesheet path.
+        file: String,
+        /// 1-based line of the rule's selector.
+        line: usize,
+        /// Verbatim source between the rule's braces.
+        inner_text: String,
+    },
+    /// The selector resolves to more than one source rule — read-only (we never
+    /// guess which one the browser painted).
+    Multiple { files: Vec<String> },
+    /// No authored `.css` rule backs this match (UA / framework-injected / inline /
+    /// unmappable scoped style) — read-only.
+    NotFound,
+}
+
 /// One located style rule and the byte span of its declaration block.
 #[derive(Debug, Clone, PartialEq)]
 struct RuleSpan {
@@ -232,6 +274,12 @@ struct RuleSpan {
     selector: String,
     /// `@media` prelude (e.g. `(min-width: 768px)`) if nested, else `None`.
     media: Option<String>,
+    /// Byte range of the enclosing `@media` condition text (for editing the at-rule),
+    /// if the rule is inside one.
+    media_prelude: Option<(usize, usize)>,
+    /// Byte offset of the first significant byte of the selector (for delete/wrap,
+    /// which need the rule's start, not just its block).
+    selector_start: usize,
     /// Byte offset just inside the opening `{`.
     block_inner_start: usize,
     /// Byte offset of the closing `}`.
@@ -375,6 +423,349 @@ fn selector_has_part(selector: &str, target: &str) -> bool {
     selector.split(',').any(|p| p.trim() == target)
 }
 
+/// Normalize a selector for cross-source comparison: collapse runs of whitespace
+/// to one space, then drop the spaces around descendant combinators so an authored
+/// `.a>.b` matches the browser-serialized `.a > .b` (and vice-versa).
+fn norm_selector(s: &str) -> String {
+    let collapsed = s.split_whitespace().collect::<Vec<_>>().join(" ");
+    collapsed
+        .replace(" > ", ">")
+        .replace(" + ", "+")
+        .replace(" ~ ", "~")
+}
+
+/// Like [`selector_has_part`] but whitespace/combinator-insensitive — used to match
+/// a browser-reported compound selector against an authored rule's selector group.
+fn rule_selector_matches(rule_selector: &str, target: &str) -> bool {
+    let t = norm_selector(target);
+    rule_selector.split(',').any(|p| norm_selector(p) == t)
+}
+
+/// Whether a rule's `@media` prelude equals the browser-reported condition text
+/// (whitespace/case-insensitive). Both empty → a base (un-mediated) rule. This
+/// matches by the FULL condition so max-width / feature queries don't collide with
+/// the base rule the way a min-width-only comparison did.
+fn media_text_matches(rule_media: &Option<String>, query: &Option<String>) -> bool {
+    fn norm(s: &str) -> String {
+        s.chars()
+            .filter(|c| !c.is_whitespace())
+            .flat_map(|c| c.to_lowercase())
+            .collect()
+    }
+    let r = rule_media.as_deref().map(norm).unwrap_or_default();
+    let q = query.as_deref().map(norm).unwrap_or_default();
+    r == q
+}
+
+/// Whether braces in an edited rule body are balanced (comment/string-aware) — the
+/// guard that lets nested CSS through while still preventing a body from breaking
+/// out of its own block.
+fn braces_balanced(s: &str) -> bool {
+    let b = s.as_bytes();
+    let mut i = 0usize;
+    let mut depth = 0i32;
+    let mut quote = 0u8;
+    while i < b.len() {
+        let c = b[i];
+        if quote != 0 {
+            if c == b'\\' {
+                i += 2;
+                continue;
+            }
+            if c == quote {
+                quote = 0;
+            }
+            i += 1;
+            continue;
+        }
+        if c == b'/' && i + 1 < b.len() && b[i + 1] == b'*' {
+            i += 2;
+            while i + 1 < b.len() && !(b[i] == b'*' && b[i + 1] == b'/') {
+                i += 1;
+            }
+            i = (i + 2).min(b.len());
+            continue;
+        }
+        match c {
+            b'"' | b'\'' => quote = c,
+            b'{' => depth += 1,
+            b'}' => {
+                depth -= 1;
+                if depth < 0 {
+                    return false;
+                }
+            }
+            _ => {}
+        }
+        i += 1;
+    }
+    depth == 0 && quote == 0
+}
+
+/// The filename component of a served stylesheet URL (`…/styles.css?v=3` → `styles.css`).
+fn href_basename(href: &str) -> Option<String> {
+    let no_q = href.split(['?', '#']).next().unwrap_or(href);
+    no_q.rsplit('/')
+        .next()
+        .filter(|s| !s.is_empty())
+        .map(|s| s.to_string())
+}
+
+/// The filename component of a project-relative POSIX path.
+fn rel_basename(rel: &str) -> &str {
+    rel.rsplit('/').next().unwrap_or(rel)
+}
+
+/// Map one cascade match to its source rule across the pre-indexed sheets.
+fn locate_rule(sheets: &[SheetIndex], q: &MatchedRuleQuery) -> RuleLocation {
+    let resolved = |rel: &str, content: &str, rule: &RuleSpan| RuleLocation::Resolved {
+        file: rel.to_string(),
+        line: rule.selector_line,
+        inner_text: content[rule.block_inner_start..rule.block_inner_end].to_string(),
+    };
+
+    let mut hits: Vec<(&str, &str, &RuleSpan)> = Vec::new();
+    for sheet in sheets {
+        for rule in &sheet.rules {
+            if rule_selector_matches(&rule.selector, &q.selector)
+                && media_text_matches(&rule.media, &q.media_text)
+            {
+                hits.push((sheet.rel.as_str(), sheet.content.as_str(), rule));
+            }
+        }
+    }
+
+    match hits.len() {
+        0 => RuleLocation::NotFound,
+        1 => {
+            let (rel, content, rule) = hits[0];
+            resolved(rel, content, rule)
+        }
+        _ => {
+            // Same selector in several files — let the served href's basename break
+            // the tie when it pins exactly one. Otherwise it's read-only.
+            if let Some(base) = q.href.as_deref().and_then(href_basename) {
+                let narrowed: Vec<_> = hits
+                    .iter()
+                    .copied()
+                    .filter(|(rel, _, _)| rel_basename(rel) == base)
+                    .collect();
+                if narrowed.len() == 1 {
+                    let (rel, content, rule) = narrowed[0];
+                    return resolved(rel, content, rule);
+                }
+            }
+            RuleLocation::Multiple {
+                files: hits.iter().map(|(rel, _, _)| rel.to_string()).collect(),
+            }
+        }
+    }
+}
+
+/// Replace the verbatim body of the single rule matching `selector`+`bp` in `src`,
+/// drift-guarded against `old_inner`. The testable core of [`apply_css_rule_text`].
+fn apply_rule_text_to_source(
+    src: &str,
+    selector: &str,
+    media_text: &Option<String>,
+    old_inner: &str,
+    new_inner: &str,
+) -> Result<String, CommandError> {
+    let matches: Vec<RuleSpan> = index_rules(src)
+        .into_iter()
+        .filter(|r| {
+            rule_selector_matches(&r.selector, selector) && media_text_matches(&r.media, media_text)
+        })
+        .collect();
+    let rule = match matches.len() {
+        1 => &matches[0],
+        0 => {
+            return Err(CommandError::Validation {
+                field: "selector".into(),
+                reason: "rule no longer matches — reselect the element".into(),
+            })
+        }
+        _ => {
+            return Err(CommandError::Validation {
+                field: "selector".into(),
+                reason: "selector matches multiple rules — not editable".into(),
+            })
+        }
+    };
+    // Drift guard: the source must still read exactly what the editor was seeded
+    // with, or another change has landed and we'd clobber it.
+    let current = &src[rule.block_inner_start..rule.block_inner_end];
+    if current != old_inner {
+        return Err(CommandError::Validation {
+            field: "css".into(),
+            reason: "source changed since you selected it — reselect to edit".into(),
+        });
+    }
+    let mut out = String::with_capacity(src.len() - current.len() + new_inner.len());
+    out.push_str(&src[..rule.block_inner_start]);
+    out.push_str(new_inner);
+    out.push_str(&src[rule.block_inner_end..]);
+    Ok(out)
+}
+
+/// Find the single rule matching `selector`+`media_text` and verify its body still
+/// reads `old_inner` (drift guard). The shared front half of delete/wrap.
+fn locate_one_editable<'a>(
+    rules: &'a [RuleSpan],
+    src: &str,
+    selector: &str,
+    media_text: &Option<String>,
+    old_inner: &str,
+) -> Result<&'a RuleSpan, CommandError> {
+    let matches: Vec<&RuleSpan> = rules
+        .iter()
+        .filter(|r| {
+            rule_selector_matches(&r.selector, selector) && media_text_matches(&r.media, media_text)
+        })
+        .collect();
+    let rule = match matches.len() {
+        1 => matches[0],
+        0 => {
+            return Err(CommandError::Validation {
+                field: "selector".into(),
+                reason: "rule no longer matches — reselect the element".into(),
+            })
+        }
+        _ => {
+            return Err(CommandError::Validation {
+                field: "selector".into(),
+                reason: "selector matches multiple rules — not editable".into(),
+            })
+        }
+    };
+    if &src[rule.block_inner_start..rule.block_inner_end] != old_inner {
+        return Err(CommandError::Validation {
+            field: "css".into(),
+            reason: "source changed since you selected it — reselect to edit".into(),
+        });
+    }
+    Ok(rule)
+}
+
+/// Remove the whole rule (selector through closing `}`, plus its line's leading
+/// indentation and one trailing newline) from `src`. The testable core of
+/// [`delete_css_rule`].
+fn remove_rule_from_source(
+    src: &str,
+    selector: &str,
+    media_text: &Option<String>,
+    old_inner: &str,
+) -> Result<String, CommandError> {
+    let rules = index_rules(src);
+    let rule = locate_one_editable(&rules, src, selector, media_text, old_inner)?;
+    let bytes = src.as_bytes();
+    // Back up over the selector line's indentation so we don't leave a blank gutter.
+    let mut start = rule.selector_start;
+    while start > 0 && (bytes[start - 1] == b' ' || bytes[start - 1] == b'\t') {
+        start -= 1;
+    }
+    let mut end = rule.block_inner_end + 1; // just past the closing `}`
+    while end < bytes.len() && (bytes[end] == b' ' || bytes[end] == b'\t') {
+        end += 1;
+    }
+    if end < bytes.len() && bytes[end] == b'\n' {
+        end += 1;
+    }
+    let mut out = String::with_capacity(src.len() - (end - start));
+    out.push_str(&src[..start]);
+    out.push_str(&src[end..]);
+    Ok(out)
+}
+
+/// Replace the matching rule's selector with `new_selector` (drift-guarded against
+/// `old_inner`). Lets the user change a rule to any selector — combinators, pseudo
+/// classes, attributes — the only constraint is no `{`/`}`. Testable core of
+/// [`rename_css_selector`].
+fn rename_selector_in_source(
+    src: &str,
+    selector: &str,
+    media_text: &Option<String>,
+    old_inner: &str,
+    new_selector: &str,
+) -> Result<String, CommandError> {
+    validate_selector(new_selector)?;
+    let rules = index_rules(src);
+    let rule = locate_one_editable(&rules, src, selector, media_text, old_inner)?;
+    let brace = rule.block_inner_start - 1; // the opening `{`
+    let mut out = String::with_capacity(src.len() + new_selector.len());
+    out.push_str(&src[..rule.selector_start]);
+    out.push_str(new_selector.trim());
+    out.push(' ');
+    out.push_str(&src[brace..]); // `{ … }`
+    Ok(out)
+}
+
+/// Replace the condition of the `@media` block enclosing the matching rule with
+/// `new_media` (drift-guarded). Edits the shared wrapper, so every rule inside that
+/// `@media` moves with it. Testable core of [`rename_css_at_rule`].
+fn rename_at_rule_in_source(
+    src: &str,
+    selector: &str,
+    media_text: &Option<String>,
+    old_inner: &str,
+    new_media: &str,
+) -> Result<String, CommandError> {
+    let nm = new_media.trim();
+    if nm.is_empty() || nm.contains('{') || nm.contains('}') {
+        return Err(CommandError::Validation {
+            field: "media".into(),
+            reason: "invalid at-rule condition".into(),
+        });
+    }
+    let rules = index_rules(src);
+    let rule = locate_one_editable(&rules, src, selector, media_text, old_inner)?;
+    let (cs, ce) = rule.media_prelude.ok_or_else(|| CommandError::Validation {
+        field: "media".into(),
+        reason: "this rule isn't inside an at-rule".into(),
+    })?;
+    let mut out = String::with_capacity(src.len() + nm.len());
+    out.push_str(&src[..cs]);
+    out.push_str(nm);
+    out.push_str(&src[ce..]);
+    Ok(out)
+}
+
+/// Wrap the matching rule in an at-rule: `selector { body }` →
+/// `at_prelude {\n  selector { body }\n}` (re-indented). The testable core of
+/// [`wrap_css_rule`]. Only `@media` keeps the inner rule editable afterward (the
+/// locator indexes rules inside `@media`, not `@supports`/`@layer` yet).
+fn wrap_rule_in_source(
+    src: &str,
+    selector: &str,
+    media_text: &Option<String>,
+    at_prelude: &str,
+    old_inner: &str,
+) -> Result<String, CommandError> {
+    let at = at_prelude.trim();
+    if !at.starts_with('@') || at.contains('{') || at.contains('}') {
+        return Err(CommandError::Validation {
+            field: "atRule".into(),
+            reason: "invalid at-rule prelude".into(),
+        });
+    }
+    let rules = index_rules(src);
+    let rule = locate_one_editable(&rules, src, selector, media_text, old_inner)?;
+    let bytes = src.as_bytes();
+    let mut region_start = rule.selector_start;
+    while region_start > 0 && bytes[region_start - 1] != b'\n' {
+        region_start -= 1;
+    }
+    let region_end = rule.block_inner_end + 1; // just past the closing `}`
+    let rule_text = &src[rule.selector_start..region_end]; // selector through `}`
+    let indented = format!("  {}", rule_text.replace('\n', "\n  "));
+    let wrapped = format!("{at} {{\n{indented}\n}}");
+    let mut out = String::with_capacity(src.len() + wrapped.len());
+    out.push_str(&src[..region_start]);
+    out.push_str(&wrapped);
+    out.push_str(&src[region_end..]);
+    Ok(out)
+}
+
 // ───────────────────────────── Locator ─────────────────────────────
 
 /// Index every top-level (and single-level `@media`-nested) style rule in a
@@ -382,7 +773,8 @@ fn selector_has_part(selector: &str, target: &str) -> bool {
 /// and nested blocks are skipped rather than mis-read as rules.
 fn index_rules(css: &str) -> Vec<RuleSpan> {
     enum Frame {
-        Media(String),
+        /// `@media` block — condition string + byte range of the condition text.
+        Media(String, usize, usize),
         /// Any at-rule we don't index into (keyframes, font-face, supports) or a
         /// nested/malformed block.
         Other,
@@ -433,20 +825,48 @@ fn index_rules(css: &str) -> Vec<RuleSpan> {
             } else if let Some(rest) = prelude.strip_prefix('@') {
                 if rest.to_ascii_lowercase().starts_with("media") {
                     let media_prelude = rest["media".len()..].trim().to_string();
-                    stack.push(Frame::Media(media_prelude));
+                    // Byte range of the condition text within the original source, so
+                    // the at-rule can be edited in place.
+                    let raw = &css[prelude_start..i];
+                    let kw = raw
+                        .to_ascii_lowercase()
+                        .find("@media")
+                        .map(|k| k + 6)
+                        .unwrap_or(0);
+                    let rb = raw.as_bytes();
+                    let mut cs = kw;
+                    while cs < raw.len() && rb[cs].is_ascii_whitespace() {
+                        cs += 1;
+                    }
+                    let mut ce = raw.len();
+                    while ce > cs && rb[ce - 1].is_ascii_whitespace() {
+                        ce -= 1;
+                    }
+                    stack.push(Frame::Media(
+                        media_prelude,
+                        prelude_start + cs,
+                        prelude_start + ce,
+                    ));
                 } else {
                     stack.push(Frame::Other);
                 }
             } else if !prelude.is_empty() {
-                let media = stack.iter().rev().find_map(|f| match f {
-                    Frame::Media(m) => Some(m.clone()),
-                    _ => None,
-                });
-                let selector_line = line_of(css, first_significant(css, prelude_start, i));
+                let (media, media_prelude) = stack
+                    .iter()
+                    .rev()
+                    .find_map(|f| match f {
+                        Frame::Media(m, cs, ce) => Some((Some(m.clone()), Some((*cs, *ce)))),
+                        _ => None,
+                    })
+                    .unwrap_or((None, None));
+                let selector_start = first_significant(css, prelude_start, i);
+                let selector_line = line_of(css, selector_start);
                 let idx = rules.len();
                 rules.push(RuleSpan {
                     selector: prelude.to_string(),
                     media,
+                    media_prelude,
+                    selector_start,
                     block_inner_start: i + 1,
                     block_inner_end: i + 1,
                     selector_line,
@@ -1097,6 +1517,149 @@ pub fn list_css_classes(project_path: String) -> Result<Vec<String>, CommandErro
     Ok(set.into_iter().collect())
 }
 
+/// Map a batch of cascade matches (from the in-iframe walker) back to their source
+/// rules, in the same order. Each entry is `resolved` (editable), `multiple`, or
+/// `not_found` (read-only) — the code panel renders accordingly.
+#[tauri::command]
+#[tracing::instrument(skip(matched), fields(project = %project_path, rules = matched.len()))]
+pub fn locate_css_rules(
+    project_path: String,
+    matched: Vec<MatchedRuleQuery>,
+) -> Result<Vec<RuleLocation>, CommandError> {
+    let root = validate_project_path(&project_path)?;
+    let sheets = cached_sheets(&root);
+    Ok(matched.iter().map(|q| locate_rule(&sheets, q)).collect())
+}
+
+/// Replace one rule's body with the user's edited source CSS, written verbatim and
+/// surgically (formatting/comments outside the rule untouched). Drift-guarded
+/// against `old_inner`; fail-closed if the rule isn't pinned to one block or the
+/// new body would break out of it (`{`/`}` are rejected — a code panel edits the
+/// declarations of a single rule, never its structure).
+#[tauri::command]
+#[tracing::instrument(
+    skip(old_inner, new_inner),
+    fields(project = %project_path, file = %file, selector = %selector)
+)]
+pub fn apply_css_rule_text(
+    project_path: String,
+    file: String,
+    selector: String,
+    media_text: Option<String>,
+    old_inner: String,
+    new_inner: String,
+) -> Result<(), CommandError> {
+    // Braces are allowed (nested CSS) as long as they're balanced — an unbalanced
+    // body could break out of the rule and corrupt the file.
+    if !braces_balanced(&new_inner) {
+        return Err(CommandError::Validation {
+            field: "css".into(),
+            reason: "unbalanced { } in the rule body".into(),
+        });
+    }
+    let root = validate_project_path(&project_path)?;
+    let abs = safe_join(&root, &file)?;
+    let src = std::fs::read_to_string(&abs).map_err(CommandError::from)?;
+    let updated = apply_rule_text_to_source(&src, &selector, &media_text, &old_inner, &new_inner)?;
+    if updated != src {
+        std::fs::write(&abs, updated).map_err(CommandError::from)?;
+        invalidate_sheet_cache(&root);
+    }
+    Ok(())
+}
+
+/// Delete the whole rule for `selector`+`media_text` from its stylesheet,
+/// drift-guarded against `old_inner`. Fail-closed if it isn't pinned to one rule.
+#[tauri::command]
+#[tracing::instrument(skip(old_inner), fields(project = %project_path, file = %file, selector = %selector))]
+pub fn delete_css_rule(
+    project_path: String,
+    file: String,
+    selector: String,
+    media_text: Option<String>,
+    old_inner: String,
+) -> Result<(), CommandError> {
+    let root = validate_project_path(&project_path)?;
+    let abs = safe_join(&root, &file)?;
+    let src = std::fs::read_to_string(&abs).map_err(CommandError::from)?;
+    let updated = remove_rule_from_source(&src, &selector, &media_text, &old_inner)?;
+    if updated != src {
+        std::fs::write(&abs, updated).map_err(CommandError::from)?;
+        invalidate_sheet_cache(&root);
+    }
+    Ok(())
+}
+
+/// Wrap the rule for `selector`+`media_text` in `at_prelude` (e.g. a `@media`
+/// query), drift-guarded against `old_inner`.
+#[tauri::command]
+#[tracing::instrument(skip(old_inner), fields(project = %project_path, file = %file, selector = %selector, at = %at_prelude))]
+pub fn wrap_css_rule(
+    project_path: String,
+    file: String,
+    selector: String,
+    media_text: Option<String>,
+    at_prelude: String,
+    old_inner: String,
+) -> Result<(), CommandError> {
+    let root = validate_project_path(&project_path)?;
+    let abs = safe_join(&root, &file)?;
+    let src = std::fs::read_to_string(&abs).map_err(CommandError::from)?;
+    let updated = wrap_rule_in_source(&src, &selector, &media_text, &at_prelude, &old_inner)?;
+    if updated != src {
+        std::fs::write(&abs, updated).map_err(CommandError::from)?;
+        invalidate_sheet_cache(&root);
+    }
+    Ok(())
+}
+
+/// Change the selector of the rule for `selector`+`media_text` to `new_selector`,
+/// drift-guarded against `old_inner`.
+#[tauri::command]
+#[tracing::instrument(skip(old_inner), fields(project = %project_path, file = %file, selector = %selector, new = %new_selector))]
+pub fn rename_css_selector(
+    project_path: String,
+    file: String,
+    selector: String,
+    media_text: Option<String>,
+    old_inner: String,
+    new_selector: String,
+) -> Result<(), CommandError> {
+    let root = validate_project_path(&project_path)?;
+    let abs = safe_join(&root, &file)?;
+    let src = std::fs::read_to_string(&abs).map_err(CommandError::from)?;
+    let updated =
+        rename_selector_in_source(&src, &selector, &media_text, &old_inner, &new_selector)?;
+    if updated != src {
+        std::fs::write(&abs, updated).map_err(CommandError::from)?;
+        invalidate_sheet_cache(&root);
+    }
+    Ok(())
+}
+
+/// Change the `@media` condition enclosing the rule for `selector`+`media_text` to
+/// `new_media`, drift-guarded against `old_inner`.
+#[tauri::command]
+#[tracing::instrument(skip(old_inner), fields(project = %project_path, file = %file, selector = %selector, new = %new_media))]
+pub fn rename_css_at_rule(
+    project_path: String,
+    file: String,
+    selector: String,
+    media_text: Option<String>,
+    old_inner: String,
+    new_media: String,
+) -> Result<(), CommandError> {
+    let root = validate_project_path(&project_path)?;
+    let abs = safe_join(&root, &file)?;
+    let src = std::fs::read_to_string(&abs).map_err(CommandError::from)?;
+    let updated = rename_at_rule_in_source(&src, &selector, &media_text, &old_inner, &new_media)?;
+    if updated != src {
+        std::fs::write(&abs, updated).map_err(CommandError::from)?;
+        invalidate_sheet_cache(&root);
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1567,6 +2130,271 @@ mod tests {
         assert_eq!(
             out,
             "@media (min-width: 768px) {\n  .hero {\n    color: red;\n  }\n}"
+        );
+    }
+
+    // ───────────── Code-first cascade editor: locate + rule-text write ─────────────
+
+    fn query(selector: &str, media_text: Option<&str>, href: Option<&str>) -> MatchedRuleQuery {
+        MatchedRuleQuery {
+            selector: selector.into(),
+            media_text: media_text.map(|s| s.into()),
+            href: href.map(|s| s.into()),
+        }
+    }
+
+    #[test]
+    fn locates_a_single_rule_with_verbatim_body() {
+        let sheets = idx(vec![(
+            "styles.css".into(),
+            ".btn {\n  padding: 10px;\n  color: red;\n}\n".into(),
+        )]);
+        match locate_rule(&sheets, &query(".btn", None, None)) {
+            RuleLocation::Resolved {
+                file,
+                line,
+                inner_text,
+            } => {
+                assert_eq!(file, "styles.css");
+                assert_eq!(line, 1);
+                assert_eq!(inner_text, "\n  padding: 10px;\n  color: red;\n");
+            }
+            other => panic!("expected resolved, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn matches_selector_ignoring_combinator_whitespace() {
+        // Authored `.a>.b`; browser reports `.a > .b` — they must resolve to each other.
+        let sheets = idx(vec![("s.css".into(), ".a>.b {\n  gap: 1rem;\n}\n".into())]);
+        assert!(matches!(
+            locate_rule(&sheets, &query(".a > .b", None, None)),
+            RuleLocation::Resolved { .. }
+        ));
+    }
+
+    #[test]
+    fn locates_media_scoped_rule_by_full_condition_not_just_min_width() {
+        // Base + a MAX-width variant (the case that collided under min-width matching).
+        let sheets = idx(vec![(
+            "s.css".into(),
+            ".x {\n  color: red;\n}\n@media (max-width: 768px) {\n  .x {\n    color: blue;\n  }\n}\n"
+                .into(),
+        )]);
+        // Base query (no media) resolves to the base rule, NOT the media one.
+        assert!(matches!(
+            locate_rule(&sheets, &query(".x", None, None)),
+            RuleLocation::Resolved { line, .. } if line == 1
+        ));
+        // The max-width variant resolves to its OWN rule (line 5), whitespace-insensitive.
+        assert!(matches!(
+            locate_rule(&sheets, &query(".x", Some("(max-width:768px)"), None)),
+            RuleLocation::Resolved { line, .. } if line == 5
+        ));
+    }
+
+    #[test]
+    fn reports_not_found_for_unmapped_match() {
+        let sheets = idx(vec![("s.css".into(), ".a { color: red; }".into())]);
+        assert_eq!(
+            locate_rule(&sheets, &query(".ghost", None, None)),
+            RuleLocation::NotFound
+        );
+    }
+
+    #[test]
+    fn duplicate_selector_is_multiple_unless_href_disambiguates() {
+        let sheets = idx(vec![
+            ("a.css".into(), ".dup { color: red; }".into()),
+            ("nested/b.css".into(), ".dup { color: blue; }".into()),
+        ]);
+        // Ambiguous without a hint.
+        assert!(matches!(
+            locate_rule(&sheets, &query(".dup", None, None)),
+            RuleLocation::Multiple { .. }
+        ));
+        // The served href's basename pins exactly one file.
+        match locate_rule(
+            &sheets,
+            &query(".dup", None, Some("http://localhost:5173/nested/b.css?v=9")),
+        ) {
+            RuleLocation::Resolved { file, .. } => assert_eq!(file, "nested/b.css"),
+            other => panic!("expected resolved via href, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn writes_edited_rule_body_verbatim_when_drift_guard_holds() {
+        let src = ".btn {\n  padding: 10px;\n}\n.other { color: red; }\n";
+        let old_inner = "\n  padding: 10px;\n";
+        let new_inner = "\n  padding: 2rem;\n  gap: 1rem;\n";
+        let out = apply_rule_text_to_source(src, ".btn", &None, old_inner, new_inner).unwrap();
+        assert_eq!(
+            out,
+            ".btn {\n  padding: 2rem;\n  gap: 1rem;\n}\n.other { color: red; }\n"
+        );
+    }
+
+    #[test]
+    fn writes_nested_css_into_a_rule_body() {
+        // A rule with nested children: index_rules still finds the OUTER rule's full
+        // span (its nested blocks are balanced), so a nested edit round-trips.
+        let src = ".card {\n  color: red;\n}\n";
+        let nested = "\n  color: red;\n  &:hover { color: blue; }\n";
+        let out =
+            apply_rule_text_to_source(src, ".card", &None, "\n  color: red;\n", nested).unwrap();
+        assert_eq!(
+            out,
+            ".card {\n  color: red;\n  &:hover { color: blue; }\n}\n"
+        );
+        // The outer rule is still locatable after the nested write.
+        assert!(matches!(
+            locate_rule(
+                &idx(vec![("s.css".into(), out)]),
+                &query(".card", None, None)
+            ),
+            RuleLocation::Resolved { .. }
+        ));
+    }
+
+    #[test]
+    fn balanced_braces_are_allowed_unbalanced_are_not() {
+        assert!(braces_balanced(
+            "\n  color: red;\n  &:hover { color: blue; }\n"
+        ));
+        assert!(braces_balanced("\n  content: '{';\n")); // brace in a string is fine
+        assert!(braces_balanced("\n  /* } */ color: red;\n")); // brace in a comment is fine
+        assert!(!braces_balanced("\n  color: red;\n}\n.evil { x: y;\n")); // breaks out
+        assert!(!braces_balanced("\n  & { color: red;\n")); // unclosed
+    }
+
+    #[test]
+    fn rule_text_write_is_fail_closed_on_drift() {
+        let src = ".btn {\n  padding: 10px;\n}\n";
+        // `old_inner` no longer matches the file → reject rather than clobber.
+        let err =
+            apply_rule_text_to_source(src, ".btn", &None, "\n  padding: 99px;\n", "\n  x: y;\n")
+                .unwrap_err();
+        assert!(matches!(err, CommandError::Validation { field, .. } if field == "css"));
+    }
+
+    #[test]
+    fn deletes_a_whole_rule_with_its_line_and_trailing_newline() {
+        let src = ".a { color: red; }\n.btn {\n  padding: 10px;\n}\n.c { x: y; }\n";
+        let out = remove_rule_from_source(src, ".btn", &None, "\n  padding: 10px;\n").unwrap();
+        assert_eq!(out, ".a { color: red; }\n.c { x: y; }\n");
+    }
+
+    #[test]
+    fn deletes_a_media_scoped_rule_not_the_base() {
+        let src = ".x { color: red; }\n@media (max-width: 768px) {\n  .x { color: blue; }\n}\n";
+        // Delete only the media variant; the base rule stays.
+        let out = remove_rule_from_source(
+            src,
+            ".x",
+            &Some("(max-width: 768px)".into()),
+            " color: blue; ",
+        )
+        .unwrap();
+        assert!(out.contains(".x { color: red; }"));
+        assert!(!out.contains("color: blue"));
+    }
+
+    #[test]
+    fn wraps_a_rule_in_a_media_query_and_stays_locatable() {
+        let src = ".btn {\n  padding: 10px;\n}\n";
+        let out = wrap_rule_in_source(
+            src,
+            ".btn",
+            &None,
+            "@media (max-width: 768px)",
+            "\n  padding: 10px;\n",
+        )
+        .unwrap();
+        assert_eq!(
+            out,
+            "@media (max-width: 768px) {\n  .btn {\n    padding: 10px;\n  }\n}\n"
+        );
+        // The wrapped rule is still resolvable under its new media condition.
+        assert!(matches!(
+            locate_rule(
+                &idx(vec![("s.css".into(), out)]),
+                &query(".btn", Some("(max-width: 768px)"), None)
+            ),
+            RuleLocation::Resolved { .. }
+        ));
+    }
+
+    #[test]
+    fn renames_a_rule_selector_to_a_complex_one() {
+        let src = ".btn {\n  padding: 10px;\n}\n";
+        let out = rename_selector_in_source(
+            src,
+            ".btn",
+            &None,
+            "\n  padding: 10px;\n",
+            ".card > .btn:hover",
+        )
+        .unwrap();
+        assert_eq!(out, ".card > .btn:hover {\n  padding: 10px;\n}\n");
+    }
+
+    #[test]
+    fn rename_rejects_a_selector_with_braces() {
+        let src = ".btn { x: y; }";
+        assert!(rename_selector_in_source(src, ".btn", &None, " x: y; ", ".a { }").is_err());
+    }
+
+    #[test]
+    fn renames_an_at_rule_condition_in_place() {
+        let src = "@media (max-width: 768px) {\n  .x { color: red; }\n}\n";
+        let out = rename_at_rule_in_source(
+            src,
+            ".x",
+            &Some("(max-width: 768px)".into()),
+            " color: red; ",
+            "(min-width: 1024px)",
+        )
+        .unwrap();
+        assert_eq!(
+            out,
+            "@media (min-width: 1024px) {\n  .x { color: red; }\n}\n"
+        );
+    }
+
+    #[test]
+    fn rename_at_rule_fails_for_a_base_rule() {
+        let src = ".x { color: red; }";
+        assert!(
+            rename_at_rule_in_source(src, ".x", &None, " color: red; ", "(max-width: 768px)")
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn wrap_rejects_a_non_at_prelude() {
+        let src = ".btn {\n  padding: 10px;\n}\n";
+        assert!(
+            wrap_rule_in_source(src, ".btn", &None, ".not-an-at", "\n  padding: 10px;\n").is_err()
+        );
+    }
+
+    #[test]
+    fn delete_is_fail_closed_on_drift_or_ambiguity() {
+        let src = ".btn {\n  padding: 10px;\n}\n";
+        assert!(remove_rule_from_source(src, ".btn", &None, "\n  WRONG;\n").is_err());
+        let dup = ".a { color: red; }\n.a { color: blue; }";
+        assert!(remove_rule_from_source(dup, ".a", &None, " color: red; ").is_err());
+    }
+
+    #[test]
+    fn rule_text_write_rejects_a_missing_or_ambiguous_rule() {
+        let one = ".a { color: red; }";
+        assert!(apply_rule_text_to_source(one, ".missing", &None, "", " color: blue; ").is_err());
+        let dup = ".a { color: red; }\n.a { color: blue; }";
+        assert!(
+            apply_rule_text_to_source(dup, ".a", &None, " color: red; ", " color: green; ")
+                .is_err()
         );
     }
 }

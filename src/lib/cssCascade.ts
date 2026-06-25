@@ -1,0 +1,278 @@
+/**
+ * Code-first CSS editor bindings (vanilla-CSS projects). A clicked element's full
+ * cascade — every author rule that matches it, in cascade order, with each
+ * declaration flagged active/overridden — is computed in the preview iframe
+ * (`select_script.html`, `ss:cascade`); here we join those matches to their source
+ * locations (`locate_css_rules`) and write edited rule bodies back verbatim
+ * (`apply_css_rule_text`) over `src-tauri/src/commands/edit_css.rs`.
+ *
+ * This is the successor to the structured CSS-Mode editor (`lib/edit-css.ts`):
+ * same selection experience, but the edit surface is the real `.css` source, not
+ * property controls. See `docs/visual-editor-css-mode.md`.
+ */
+
+import { invoke } from '@tauri-apps/api/core';
+
+/** One declaration of a matched rule, as the iframe cascade walker reports it. */
+export interface CascadeDecl {
+  prop: string;
+  value: string;
+  important: boolean;
+  /** False when a higher-priority rule overrides this property (struck through). */
+  active: boolean;
+  /** When overridden, the selector of the rule that wins this property. */
+  overriddenBy?: string;
+}
+
+/** A rule matching the clicked element, reported by the `ss:cascade` walker. */
+export interface MatchedRule {
+  /** The matched compound selector, or null for the element's inline `style=""`. */
+  selector: string | null;
+  declarations: CascadeDecl[];
+  /** Approximate (ids, classes, types) specificity. */
+  specificity: [number, number, number];
+  sourceOrder: number;
+  /** The enclosing `@media` condition text, if any (for display). */
+  mediaText: string | null;
+  /** The enclosing `@media (min-width: …)` value, if any. */
+  mediaMinPx: number | null;
+  /** The rule's media query doesn't currently match the viewport (greyed out). */
+  inactiveMedia: boolean;
+  /** The `@layer` name the rule lives in, if any. */
+  layer: string | null;
+  /** The served stylesheet URL (`parentStyleSheet.href`), or null for `<style>`. */
+  href: string | null;
+  origin: 'author' | 'inline';
+}
+
+/** Where a matched rule lives in source (mirrors the Rust `RuleLocation`,
+ *  `#[serde(tag = "status", rename_all = "snake_case")]`). */
+export type RuleLocation =
+  | { status: 'resolved'; file: string; line: number; inner_text: string }
+  | { status: 'multiple'; files: string[] }
+  | { status: 'not_found' };
+
+/** A query sent to `locate_css_rules` (camelCase to match the Rust command). */
+export interface MatchedRuleQuery {
+  selector: string;
+  /** The enclosing media condition text (e.g. `(max-width: 768px)`), or null for base. */
+  mediaText: string | null;
+  href: string | null;
+}
+
+/** A matched rule joined with its source provenance — the panel's row model. */
+export interface CascadeRow {
+  /** Index into the original `ss:cascade` list (stable preview/React key seed). */
+  index: number;
+  selector: string | null;
+  declarations: CascadeDecl[];
+  specificity: [number, number, number];
+  mediaText: string | null;
+  mediaMinPx: number | null;
+  inactiveMedia: boolean;
+  layer: string | null;
+  origin: 'author' | 'inline';
+  /** Whether this rule maps to a single editable source rule. */
+  editable: boolean;
+  /** Provenance + the verbatim source body (the editor's seed) when resolved. */
+  file?: string;
+  line?: number;
+  innerText?: string;
+  /** Why a rule is read-only, surfaced in the UI. */
+  readonlyReason?: string;
+}
+
+/** Map a batch of cascade matches to their source locations (index-aligned). */
+export function locateCssRules(
+  projectPath: string,
+  matched: MatchedRuleQuery[]
+): Promise<RuleLocation[]> {
+  return invoke<RuleLocation[]>('locate_css_rules', { projectPath, matched });
+}
+
+/** Write an edited rule body back to source, drift-guarded against `oldInner`. */
+export function applyCssRuleText(
+  projectPath: string,
+  file: string,
+  selector: string,
+  mediaText: string | null,
+  oldInner: string,
+  newInner: string
+): Promise<void> {
+  return invoke<void>('apply_css_rule_text', {
+    projectPath,
+    file,
+    selector,
+    mediaText,
+    oldInner,
+    newInner,
+  });
+}
+
+/** Create a new (empty) rule for `selector` in `file` (reuses the CSS-mode command). */
+export function createCssRule(projectPath: string, file: string, selector: string): Promise<void> {
+  return invoke<void>('create_css_class', {
+    projectPath,
+    file,
+    selector,
+    declarations: [],
+    breakpointMinPx: null,
+  });
+}
+
+/** Hand-authored stylesheets in the project (project-relative POSIX paths). */
+export function listStylesheets(projectPath: string): Promise<string[]> {
+  return invoke<string[]>('list_stylesheets', { projectPath });
+}
+
+/** Every class name defined across the project's stylesheets (selector autocomplete). */
+export function listCssClasses(projectPath: string): Promise<string[]> {
+  return invoke<string[]>('list_css_classes', { projectPath });
+}
+
+/** Change the `@media` condition enclosing a rule, drift-guarded against `oldInner`. */
+export function renameCssAtRule(
+  projectPath: string,
+  file: string,
+  selector: string,
+  mediaText: string | null,
+  oldInner: string,
+  newMedia: string
+): Promise<void> {
+  return invoke<void>('rename_css_at_rule', {
+    projectPath,
+    file,
+    selector,
+    mediaText,
+    oldInner,
+    newMedia,
+  });
+}
+
+/** Change a rule's selector to `newSelector`, drift-guarded against `oldInner`. */
+export function renameCssSelector(
+  projectPath: string,
+  file: string,
+  selector: string,
+  mediaText: string | null,
+  oldInner: string,
+  newSelector: string
+): Promise<void> {
+  return invoke<void>('rename_css_selector', {
+    projectPath,
+    file,
+    selector,
+    mediaText,
+    oldInner,
+    newSelector,
+  });
+}
+
+/** Wrap a rule in an at-rule (e.g. `@media (...)`), drift-guarded against `oldInner`. */
+export function wrapCssRule(
+  projectPath: string,
+  file: string,
+  selector: string,
+  mediaText: string | null,
+  atPrelude: string,
+  oldInner: string
+): Promise<void> {
+  return invoke<void>('wrap_css_rule', {
+    projectPath,
+    file,
+    selector,
+    mediaText,
+    atPrelude,
+    oldInner,
+  });
+}
+
+/** Delete a whole rule from its stylesheet, drift-guarded against `oldInner`. */
+export function deleteCssRule(
+  projectPath: string,
+  file: string,
+  selector: string,
+  mediaText: string | null,
+  oldInner: string
+): Promise<void> {
+  return invoke<void>('delete_css_rule', { projectPath, file, selector, mediaText, oldInner });
+}
+
+/** A compact media chip for a row: `≥768` / `≤768` for width queries, else the raw
+ *  condition; null when the rule isn't media-scoped. */
+export function mediaChipLabel(row: Pick<CascadeRow, 'mediaText' | 'mediaMinPx'>): string | null {
+  if (!row.mediaText && row.mediaMinPx == null) return null;
+  const text = row.mediaText ?? '';
+  const max = /max-width\s*:\s*([\d.]+)px/i.exec(text);
+  if (max) return `≤${Math.round(parseFloat(max[1]))}`;
+  const min = /min-width\s*:\s*([\d.]+)px/i.exec(text);
+  if (min) return `≥${Math.round(parseFloat(min[1]))}`;
+  if (row.mediaMinPx != null) return `≥${row.mediaMinPx}`;
+  return text || null;
+}
+
+/** A stable key for a row — used both as the React key and the iframe preview key. */
+export function rowKey(row: CascadeRow): string {
+  return `${row.file ?? 'x'}|${row.selector ?? 'inline'}|${row.mediaMinPx ?? 0}|${row.index}`;
+}
+
+/** Build the bare CSS rule text (`selector { body }`) for a live preview. The iframe
+ *  replaces the real rule in place inside its own `@media`/`@layer` group, so the
+ *  preview text must NOT be media-wrapped (the group provides the context). */
+export function formatRuleCss(selector: string, innerBody: string): string {
+  return `${selector} {${innerBody}}`;
+}
+
+/** The author rules worth sending to the backend for source mapping (skip inline
+ *  `style=""`, which is never editable as a rule). */
+export function rulesToLocate(
+  matched: MatchedRule[]
+): { index: number; query: MatchedRuleQuery }[] {
+  const out: { index: number; query: MatchedRuleQuery }[] = [];
+  matched.forEach((m, index) => {
+    if (m.origin === 'author' && m.selector) {
+      out.push({ index, query: { selector: m.selector, mediaText: m.mediaText, href: m.href } });
+    }
+  });
+  return out;
+}
+
+/** Join the iframe's matched rules with the backend's per-rule source locations
+ *  into the panel's row model. `locByIndex` maps a matched-rule index → its
+ *  resolved location; rows without one (inline, or unmapped) are read-only. */
+export function mergeCascade(
+  matched: MatchedRule[],
+  locByIndex: Map<number, RuleLocation>
+): CascadeRow[] {
+  return matched.map((m, index) => {
+    const base: CascadeRow = {
+      index,
+      selector: m.selector,
+      declarations: m.declarations,
+      specificity: m.specificity,
+      mediaText: m.mediaText,
+      mediaMinPx: m.mediaMinPx,
+      inactiveMedia: m.inactiveMedia,
+      layer: m.layer,
+      origin: m.origin,
+      editable: false,
+    };
+    if (m.origin === 'inline') {
+      return { ...base, readonlyReason: 'inline style — move it to a class to edit' };
+    }
+    const loc = locByIndex.get(index);
+    if (!loc || loc.status === 'not_found') {
+      return { ...base, readonlyReason: 'not in a project stylesheet (UA / framework / scoped)' };
+    }
+    if (loc.status === 'multiple') {
+      return { ...base, readonlyReason: 'this selector is defined in multiple files' };
+    }
+    return {
+      ...base,
+      editable: true,
+      file: loc.file,
+      line: loc.line,
+      innerText: loc.inner_text,
+    };
+  });
+}
