@@ -1,15 +1,12 @@
 /**
  * A portaled autocomplete dropdown for the inline chip inputs (rule selector, nested
- * selector, @media condition).
+ * selector, @media condition, add-selector).
  *
- * Why portaled: the previous inline-absolute version rendered *inside* the editor
- * panel's DOM, where an ancestor's layout context flowed its rows into columns
- * (a column would fill to the height cap, then a second column started). Rendering to
- * `document.body` with fixed positioning escapes every ancestor context, so the list
- * is a plain block of stacked rows — the same approach the working `+ Add` menu uses.
- *
- * It's presentational: the owning input keeps the text/active-index/keyboard state and
- * passes the filtered items down; this just positions and renders them + handles clicks.
+ * Rendered to `document.body` via a portal with fixed positioning, so it escapes the
+ * editor panel's DOM entirely. The critical layout (block container, full-width rows
+ * that stack, horizontal text) is set with INLINE styles — they beat any class/global
+ * rule, so the dropdown can't be reflowed into columns or vertical text by an ancestor.
+ * Classes are used only for colors/hover.
  */
 
 import { useMemo } from 'react';
@@ -60,6 +57,13 @@ export function SuggestionPopover({ anchor, items, active, onPick, width = 240 }
         bottom: pos.bottom,
         width,
         maxHeight: pos.maxHeight,
+        // Bulletproof layout (inline = wins over any class/global rule):
+        display: 'block',
+        boxSizing: 'border-box',
+        overflowY: 'auto',
+        overflowX: 'hidden',
+        writingMode: 'horizontal-tb',
+        columns: 'auto',
       }}
     >
       {items.map((it, i) => (
@@ -70,9 +74,34 @@ export function SuggestionPopover({ anchor, items, active, onPick, width = 240 }
           // Keep the input focused so its blur doesn't close us before the click lands.
           onMouseDown={(e) => e.preventDefault()}
           onClick={() => onPick(it.value)}
+          style={{
+            display: 'flex',
+            width: '100%',
+            boxSizing: 'border-box',
+            alignItems: 'baseline',
+            gap: 8,
+            writingMode: 'horizontal-tb',
+            textAlign: 'left',
+            whiteSpace: 'nowrap',
+          }}
         >
-          <code className="ss-suggest__label">{it.label}</code>
-          {it.hint && <span className="ss-suggest__hint">{it.hint}</span>}
+          <code
+            className="ss-suggest__label"
+            style={{
+              flex: '1 1 auto',
+              minWidth: 0,
+              overflow: 'hidden',
+              textOverflow: 'ellipsis',
+              whiteSpace: 'nowrap',
+            }}
+          >
+            {it.label}
+          </code>
+          {it.hint && (
+            <span className="ss-suggest__hint" style={{ flex: '0 0 auto', whiteSpace: 'nowrap' }}>
+              {it.hint}
+            </span>
+          )}
         </button>
       ))}
     </div>,
