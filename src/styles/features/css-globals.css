@@ -8,12 +8,18 @@
    Top-level scope of the CSS panel: the selected element vs the project-global
    design tokens and @keyframes. Distinct from the element's Style/Settings tabs. */
 .ss-cascade-scope {
+  /* Pinned to the top of the scrolling panel body (which has 0 padding here) so the
+     Element/Variables/Animations switch stays reachable while the cards scroll under
+     it. Opaque bg + z-index keep scrolled content from showing through. */
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--bg-secondary);
   display: flex;
   gap: var(--spacing-xs);
   /* Horizontal inset via padding (not margin) so the bottom border runs the full
      width of the panel while the tabs stay inset. */
-  margin: var(--spacing-sm) 0 0;
-  padding: 0 var(--spacing-md) var(--spacing-sm);
+  padding: var(--spacing-sm) var(--spacing-md);
   border-bottom: 1px solid var(--border);
 }
 .ss-cascade-scope__tab {
