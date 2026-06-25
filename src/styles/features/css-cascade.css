@@ -160,7 +160,6 @@
 }
 .ss-card.is-nested {
   margin-top: var(--spacing-xs);
-  margin-left: var(--spacing-sm);
   background: var(--bg-tertiary);
 }
 
