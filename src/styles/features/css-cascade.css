@@ -337,7 +337,10 @@
   position: absolute;
   top: calc(100% + 4px);
   right: 0;
-  min-width: 200px;
+  /* DEFINITE width (not shrink-to-fit): an absolutely-positioned flex-column with
+     indefinite width collapses in WebKit and overlaps its rows into a "line". */
+  width: 240px;
+  max-width: min(280px, 80vw);
   z-index: var(--z-dropdown);
 }
 /* Selector autocomplete anchors to the left (the selector sits on the left). */
