@@ -435,7 +435,8 @@
   display: flex;
   align-items: baseline;
   gap: var(--spacing-sm);
-  width: 100%;
+  /* No `width: 100%` — the list's `align-items: stretch` sizes rows, and a percent
+     width inside a shrink-to-fit (chip) menu collapses the column in WebKit. */
   padding: 4px 6px; /* css-ok: dense menu row */
   border-radius: var(--radius-sm);
 }
