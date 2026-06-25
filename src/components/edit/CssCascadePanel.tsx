@@ -201,6 +201,7 @@ export function CssCascadePanel({
             onChangeBody={animationsState.setBody}
             onDelete={(s) => void animationsState.remove(s)}
             onCreate={(n) => void animationsState.create(n)}
+            onRename={(s, n) => void animationsState.rename(s, n)}
           />
         ) : !selection ? (
           <p className="ss-cascade-empty">Click an element to see the CSS that styles it.</p>

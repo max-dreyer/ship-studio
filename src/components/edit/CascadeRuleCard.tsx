@@ -71,6 +71,8 @@ interface EditableCard extends CommonHeader {
   onDelete?: () => void;
   /** Present for top-level editable rules — click-to-edit the selector (any selector). */
   onRename?: (newSelector: string) => void;
+  /** Present for a `@keyframes` rule — click-to-rename the animation name. */
+  onRenameKeyframes?: (newName: string) => void;
   /** Class-name suggestions (e.g. `.btn`) for the selector autocomplete. */
   selectorSuggestions?: string[];
   /** Present for top-level editable rules inside an `@media` — edit its condition. */
@@ -394,6 +396,82 @@ function MediaChip({
   );
 }
 
+/** `@keyframes apply` → `apply`. */
+function keyframesName(selector: string): string {
+  return selector
+    .trim()
+    .replace(/^@(-[a-z]+-)?keyframes\s+/i, '')
+    .trim();
+}
+
+/** A `@keyframes` rule's name as a click-to-rename chip — the `@keyframes` keyword is
+ *  fixed; only the animation name is edited (idents only, no spaces). */
+function KeyframesNameChip({
+  name,
+  onCommit,
+}: {
+  name: string;
+  onCommit: (newName: string) => void;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [text, setText] = useState(name);
+
+  if (!editing) {
+    return (
+      <code
+        className="ss-card__selector-chip ss-card__selector-chip--editable"
+        title="Click to rename the animation"
+        role="button"
+        tabIndex={0}
+        onClick={() => {
+          setText(name);
+          setEditing(true);
+        }}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') {
+            setText(name);
+            setEditing(true);
+          }
+        }}
+      >
+        <span className="ss-card__kf-at">@keyframes</span> {name}
+      </code>
+    );
+  }
+
+  const commit = () => {
+    const v = text.trim();
+    if (v && v !== name) onCommit(v);
+    setEditing(false);
+  };
+
+  return (
+    <span className="ss-card__chip-edit ss-card__kf-edit">
+      <span className="ss-card__kf-at">@keyframes</span>
+      <input
+        className="ss-card__selector-chip ss-card__selector-chip--input"
+        autoFocus
+        value={text}
+        spellCheck={false}
+        autoComplete="off"
+        aria-label="Animation name"
+        onChange={(e) => setText(e.target.value.replace(/\s+/g, ''))}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') {
+            e.preventDefault();
+            commit();
+          } else if (e.key === 'Escape') {
+            e.preventDefault();
+            setText(name);
+            setEditing(false);
+          }
+        }}
+        onBlur={commit}
+      />
+    </span>
+  );
+}
+
 function Chips({
   mediaLabel,
   mediaText,
@@ -442,7 +520,12 @@ export function CascadeRuleCard(props: Props) {
       >
         <ChevronIcon size={12} />
       </button>
-      {editable && props.onSelectorChange ? (
+      {props.editable && isKeyframes && props.onRenameKeyframes ? (
+        <KeyframesNameChip
+          name={keyframesName(props.selector)}
+          onCommit={props.onRenameKeyframes}
+        />
+      ) : editable && props.onSelectorChange ? (
         <NestedSelectorInput
           value={props.selector}
           suggestions={props.selectorSuggestions ?? []}

@@ -17,6 +17,7 @@ import {
   applyCssRuleText,
   createCssRule,
   deleteCssRule,
+  renameCssSelector,
   listStylesheets,
 } from '../lib/cssCascade';
 import { parseRuleBody, serializeRuleBody, type RuleBody } from '../lib/cssBody';
@@ -173,6 +174,43 @@ export function useCssAnimations({ projectPath, enabled, onToast }: Params) {
     [projectPath, animations, onToast]
   );
 
+  /** Rename an animation (`@keyframes apply` → `@keyframes fade`). References on
+   *  elements (`animation: apply`) aren't rewritten — update those separately. */
+  const rename = useCallback(
+    async (oldSelector: string, newName: string) => {
+      const file = fileRef.current[oldSelector];
+      const oldInner = baselineRef.current[oldSelector];
+      if (!file || oldInner === undefined) return;
+      const name = newName.trim().replace(/^@(-[a-z]+-)?keyframes\s+/i, '');
+      if (!name) return;
+      const newSelector = `@keyframes ${name}`;
+      if (newSelector === oldSelector) return;
+      if (animations.some((a) => a.selector === newSelector)) {
+        onToast(`An animation named “${name}” already exists.`, 'error');
+        return;
+      }
+      try {
+        await renameCssSelector(projectPath, file, oldSelector, null, oldInner, newSelector);
+        // Re-key the per-animation refs onto the new selector.
+        baselineRef.current[newSelector] = oldInner;
+        fileRef.current[newSelector] = file;
+        const body = bodiesRef.current[oldSelector];
+        if (body) bodiesRef.current[newSelector] = body;
+        delete baselineRef.current[oldSelector];
+        delete fileRef.current[oldSelector];
+        delete bodiesRef.current[oldSelector];
+        setAnimations((prev) =>
+          prev.map((a) => (a.selector === oldSelector ? { ...a, selector: newSelector, name } : a))
+        );
+        void trackEvent('visual_style_saved', { mode: 'css-code', keyframes_renamed: true });
+      } catch (err) {
+        logger.error('[CssAnimations] rename failed', { error: String(err) });
+        onToast(toastText(err), 'error');
+      }
+    },
+    [projectPath, animations, onToast]
+  );
+
   const remove = useCallback(
     async (selector: string) => {
       const file = fileRef.current[selector];
@@ -192,5 +230,5 @@ export function useCssAnimations({ projectPath, enabled, onToast }: Params) {
     [projectPath, onToast]
   );
 
-  return { animations, loading, setBody, create, remove, reload };
+  return { animations, loading, setBody, create, rename, remove, reload };
 }

@@ -4,7 +4,7 @@
  * (edit a value, remove, or add) are editable; TAG is shown for reference.
  */
 
-import { useState } from 'react';
+import { useState, type KeyboardEvent } from 'react';
 import { CloseIcon } from '../icons/common';
 import { PlusIcon } from '../icons/utility';
 import type { ElementSettings } from '../../hooks/useElementSettings';
@@ -17,6 +17,7 @@ export function ElementSettingsPanel({ settings }: { settings: ElementSettings }
     addClass,
     removeClass,
     setAttribute,
+    renameAttribute,
     removeAttribute,
     canEditAttributes,
   } = settings;
@@ -94,6 +95,7 @@ export function ElementSettingsPanel({ settings }: { settings: ElementSettings }
               value={a.value}
               editable={canEditAttributes}
               onSetValue={(v) => setAttribute(a.name, v)}
+              onRename={(n) => renameAttribute(a.name, n, a.value)}
               onRemove={() => removeAttribute(a.name)}
             />
           ))}
@@ -107,34 +109,70 @@ export function ElementSettingsPanel({ settings }: { settings: ElementSettings }
   );
 }
 
-/** One attribute row: name, click-to-edit value, and a remove button. */
+/** One attribute row: click-to-edit KEY and VALUE, plus a remove button. */
 function AttrRow({
   name,
   value,
   editable,
   onSetValue,
+  onRename,
   onRemove,
 }: {
   name: string;
   value: string;
   editable: boolean;
   onSetValue: (value: string) => void;
+  onRename: (newName: string) => void;
   onRemove: () => void;
 }) {
-  const [editing, setEditing] = useState(false);
-  const [text, setText] = useState(value);
+  const [editing, setEditing] = useState<null | 'name' | 'value'>(null);
+  const [text, setText] = useState('');
 
+  const start = (field: 'name' | 'value') => {
+    setText(field === 'name' ? name : value);
+    setEditing(field);
+  };
   const commit = () => {
-    const v = text;
-    if (v !== value) onSetValue(v);
-    setEditing(false);
+    if (editing === 'name') {
+      const n = text.trim();
+      if (n && n !== name) onRename(n);
+    } else if (editing === 'value' && text !== value) {
+      onSetValue(text);
+    }
+    setEditing(null);
+  };
+  const onKey = (e: KeyboardEvent) => {
+    if (e.key === 'Enter') commit();
+    else if (e.key === 'Escape') setEditing(null);
   };
 
   return (
     <li className="ss-settings__attr">
-      <span className="ss-settings__attr-name">{name}</span>
+      {editing === 'name' ? (
+        <input
+          className="ss-settings__attr-input ss-settings__attr-input--name"
+          autoFocus
+          value={text}
+          spellCheck={false}
+          autoComplete="off"
+          // Attribute names are idents — no spaces.
+          onChange={(e) => setText(e.target.value.replace(/\s+/g, ''))}
+          onKeyDown={onKey}
+          onBlur={commit}
+        />
+      ) : (
+        <button
+          type="button"
+          className="ss-settings__attr-key"
+          disabled={!editable}
+          title={editable ? 'Click to rename' : undefined}
+          onClick={() => start('name')}
+        >
+          {name}
+        </button>
+      )}
       <span className="ss-settings__attr-eq">=</span>
-      {editing ? (
+      {editing === 'value' ? (
         <input
           className="ss-settings__attr-input"
           autoFocus
@@ -142,13 +180,7 @@ function AttrRow({
           spellCheck={false}
           autoComplete="off"
           onChange={(e) => setText(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter') commit();
-            else if (e.key === 'Escape') {
-              setText(value);
-              setEditing(false);
-            }
-          }}
+          onKeyDown={onKey}
           onBlur={commit}
         />
       ) : (
@@ -157,10 +189,7 @@ function AttrRow({
           className="ss-settings__attr-value ss-settings__attr-value--editable"
           disabled={!editable}
           title={editable ? 'Click to edit' : undefined}
-          onClick={() => {
-            setText(value);
-            setEditing(true);
-          }}
+          onClick={() => start('value')}
         >
           {value || <span className="ss-settings__attr-empty">empty</span>}
         </button>
@@ -196,8 +225,8 @@ function AddAttr({ onAdd }: { onAdd: (name: string, value: string) => void }) {
 
   if (!open) {
     return (
-      <button type="button" className="ss-settings__class-add" onClick={() => setOpen(true)}>
-        <PlusIcon size={10} /> attribute
+      <button type="button" className="ss-settings__attr-add-btn" onClick={() => setOpen(true)}>
+        <PlusIcon size={11} /> Add attribute
       </button>
     );
   }

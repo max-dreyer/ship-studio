@@ -41,6 +41,8 @@ export interface ElementSettings {
   removeClass: (name: string) => void;
   /** Set or add an attribute on the element's opening tag (written to source). */
   setAttribute: (name: string, value: string) => void;
+  /** Rename an attribute's key, preserving its value (one source write). */
+  renameAttribute: (oldName: string, newName: string, value: string) => void;
   removeAttribute: (name: string) => void;
   /** Whether the element resolved to editable source markup (attributes editable). */
   canEditAttributes: boolean;
@@ -152,6 +154,37 @@ export function useElementSettings({
     [projectPath, onToast]
   );
 
+  /** Rename an attribute's key (remove old + add new in ONE source write so it never
+   *  flickers a half-renamed tag), preserving the value. */
+  const renameAttr = useCallback(
+    async (oldName: string, newName: string, value: string) => {
+      const sig = sigRef.current;
+      const oldHtml = htmlRef.current;
+      const n = newName.trim();
+      if (!sig || oldHtml == null) {
+        onToast("Can't edit this element's attributes in source.", 'error');
+        return;
+      }
+      if (!n || n === oldName) return;
+      const without = setAttrInHtml(oldHtml, oldName, null) ?? oldHtml;
+      const newHtml = setAttrInHtml(without, n, value);
+      if (newHtml == null || newHtml === oldHtml) return;
+      setBusy(true);
+      try {
+        await applyElementHtml(projectPath, sig, oldHtml, newHtml);
+        htmlRef.current = newHtml;
+        setAttributes(parseAttributes(newHtml));
+        void trackEvent('visual_style_saved', { mode: 'css-code', attr_edit: true });
+      } catch (err) {
+        logger.error('[ElementSettings] attribute rename failed', { error: String(err) });
+        onToast(toastText(err), 'error');
+      } finally {
+        setBusy(false);
+      }
+    },
+    [projectPath, onToast]
+  );
+
   /** Rewrite the element's `class` attribute in source (and live in the preview). */
   const writeClassAttr = useCallback(
     async (nextClass: string): Promise<boolean> => {
@@ -226,6 +259,7 @@ export function useElementSettings({
     addClass: (n) => void addClass(n),
     removeClass: (n) => void removeClass(n),
     setAttribute: (name, value) => void applyAttr(name, value),
+    renameAttribute: (oldName, newName, value) => void renameAttr(oldName, newName, value),
     removeAttribute: (name) => void applyAttr(name, null),
     canEditAttributes,
     busy,

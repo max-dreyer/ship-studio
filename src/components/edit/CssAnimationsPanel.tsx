@@ -20,6 +20,7 @@ interface Props {
   onChangeBody: (selector: string, body: RuleBody) => void;
   onDelete: (selector: string) => void;
   onCreate: (name: string) => void;
+  onRename: (selector: string, newName: string) => void;
 }
 
 export function CssAnimationsPanel({
@@ -30,6 +31,7 @@ export function CssAnimationsPanel({
   onChangeBody,
   onDelete,
   onCreate,
+  onRename,
 }: Props) {
   if (loading && animations.length === 0) {
     return (
@@ -62,6 +64,7 @@ export function CssAnimationsPanel({
               selectorSuggestions={selectorSuggestions}
               onChange={(b) => onChangeBody(a.selector, b)}
               onDelete={() => onDelete(a.selector)}
+              onRenameKeyframes={(newName) => onRename(a.selector, newName)}
             />
           ))}
         </div>
