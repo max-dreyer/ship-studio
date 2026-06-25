@@ -17,6 +17,7 @@ import { PlusIcon } from '../icons/utility';
 import { suggestProperties } from '../../lib/cssProperties';
 import {
   NEST_ITEMS,
+  WRAP_ITEMS,
   KEYFRAME_STEP_ITEMS,
   searchStructures,
   classifyFreeText,
@@ -127,14 +128,14 @@ export function AddMenu({ onAddProperty, onNest, mode = 'full' }: Props) {
       if (rows.length) out.push({ title: 'Property', rows });
     }
 
-    // ALSO STYLE (nested) — curated selectors + any free-typed selector or nested
-    // `@`-rule. (A keyframe step holds only declarations, so 'props' mode skips this.)
-    if (mode !== 'props') {
+    // ALSO STYLE (nested selectors) — curated states (`&:hover`) + any free-typed
+    // selector. Not for `@`-rules (those are conditions, handled below).
+    if (mode !== 'props' && !startsAt) {
+      const items = searchStructures(NEST_ITEMS, typed);
       const rows: MenuRow[] = [];
-      const items = startsAt ? [] : searchStructures(NEST_ITEMS, typed);
-      if (startsSel || startsAt) {
+      if (startsSel) {
         const free = classifyFreeText(typed);
-        if (free && !items.some((i) => i.insert === free.insert)) {
+        if (free && free.kind === 'nest' && !items.some((i) => i.insert === free.insert)) {
           rows.push({
             key: `f:${free.insert}`,
             label: free.insert,
@@ -153,6 +154,33 @@ export function AddMenu({ onAddProperty, onNest, mode = 'full' }: Props) {
           insert: it.insert,
         });
       if (rows.length) out.push({ title: 'Also style', rows });
+    }
+
+    // ONLY WHEN (condition) — `@media`/`@container`/`@supports`, nested inside the
+    // rule so the base styles stay and these override at the condition. Recommended
+    // up-front (even with an empty query) so breakpoints are discoverable here, not
+    // just by knowing to type `@` in the selector field (which scopes the whole rule).
+    if (mode !== 'props') {
+      const items = searchStructures(WRAP_ITEMS, typed);
+      const rows: MenuRow[] = [];
+      if (startsAt && typed.length > 1 && !items.some((i) => i.insert === typed)) {
+        rows.push({
+          key: `fc:${typed}`,
+          label: typed,
+          hint: 'new condition',
+          kind: 'nest',
+          insert: typed,
+        });
+      }
+      for (const it of items)
+        rows.push({
+          key: `c:${it.insert}`,
+          label: it.label,
+          hint: it.hint,
+          kind: 'nest',
+          insert: it.insert,
+        });
+      if (rows.length) out.push({ title: 'Only when (media · container · supports)', rows });
     }
 
     return out;

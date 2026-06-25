@@ -86,6 +86,20 @@ describe('isKeyframesSelector', () => {
   });
 });
 
+describe('condition (@media) recommendations', () => {
+  it('surfaces @media breakpoints from WRAP_ITEMS by keyword', () => {
+    const inserts = searchStructures(WRAP_ITEMS, 'media').map((i) => i.insert);
+    expect(inserts.some((s) => s.startsWith('@media'))).toBe(true);
+  });
+
+  it('offers the full condition catalog (media, container, supports) with an empty query', () => {
+    const inserts = searchStructures(WRAP_ITEMS, '').map((i) => i.insert);
+    expect(inserts.some((s) => s.startsWith('@media'))).toBe(true);
+    expect(inserts.some((s) => s.startsWith('@container'))).toBe(true);
+    expect(inserts.some((s) => s.startsWith('@supports'))).toBe(true);
+  });
+});
+
 describe('keyframesName', () => {
   it('extracts the animation name', () => {
     expect(keyframesName('@keyframes reveal')).toBe('reveal');
