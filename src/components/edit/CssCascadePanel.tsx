@@ -87,6 +87,18 @@ export function CssCascadePanel({
 }: Props) {
   const [tab, setTab] = useState<'style' | 'settings'>('style');
   const [scope, setScope] = useState<Scope>('element');
+  // Collapse state keyed by rule identity (selector + media), not the per-element row
+  // key — so minimizing a shared rule like `*` keeps it minimized across element
+  // switches. Lives on the panel (which stays mounted), so it survives reselection.
+  const [collapsedRules, setCollapsedRules] = useState<Set<string>>(() => new Set());
+  const toggleCollapsed = useCallback((ruleKey: string) => {
+    setCollapsedRules((prev) => {
+      const next = new Set(prev);
+      if (next.has(ruleKey)) next.delete(ruleKey);
+      else next.add(ruleKey);
+      return next;
+    });
+  }, []);
   const [pos, setPos] = useState(() => ({
     top: 76,
     left: Math.max(
@@ -267,6 +279,10 @@ export function CssCascadePanel({
                     {rows.map((row) => {
                       const key = rowKey(row);
                       const media = mediaChipLabel(row);
+                      // Stable across element switches (unlike `key`, which embeds the row index).
+                      const collapseKey = `${row.selector ?? ''}|${row.mediaText ?? ''}`;
+                      const collapsed = collapsedRules.has(collapseKey);
+                      const onToggleCollapse = () => toggleCollapsed(collapseKey);
                       if (row.editable && bodies[key]) {
                         return (
                           <CascadeRuleCard
@@ -294,6 +310,8 @@ export function CssCascadePanel({
                             selectorSuggestions={selectorSuggestions}
                             variables={variables}
                             animations={animations}
+                            collapsed={collapsed}
+                            onToggleCollapse={onToggleCollapse}
                           />
                         );
                       }
@@ -301,6 +319,8 @@ export function CssCascadePanel({
                         <CascadeRuleCard
                           key={key}
                           editable={false}
+                          collapsed={collapsed}
+                          onToggleCollapse={onToggleCollapse}
                           selector={row.selector ?? 'element.style'}
                           file={row.file}
                           line={row.line}

@@ -57,6 +57,11 @@ interface CommonHeader {
   /** The rule's @media/@container condition doesn't match the current preview
    *  viewport — the whole card is dimmed and its declarations don't apply now. */
   inactive?: boolean;
+  /** Controlled collapse. When `onToggleCollapse` is provided the card is controlled
+   *  (the panel persists the state by selector so a minimized rule stays minimized
+   *  across element switches); otherwise it manages collapse locally. */
+  collapsed?: boolean;
+  onToggleCollapse?: () => void;
 }
 
 interface EditableCard extends CommonHeader {
@@ -522,7 +527,12 @@ function Chips({
 }
 
 export function CascadeRuleCard(props: Props) {
-  const [collapsed, setCollapsed] = useState(false);
+  // Controlled by the panel (persists across element switches) when `onToggleCollapse`
+  // is supplied; otherwise local (nested cards, where per-instance state is fine).
+  const [localCollapsed, setLocalCollapsed] = useState(false);
+  const controlled = props.onToggleCollapse != null;
+  const collapsed = controlled ? (props.collapsed ?? false) : localCollapsed;
+  const toggleCollapse = controlled ? props.onToggleCollapse! : () => setLocalCollapsed((c) => !c);
   const depth = props.depth ?? 0;
   const editable = props.editable;
   const inactive = props.inactive ?? false;
@@ -539,7 +549,7 @@ export function CascadeRuleCard(props: Props) {
         className={`ss-card__collapse${collapsed ? ' is-collapsed' : ''}`}
         aria-expanded={!collapsed}
         aria-label={collapsed ? 'Expand rule' : 'Collapse rule'}
-        onClick={() => setCollapsed((c) => !c)}
+        onClick={toggleCollapse}
       >
         <ChevronIcon size={12} />
       </button>
