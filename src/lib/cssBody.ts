@@ -83,6 +83,9 @@ export function parseRuleBody(src: string): RuleBody {
   const n = src.length;
   let i = 0;
   let prelude = '';
+  // Paren depth so `;` / `{` / `}` inside `(...)` — e.g. an unquoted data URI
+  // `url(data:…;utf8,…)` — don't terminate a declaration or start a nested rule.
+  let paren = 0;
 
   const pushDecl = (text: string) => {
     const t = text.trim();
@@ -121,11 +124,24 @@ export function parseRuleBody(src: string): RuleBody {
       i = j + 1;
       continue;
     }
-    if (c === '{') {
+    if (c === '(') {
+      paren++;
+      prelude += c;
+      i++;
+      continue;
+    }
+    if (c === ')') {
+      if (paren > 0) paren--;
+      prelude += c;
+      i++;
+      continue;
+    }
+    if (c === '{' && paren === 0) {
       // The accumulated prelude is a nested-rule selector; find its matching close.
       const selector = prelude.trim();
       prelude = '';
       let depth = 1;
+      let p = 0; // paren depth — `{`/`}` inside `(...)` (e.g. a url()) aren't braces
       let j = i + 1;
       const start = j;
       while (j < n && depth > 0) {
@@ -146,8 +162,11 @@ export function parseRuleBody(src: string): RuleBody {
           j++;
           continue;
         }
-        if (d === '{') depth++;
-        else if (d === '}') {
+        if (d === '(') p++;
+        else if (d === ')') {
+          if (p > 0) p--;
+        } else if (p === 0 && d === '{') depth++;
+        else if (p === 0 && d === '}') {
           depth--;
           if (depth === 0) break;
         }
@@ -158,13 +177,13 @@ export function parseRuleBody(src: string): RuleBody {
       i = j + 1;
       continue;
     }
-    if (c === ';') {
+    if (c === ';' && paren === 0) {
       pushDecl(prelude);
       prelude = '';
       i++;
       continue;
     }
-    if (c === '}') break; // stray close — stop
+    if (c === '}' && paren === 0) break; // stray close — stop
     prelude += c;
     i++;
   }
