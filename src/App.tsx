@@ -58,6 +58,7 @@ import { Button } from './components/primitives/Button';
 import { Spinner } from './components/primitives/Spinner';
 import { ToastContext } from './contexts/ToastContext';
 import { ModalProvider, useModal } from './contexts/ModalContext';
+import { AgentBridgeProvider } from './contexts/AgentBridgeContext';
 import { CommandPaletteHost } from './components/CommandPalette/CommandPaletteHost';
 import { AppGlobalModals } from './components/AppGlobalModals';
 import {
@@ -96,9 +97,11 @@ function App({ initialProjectPath }: AppProps) {
   return (
     <ModalProvider>
       <PaletteContextProvider>
-        <AppContents initialProjectPath={initialProjectPath} />
-        <CommandPaletteHost />
-        <AppGlobalModals />
+        <AgentBridgeProvider>
+          <AppContents initialProjectPath={initialProjectPath} />
+          <CommandPaletteHost />
+          <AppGlobalModals />
+        </AgentBridgeProvider>
       </PaletteContextProvider>
     </ModalProvider>
   );

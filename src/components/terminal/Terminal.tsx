@@ -28,6 +28,7 @@ import {
   onPtySessionExit,
 } from '../../lib/ptySession';
 import type { UnlistenFn } from '@tauri-apps/api/event';
+import { useAgentBridge } from '../../contexts/AgentBridgeContext';
 
 /**
  * Handle to a backend-owned PTY session. A Terminal component attaches to
@@ -166,6 +167,20 @@ export const Terminal = forwardRef<TerminalHandle, TerminalProps>(function Termi
   useEffect(() => {
     isActiveRef.current = isActive;
   }, [isActive]);
+
+  // Register this terminal as the "Send to agent" injection target while it's the
+  // active tab — feature code (e.g. the CSS editor) calls `sendToAgent(prompt)` and
+  // it lands in the terminal the user is looking at. The writer reads the live PTY id.
+  const { registerAgent, unregisterAgent } = useAgentBridge();
+  useEffect(() => {
+    if (!isActive || !isReady) return;
+    const writer = (data: string) => {
+      const sid = ptyRef.current?.sessionId;
+      if (sid) void writePtySession(sid, data);
+    };
+    registerAgent(writer);
+    return () => unregisterAgent(writer);
+  }, [isActive, isReady, registerAgent, unregisterAgent]);
 
   // Use refs for callbacks to prevent effect re-runs when callback references change
   const onExitRef = useRef(onExit);
