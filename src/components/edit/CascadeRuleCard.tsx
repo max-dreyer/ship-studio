@@ -79,6 +79,8 @@ interface EditableCard extends CommonHeader {
   onRenameAtRule?: (newMedia: string) => void;
   /** Project CSS variables (`--foo`) for `var(--…)` value autocomplete. */
   variables?: string[];
+  /** Project `@keyframes` names, suggested as `animation` values. */
+  animations?: string[];
   /** A not-yet-created rule (one of the element's own selectors) — shown dashed with a
    *  "new" chip; the rule is written to source on the first property. */
   draft?: boolean;
@@ -632,6 +634,7 @@ export function CascadeRuleCard(props: Props) {
               overriddenBy={overridden.get(d.prop.toLowerCase())}
               nestTargets={nested.map((r) => r.selector)}
               variables={props.variables}
+              animations={props.animations}
               onChange={(next) => onChange(replaceItem(body, d.index, { kind: 'decl', ...next }))}
               onRemove={() => onChange(removeItem(body, d.index))}
               onNest={(sel) => onChange(moveDeclIntoNested(body, d.index, sel))}
@@ -648,6 +651,7 @@ export function CascadeRuleCard(props: Props) {
               overridden={new Map()}
               body={r.body}
               variables={props.variables}
+              animations={props.animations}
               selectorSuggestions={props.selectorSuggestions}
               onChange={(nextBody) =>
                 onChange(

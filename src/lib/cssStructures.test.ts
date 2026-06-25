@@ -8,6 +8,7 @@ import {
   classifyFreeText,
   classifyKeyframeStep,
   isKeyframesSelector,
+  keyframesName,
 } from './cssStructures';
 
 describe('searchStructures', () => {
@@ -82,6 +83,20 @@ describe('isKeyframesSelector', () => {
     expect(isKeyframesSelector('.card')).toBe(false);
     expect(isKeyframesSelector('@media (min-width: 600px)')).toBe(false);
     expect(isKeyframesSelector('@font-face')).toBe(false);
+  });
+});
+
+describe('keyframesName', () => {
+  it('extracts the animation name', () => {
+    expect(keyframesName('@keyframes reveal')).toBe('reveal');
+    expect(keyframesName('  @keyframes  spin ')).toBe('spin');
+    expect(keyframesName('@-webkit-keyframes fade')).toBe('fade');
+  });
+
+  it('returns null for non-keyframes selectors', () => {
+    expect(keyframesName('.card')).toBeNull();
+    expect(keyframesName('@media (min-width: 600px)')).toBeNull();
+    expect(keyframesName('@keyframes')).toBeNull();
   });
 });
 

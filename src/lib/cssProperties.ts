@@ -439,18 +439,32 @@ export function isColorProperty(property: string): boolean {
   return COLOR_PROPS.has(property.trim().toLowerCase());
 }
 
+/** Properties whose value references a `@keyframes` animation by name (so the
+ *  project's keyframe names are worth suggesting first). */
+const ANIMATION_PROPS = new Set(['animation', 'animation-name']);
+
+export function isAnimationProperty(property: string): boolean {
+  return ANIMATION_PROPS.has(property.trim().toLowerCase());
+}
+
 /**
- * Value suggestions for a declaration, in priority order: the project's CSS
- * variables (as `var(--x)`, color vars first for color properties), the property's
- * enumerated keywords, then the CSS-wide keywords. The caller filters by typed text.
+ * Value suggestions for a declaration, in priority order: for animation properties
+ * the project's `@keyframes` names first; then the project's CSS variables (as
+ * `var(--x)`, color vars first for color properties), the property's enumerated
+ * keywords, then the CSS-wide keywords. The caller filters by typed text.
  */
-export function suggestValues(property: string, variables: string[] = []): string[] {
+export function suggestValues(
+  property: string,
+  variables: string[] = [],
+  animations: string[] = []
+): string[] {
   const p = property.trim().toLowerCase();
   const vars = variables.map((v) => (v.startsWith('var(') ? v : `var(${v})`));
+  const anims = ANIMATION_PROPS.has(p) ? animations : [];
   const keywords = VALUE_KEYWORDS[p] ?? [];
   const seen = new Set<string>();
   const out: string[] = [];
-  for (const v of [...vars, ...keywords, ...CSS_WIDE_KEYWORDS]) {
+  for (const v of [...anims, ...vars, ...keywords, ...CSS_WIDE_KEYWORDS]) {
     if (!seen.has(v)) {
       seen.add(v);
       out.push(v);

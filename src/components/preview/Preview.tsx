@@ -1292,6 +1292,7 @@ export const Preview = forwardRef<PreviewHandle, PreviewProps>(function Preview(
               selectorSuggestions={cssEditor.classSuggestions.map((c) => `.${c}`)}
               existingSelectors={cssEditor.existingSelectors}
               variables={cssEditor.variableSuggestions}
+              animations={cssEditor.animationSuggestions}
               settings={elementSettings}
               variablesState={cssVariables}
               animationsState={cssAnimations}

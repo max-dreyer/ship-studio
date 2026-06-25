@@ -49,6 +49,8 @@ interface Props {
   existingSelectors: string[];
   /** Project CSS variables (`--foo`) for `var(--…)` value autocomplete. */
   variables: string[];
+  /** Project `@keyframes` names for `animation` value autocomplete. */
+  animations: string[];
   settings: ElementSettings;
   /** Project-global Variables editor state (custom properties / design tokens). */
   variablesState: ReturnType<typeof useCssVariables>;
@@ -74,6 +76,7 @@ export function CssCascadePanel({
   selectorSuggestions,
   existingSelectors,
   variables,
+  animations,
   settings,
   variablesState,
   animationsState,
@@ -289,6 +292,7 @@ export function CssCascadePanel({
                             onRenameAtRule={row.draft ? undefined : (m) => onRenameAtRule(key, m)}
                             selectorSuggestions={selectorSuggestions}
                             variables={variables}
+                            animations={animations}
                           />
                         );
                       }

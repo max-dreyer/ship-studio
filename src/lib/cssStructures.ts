@@ -212,6 +212,13 @@ export function isKeyframesSelector(selector: string): boolean {
   return /^@(-[a-z]+-)?keyframes\b/i.test(selector.trim());
 }
 
+/** The animation name of a `@keyframes <name>` selector (`@keyframes reveal` → `reveal`),
+ *  or null if it isn't a keyframes selector. Used to suggest names to `animation`. */
+export function keyframesName(selector: string): string | null {
+  const m = /^@(?:-[a-z]+-)?keyframes\s+(.+)$/i.exec(selector.trim());
+  return m ? m[1].trim() : null;
+}
+
 /** Recommended standalone rules offered by "Add selector" beyond plain class/tag
  *  selectors — top-level `@`-rules the editor can fully author. Currently just
  *  `@keyframes` (animations); kept here so the list is easy to grow. */

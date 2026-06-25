@@ -45,7 +45,20 @@ export function EditPopover({ anchor, initial, options, placeholder, onCommit, o
     const list = q ? options.filter((o) => o.toLowerCase().includes(q)) : options;
     return list.slice(0, 8);
   }, [options, text, isColor]);
-  const showMenu = matches.length > 0 && !(matches.length === 1 && matches[0] === text);
+
+  // Inline `!important` completion: typing a trailing `!` (or a partial like `!imp`)
+  // ghosts the rest of `!important` in grey — Tab fills it, Enter accepts + commits.
+  const ghostSuffix = useMemo(() => {
+    const m = /!([a-z]*)$/i.exec(text);
+    if (!m) return '';
+    const tail = m[1].toLowerCase();
+    return 'important'.startsWith(tail) && tail !== 'important'
+      ? 'important'.slice(tail.length)
+      : '';
+  }, [text]);
+
+  const showMenu =
+    !ghostSuffix && matches.length > 0 && !(matches.length === 1 && matches[0] === text);
 
   // Position just below-left of the anchor, clamped into the viewport. Computed
   // from the anchor's measured rect at open time (anchor is stable while open).
@@ -120,32 +133,51 @@ export function EditPopover({ anchor, initial, options, placeholder, onCommit, o
                 }}
               />
             )}
-            <input
-              ref={inputRef}
-              className="ss-value-pop__input"
-              value={text}
-              spellCheck={false}
-              autoComplete="off"
-              placeholder={placeholder}
-              onChange={(e) => {
-                setText(e.target.value);
-                setActive(0);
-              }}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') {
-                  e.preventDefault();
-                  const pick = showMenu ? (matches[active] ?? text) : text;
-                  onCommit(pick);
-                  onClose();
-                } else if (e.key === 'ArrowDown' && showMenu) {
-                  e.preventDefault();
-                  setActive((a) => Math.min(a + 1, matches.length - 1));
-                } else if (e.key === 'ArrowUp' && showMenu) {
-                  e.preventDefault();
-                  setActive((a) => Math.max(a - 1, 0));
-                }
-              }}
-            />
+            <span className="ss-value-pop__inputwrap">
+              {ghostSuffix && (
+                <span className="ss-value-pop__ghost" aria-hidden="true">
+                  <span className="ss-value-pop__ghost-typed">{text}</span>
+                  <span className="ss-value-pop__ghost-hint">{ghostSuffix}</span>
+                </span>
+              )}
+              <input
+                ref={inputRef}
+                className="ss-value-pop__input"
+                value={text}
+                spellCheck={false}
+                autoComplete="off"
+                placeholder={placeholder}
+                onChange={(e) => {
+                  setText(e.target.value);
+                  setActive(0);
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === 'Tab' && ghostSuffix) {
+                    e.preventDefault();
+                    setText(text + ghostSuffix);
+                    setActive(0);
+                    return;
+                  }
+                  if (e.key === 'Enter') {
+                    e.preventDefault();
+                    if (ghostSuffix) {
+                      onCommit(text + ghostSuffix);
+                      onClose();
+                      return;
+                    }
+                    const pick = showMenu ? (matches[active] ?? text) : text;
+                    onCommit(pick);
+                    onClose();
+                  } else if (e.key === 'ArrowDown' && showMenu) {
+                    e.preventDefault();
+                    setActive((a) => Math.min(a + 1, matches.length - 1));
+                  } else if (e.key === 'ArrowUp' && showMenu) {
+                    e.preventDefault();
+                    setActive((a) => Math.max(a - 1, 0));
+                  }
+                }}
+              />
+            </span>
           </div>
           {showMenu && (
             <div className="ss-add-menu ss-value-pop__menu">

@@ -34,6 +34,7 @@ import {
   type CascadeRow,
 } from '../lib/cssCascade';
 import { parseRuleBody, serializeRuleBody, overriddenProps, type RuleBody } from '../lib/cssBody';
+import { keyframesName } from '../lib/cssStructures';
 import { logger } from '../lib/logger';
 import { trackEvent } from '../lib/analytics';
 import { asCommandError, formatCommandError } from '../lib/errors';
@@ -728,6 +729,12 @@ export function useCssCascadeEditor({ iframeRef, projectPath, enabled, onToast }
     });
   }, [clearTimers]);
 
+  // `@keyframes` names defined in the project — suggested as `animation` values.
+  const animationSuggestions = useMemo(
+    () => existingSelectors.map(keyframesName).filter((n): n is string => n !== null),
+    [existingSelectors]
+  );
+
   return {
     editMode,
     toggleEditMode,
@@ -744,6 +751,7 @@ export function useCssCascadeEditor({ iframeRef, projectPath, enabled, onToast }
     classSuggestions,
     existingSelectors,
     variableSuggestions,
+    animationSuggestions,
     loading,
     savingKeys,
   };

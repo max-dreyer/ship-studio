@@ -27,6 +27,8 @@ interface EditableProps {
   onNest: (selector: string) => void;
   /** Project CSS variables (e.g. `--accent`) for `var(--…)` value autocomplete. */
   variables?: string[];
+  /** Project `@keyframes` names, suggested as `animation` values. */
+  animations?: string[];
 }
 interface ReadonlyProps {
   decl: Decl;
@@ -121,15 +123,6 @@ export function DeclarationRow(props: Props) {
       </button>
 
       <span className="ss-decl__actions">
-        <button
-          type="button"
-          className={`ss-decl__imp-toggle${decl.important ? ' is-on' : ''}`}
-          title={decl.important ? 'Remove !important' : 'Add !important'}
-          aria-pressed={decl.important}
-          onClick={() => onChange({ ...decl, important: !decl.important })}
-        >
-          !
-        </button>
         <NestControl nestTargets={nestTargets} onNest={onNest} />
         <button
           type="button"
@@ -155,10 +148,18 @@ export function DeclarationRow(props: Props) {
       {editing?.field === 'value' && (
         <EditPopover
           anchor={editing.anchor}
-          initial={decl.value}
-          options={suggestValues(decl.prop, props.variables ?? [])}
+          initial={decl.important ? `${decl.value} !important` : decl.value}
+          options={suggestValues(decl.prop, props.variables ?? [], props.animations ?? [])}
           placeholder="value"
-          onCommit={(value) => onChange({ ...decl, value })}
+          onCommit={(raw) => {
+            // `!important` is typed inline (no toggle button) — split it back out.
+            const m = /\s*!\s*important\s*$/i.exec(raw);
+            onChange(
+              m
+                ? { ...decl, value: raw.slice(0, m.index).trim(), important: true }
+                : { ...decl, value: raw.trim(), important: false }
+            );
+          }}
           onClose={() => setEditing(null)}
         />
       )}

@@ -731,8 +731,34 @@
   max-height: 220px;
 }
 
-/* row action buttons (! / nest / ✕) — reveal on row hover */
-.ss-decl__imp-toggle,
+/* Inline `!important` ghost completion, painted over the input (typed text is
+ * transparent so the real input shows through; the suffix is greyed). */
+.ss-value-pop__inputwrap {
+  position: relative;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.ss-value-pop__ghost {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  pointer-events: none;
+  box-sizing: border-box;
+  padding: var(--spacing-xs) var(--spacing-sm);
+  border: 1px solid transparent;
+  font-family: var(--font-mono);
+  font-size: var(--font-size-sm);
+  white-space: pre;
+  overflow: hidden;
+}
+.ss-value-pop__ghost-typed {
+  color: transparent;
+}
+.ss-value-pop__ghost-hint {
+  color: var(--text-muted);
+}
+
+/* row action buttons (nest / ✕) — reveal on row hover */
 .ss-decl__remove,
 .ss-decl__nest-btn {
   all: unset;
@@ -751,21 +777,14 @@
     color var(--transition-fast),
     background var(--transition-fast);
 }
-.ss-decl:hover .ss-decl__imp-toggle,
 .ss-decl:hover .ss-decl__remove,
 .ss-decl:hover .ss-decl__nest-btn,
-.ss-decl__imp-toggle.is-on,
 .ss-decl__nest-btn.is-open {
   opacity: 1;
 }
-.ss-decl__imp-toggle:hover,
 .ss-decl__nest-btn:hover {
   color: var(--text-primary);
   background: var(--tint);
-}
-.ss-decl__imp-toggle.is-on {
-  color: var(--warning);
-  font-weight: 700;
 }
 .ss-decl__remove:hover {
   color: var(--error);
@@ -1040,7 +1059,6 @@
 .ss-card__trash:hover,
 .ss-card__add:hover,
 .ss-decl:hover,
-.ss-decl__imp-toggle:hover,
 .ss-decl__nest-btn:hover,
 .ss-decl__remove:hover,
 .ss-settings__class-add:hover,
