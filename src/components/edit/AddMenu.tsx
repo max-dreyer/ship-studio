@@ -206,10 +206,12 @@ export function AddMenu({ onAddProperty, onNest }: Props) {
               }
             }}
           />
-          <div className="ss-add-menu__list">
+          {/* Layout forced inline (block flow) — beats any class/global rule that was
+              otherwise reflowing the rows into columns. */}
+          <div className="ss-add-menu__list" style={{ display: 'block', overflowY: 'auto' }}>
             {flat.length === 0 && <div className="ss-add-menu__empty">No matches</div>}
             {sections.map((section) => (
-              <div key={section.title}>
+              <div key={section.title} style={{ display: 'block' }}>
                 <div className="ss-add-menu__group">{section.title}</div>
                 {section.rows.map((row) => {
                   idx += 1;
@@ -221,9 +223,37 @@ export function AddMenu({ onAddProperty, onNest }: Props) {
                       className={`ss-add-menu__item${isActive ? ' is-active' : ''}`}
                       onMouseDown={(e) => e.preventDefault()}
                       onClick={() => applyRow(row)}
+                      style={{
+                        display: 'flex',
+                        width: '100%',
+                        boxSizing: 'border-box',
+                        alignItems: 'baseline',
+                        gap: 8,
+                        textAlign: 'left',
+                        whiteSpace: 'nowrap',
+                        writingMode: 'horizontal-tb',
+                      }}
                     >
-                      <code className="ss-add-menu__label">{row.label}</code>
-                      {row.hint && <span className="ss-add-menu__hint">{row.hint}</span>}
+                      <code
+                        className="ss-add-menu__label"
+                        style={{
+                          flex: '1 1 auto',
+                          minWidth: 0,
+                          overflow: 'hidden',
+                          textOverflow: 'ellipsis',
+                          whiteSpace: 'nowrap',
+                        }}
+                      >
+                        {row.label}
+                      </code>
+                      {row.hint && (
+                        <span
+                          className="ss-add-menu__hint"
+                          style={{ flex: '0 0 auto', whiteSpace: 'nowrap' }}
+                        >
+                          {row.hint}
+                        </span>
+                      )}
                     </button>
                   );
                 })}
