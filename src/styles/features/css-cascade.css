@@ -7,7 +7,7 @@
  */
 
 :root {
-  /* Chevron rail width — the @ affordances align under it. File-local one-off. */
+  /* Chevron rail width — collapse toggle + nested indent align to it. File-local. */
   --cascade-rail: 14px;
 }
 
@@ -164,7 +164,7 @@
   background: var(--bg-tertiary);
 }
 
-/* ── Card header (selector chip flanked by + Add parent / + Add child) ── */
+/* ── Card header (the selector chip + any media/layer chips) ── */
 .ss-card__head {
   display: flex;
   flex-direction: column;
@@ -328,33 +328,8 @@
   background: color-mix(in srgb, var(--error) 14%, transparent);
 }
 
-/* Smart "+ Add" trigger — opens the grouped structure menu (nest / condition). */
-.ss-card__structure {
-  margin-top: 2px; /* css-ok: tight row above footer */
-}
-.ss-card__add-structure {
-  all: unset;
-  cursor: pointer;
-  display: inline-flex;
-  align-items: center;
-  gap: var(--spacing-xs);
-  padding: 3px 6px; /* css-ok: dense affordance */
-  margin-left: var(--cascade-rail);
-  border-radius: var(--radius-sm);
-  color: var(--text-muted);
-  font-size: var(--font-size-xs);
-  transition:
-    color var(--transition-fast),
-    background var(--transition-fast);
-}
-.ss-card__add-structure:hover,
-.ss-card__add-structure.is-open {
-  color: var(--text-primary);
-  background: var(--tint-subtle);
-}
-
-/* The grouped, searchable "+ Add" menu (portaled, fixed — never clipped). */
-.ss-struct-menu {
+/* The single grouped, searchable "+ Add" menu (portaled, fixed — never clipped). */
+.ss-add-menu {
   z-index: var(--z-dropdown);
   display: flex;
   flex-direction: column;
@@ -365,7 +340,7 @@
   box-shadow: var(--shadow-lg);
   overflow: hidden;
 }
-.ss-struct-menu__search {
+.ss-add-menu__search {
   all: unset;
   box-sizing: border-box;
   width: 100%;
@@ -375,15 +350,15 @@
   font-family: var(--font-mono);
   font-size: var(--font-size-sm);
 }
-.ss-struct-menu__search::placeholder {
+.ss-add-menu__search::placeholder {
   color: var(--text-muted);
 }
-.ss-struct-menu__list {
+.ss-add-menu__list {
   overflow-y: auto;
   padding: var(--spacing-xs);
   scrollbar-width: thin;
 }
-.ss-struct-menu__group {
+.ss-add-menu__group {
   padding: var(--spacing-xs) var(--spacing-xs) 2px;
   color: var(--text-muted);
   font-size: var(--font-size-xs);
@@ -391,12 +366,12 @@
   text-transform: uppercase;
   letter-spacing: 0.04em;
 }
-.ss-struct-menu__empty {
+.ss-add-menu__empty {
   padding: var(--spacing-sm);
   color: var(--text-muted);
   font-size: var(--font-size-sm);
 }
-.ss-struct-menu__item {
+.ss-add-menu__item {
   all: unset;
   box-sizing: border-box;
   cursor: pointer;
@@ -407,17 +382,17 @@
   padding: 4px 6px; /* css-ok: dense menu row */
   border-radius: var(--radius-sm);
 }
-.ss-struct-menu__item:hover,
-.ss-struct-menu__item.is-active {
+.ss-add-menu__item:hover,
+.ss-add-menu__item.is-active {
   background: var(--tint);
 }
-.ss-struct-menu__label {
+.ss-add-menu__label {
   flex: 0 0 auto;
   color: var(--code-property);
   font-family: var(--font-mono);
   font-size: var(--font-size-sm);
 }
-.ss-struct-menu__hint {
+.ss-add-menu__hint {
   flex: 1 1 auto;
   min-width: 0;
   overflow: hidden;
@@ -449,12 +424,6 @@
   padding: 6px var(--spacing-sm); /* css-ok: footer gap */
   border-top: 1px solid var(--border);
 }
-/* When the add-property combobox opens it takes the whole footer row (the source
-   chip wraps below) instead of being squeezed beside it. */
-.ss-card__foot .ss-combo {
-  flex: 1 1 100%;
-  margin-top: 0;
-}
 .ss-card__add {
   all: unset;
   cursor: pointer;
@@ -465,8 +434,9 @@
   font-size: var(--font-size-sm);
   transition: color var(--transition-fast);
 }
-.ss-card__add:hover {
-  color: var(--text-secondary);
+.ss-card__add:hover,
+.ss-card__add.is-open {
+  color: var(--text-primary);
 }
 .ss-card__src-chip {
   display: inline-flex;
@@ -701,91 +671,6 @@
 }
 .ss-decl__nest-item--new {
   color: var(--text-muted);
-}
-
-/* ── Combobox (add property / at-rule) — editor input + enum menu ── */
-.ss-combo {
-  position: relative;
-  margin-top: var(--spacing-xs);
-}
-.ss-combo__input {
-  all: unset;
-  box-sizing: border-box;
-  width: 100%;
-  height: 24px;
-  padding: 0 var(--spacing-sm);
-  border: 1px solid var(--action);
-  border-radius: var(--radius-sm);
-  background: var(--bg-tertiary);
-  color: var(--text-primary);
-  font-family: var(--font-mono);
-  font-size: var(--font-size-sm);
-}
-.ss-combo__input::placeholder {
-  color: var(--text-muted);
-}
-.ss-combo__menu {
-  position: absolute;
-  left: 0;
-  right: 0;
-  top: calc(100% + 2px);
-  z-index: var(--z-dropdown);
-  display: flex;
-  flex-direction: column;
-  gap: 1px; /* css-ok: menu item gap */
-  max-height: 220px;
-  overflow: auto;
-  scrollbar-width: none;
-  padding: var(--spacing-xs);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  background: var(--bg-secondary);
-  box-shadow: var(--shadow-md);
-}
-.ss-combo__menu::-webkit-scrollbar {
-  width: 0;
-  height: 0;
-  display: none;
-}
-/* Inline autocomplete (property-name editing): a fixed-width menu under the field,
-   not stretched to the tiny editable's width. */
-.ss-combo__menu--inline {
-  top: calc(100% + 2px);
-  left: 0;
-  right: auto;
-  min-width: 170px;
-  max-width: 240px;
-}
-.ss-combo__create,
-.ss-combo__item {
-  all: unset;
-  cursor: pointer;
-  padding: 4px var(--spacing-sm);
-  border-radius: calc(var(--radius-sm) - 1px);
-  color: var(--text-secondary);
-  font-family: var(--font-mono);
-  font-size: var(--font-size-sm);
-}
-.ss-combo__create {
-  display: flex;
-  align-items: center;
-  gap: var(--spacing-xs);
-  margin-bottom: 1px; /* css-ok: separate create row */
-  color: var(--text-primary);
-  border-bottom: 1px solid var(--border);
-  border-radius: 0;
-  padding-bottom: 5px; /* css-ok: align with item rhythm */
-}
-.ss-combo__create-chip {
-  padding: 0 var(--spacing-xs);
-  border-radius: var(--radius-sm);
-  background: var(--bg-tertiary);
-  color: var(--code-property);
-}
-.ss-combo__create:hover,
-.ss-combo__item:hover {
-  background: var(--bg-tertiary);
-  color: var(--text-primary);
 }
 
 /* ── Settings tab ── */

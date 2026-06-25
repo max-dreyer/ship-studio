@@ -17,8 +17,7 @@ import { ChevronIcon } from '../icons/common';
 import { LayersIcon } from '../icons/utility';
 import { TrashIcon, FileIcon } from '../icons/editor';
 import { DeclarationRow } from './DeclarationRow';
-import { AddPropertyRow } from './AddPropertyRow';
-import { AddStructureMenu } from './AddStructureMenu';
+import { AddMenu } from './AddMenu';
 import { suggestMediaConditions } from '../../lib/cssProperties';
 import {
   declarations,
@@ -374,18 +373,13 @@ export function CascadeRuleCard(props: Props) {
             />
           ))}
 
-          <div className="ss-card__structure">
-            <AddStructureMenu
-              onNest={(sel) => onChange(addNestedRule(body, sel))}
-              onWrap={onWrap}
-            />
-          </div>
-
           <footer className="ss-card__foot">
-            <AddPropertyRow
-              onAdd={(prop) =>
+            <AddMenu
+              onAddProperty={(prop) =>
                 onChange(addDeclaration(body, { prop, value: '', important: false }))
               }
+              onNest={(sel) => onChange(addNestedRule(body, sel))}
+              onWrap={onWrap}
             />
             {props.file && (
               <span className="ss-card__src-chip" title={`${props.file}:${props.line}`}>
