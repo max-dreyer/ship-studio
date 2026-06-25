@@ -181,7 +181,7 @@ export function CssCascadePanel({
               <ElementSettingsPanel settings={settings} />
             ) : (
               <>
-                <AddSelectorBar onAddSelector={onAddSelector} />
+                <AddSelectorBar onAddSelector={onAddSelector} suggestions={selectorSuggestions} />
 
                 {loading ? (
                   <div className="ss-cascade-loading">
@@ -253,17 +253,28 @@ export function CssCascadePanel({
   );
 }
 
-/** "Add selector" affordance: a button that expands to a free-text selector input,
- *  creating a new rule for the element. */
-function AddSelectorBar({ onAddSelector }: { onAddSelector: (selector: string) => void }) {
+/** "Add selector" affordance: a button that expands to a selector input with a
+ *  live autocomplete of the project's class names (and a "new rule" row for free
+ *  text), creating a new rule for the element. */
+function AddSelectorBar({
+  onAddSelector,
+  suggestions,
+}: {
+  onAddSelector: (selector: string) => void;
+  suggestions: string[];
+}) {
   const [open, setOpen] = useState(false);
   const [text, setText] = useState('');
-  const submit = () => {
-    const v = text.trim();
+  const [active, setActive] = useState(0);
+
+  const submit = (value: string) => {
+    const v = value.trim();
     if (v) onAddSelector(v);
     setText('');
+    setActive(0);
     setOpen(false);
   };
+
   if (!open) {
     return (
       <button type="button" className="ss-cascade-add-selector" onClick={() => setOpen(true)}>
@@ -271,23 +282,76 @@ function AddSelectorBar({ onAddSelector }: { onAddSelector: (selector: string) =
       </button>
     );
   }
+
+  const typed = text.trim();
+  const matches = (
+    typed ? suggestions.filter((s) => s.toLowerCase().includes(typed.toLowerCase())) : suggestions
+  ).slice(0, 8);
+  const showCreate = typed.length > 0 && !matches.includes(typed);
+  const flat = [...(showCreate ? [typed] : []), ...matches];
+
   return (
-    <input
-      className="ss-cascade-add-selector__input"
-      autoFocus
-      value={text}
-      spellCheck={false}
-      autoComplete="off"
-      placeholder="New selector, e.g. .card or h1.title"
-      onChange={(e) => setText(e.target.value)}
-      onKeyDown={(e) => {
-        if (e.key === 'Enter') submit();
-        else if (e.key === 'Escape') {
-          setText('');
-          setOpen(false);
-        }
-      }}
-      onBlur={submit}
-    />
+    <div className="ss-cascade-add-selector__wrap">
+      <input
+        className="ss-cascade-add-selector__input"
+        autoFocus
+        value={text}
+        spellCheck={false}
+        autoComplete="off"
+        placeholder="New selector, e.g. .card or h1.title"
+        onChange={(e) => {
+          setText(e.target.value);
+          setActive(0);
+        }}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') {
+            e.preventDefault();
+            submit(flat[active] ?? text);
+          } else if (e.key === 'ArrowDown') {
+            e.preventDefault();
+            setActive((a) => Math.min(a + 1, flat.length - 1));
+          } else if (e.key === 'ArrowUp') {
+            e.preventDefault();
+            setActive((a) => Math.max(a - 1, 0));
+          } else if (e.key === 'Escape') {
+            e.preventDefault();
+            setText('');
+            setOpen(false);
+          }
+        }}
+        onBlur={() => setOpen(false)}
+      />
+      {flat.length > 0 && (
+        <div className="ss-add-menu ss-cascade-add-selector__menu">
+          <div className="ss-add-menu__list">
+            {showCreate && (
+              <button
+                type="button"
+                className={`ss-add-menu__item${active === 0 ? ' is-active' : ''}`}
+                onMouseDown={(e) => e.preventDefault()}
+                onClick={() => submit(typed)}
+              >
+                <code className="ss-add-menu__label">{typed}</code>
+                <span className="ss-add-menu__hint">new rule</span>
+              </button>
+            )}
+            {matches.map((s, i) => {
+              const idx = (showCreate ? 1 : 0) + i;
+              return (
+                <button
+                  key={s}
+                  type="button"
+                  className={`ss-add-menu__item${active === idx ? ' is-active' : ''}`}
+                  onMouseDown={(e) => e.preventDefault()}
+                  onClick={() => submit(s)}
+                >
+                  <code className="ss-add-menu__label">{s}</code>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      )}
+    </div>
   );
 }
