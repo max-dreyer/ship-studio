@@ -250,11 +250,18 @@ export function useCssCascadeEditor({ iframeRef, projectPath, enabled, onToast }
 
             // Pin locally-created rules the cascade doesn't include (a new selector
             // that doesn't match this element yet) so they never silently vanish.
-            // Drop any that the real cascade now confirms (dedup by key).
-            const mergedKeys = new Set(merged.map(rowKey));
+            // Drop any the real cascade now confirms — matched by LOGICAL identity
+            // (selector + media + file), not rowKey: the optimistic row and the
+            // HMR-resolved row carry different `index`es, so a key compare would never
+            // dedupe them and the card would appear twice (esp. for conditional rules,
+            // whose selector matches the element so the cascade always re-reports them).
+            const sameRule = (a: CascadeRow, b: CascadeRow) =>
+              a.selector === b.selector &&
+              (a.mediaText ?? null) === (b.mediaText ?? null) &&
+              (a.file ?? null) === (b.file ?? null);
             const extraRows: CascadeRow[] = [];
             for (const [key, createdRow] of createdRowsRef.current) {
-              if (mergedKeys.has(key)) {
+              if (merged.some((m) => sameRule(m, createdRow))) {
                 createdRowsRef.current.delete(key);
                 continue;
               }

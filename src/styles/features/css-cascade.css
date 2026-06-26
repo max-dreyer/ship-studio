@@ -224,10 +224,10 @@
 }
 .ss-card__selector-chip {
   display: inline-block;
-  /* Content-width and never shrink below the selector — the class name is the
-     rule's identity and must stay readable even when a long media chip is present. */
-  flex: 0 0 auto;
-  max-width: 70%;
+  /* The selector is the rule's identity — show it in full, literally, never truncated.
+     The media/layer condition is its own context line above, so nothing competes. */
+  flex: 0 1 auto;
+  min-width: 0;
   padding: 1px 6px; /* css-ok: chip padding below scale */
   border-radius: var(--radius-sm);
   background: var(--bg-tertiary);
@@ -235,9 +235,8 @@
   font-family: var(--font-mono);
   font-size: var(--font-size-sm);
   font-weight: 600;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  white-space: normal;
+  overflow-wrap: anywhere;
 }
 .is-readonly .ss-card__selector-chip {
   background: transparent;
@@ -270,6 +269,40 @@
 }
 .ss-card__head-spacer {
   flex: 1 1 auto;
+}
+/* Devtools-style condition context line above the selector: the rule's enclosing
+   `@media (…)` / `@layer` shown literally and in full. Indented to sit under the
+   selector (past the collapse rail). Wraps — never truncates. */
+.ss-card__context {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: var(--spacing-xs);
+  padding: 0 var(--spacing-xs) var(--spacing-xs) calc(var(--cascade-rail) + var(--spacing-xs));
+  font-family: var(--font-mono);
+  font-size: var(--font-size-xs);
+}
+.ss-card__context.is-inactive {
+  opacity: 0.55;
+}
+.ss-card__media-at {
+  color: var(--text-muted);
+}
+.ss-card__context-note {
+  color: var(--text-muted);
+  font-style: italic;
+}
+/* In the context line, the condition shows its FULL text — wrap, never truncate or
+   shrink. (Overrides the inline-row chip's ellipsis defaults.) */
+.ss-card__context .ss-card__chip,
+.ss-card__context .ss-card__chip--media,
+.ss-card__context .ss-card__chip--media-input {
+  flex: 0 1 auto;
+  max-width: none;
+  overflow: visible;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  text-overflow: clip;
 }
 .ss-card__chip {
   display: inline-flex;

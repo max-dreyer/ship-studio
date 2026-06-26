@@ -19,7 +19,7 @@ import { CssVariablesPanel } from './CssVariablesPanel';
 import { CssAnimationsPanel } from './CssAnimationsPanel';
 import { SuggestionPopover, type Suggestion } from './SuggestionPopover';
 import { WRAP_ITEMS, searchStructures, parseRulePrelude } from '../../lib/cssStructures';
-import { mediaChipLabel, rowKey, type CascadeRow } from '../../lib/cssCascade';
+import { rowKey, type CascadeRow } from '../../lib/cssCascade';
 import type { RuleBody } from '../../lib/cssBody';
 import type { CascadeSelection } from '../../hooks/useCssCascadeEditor';
 import type { ElementSettings } from '../../hooks/useElementSettings';
@@ -278,7 +278,6 @@ export function CssCascadePanel({
                   <div className="ss-cascade-cards">
                     {rows.map((row) => {
                       const key = rowKey(row);
-                      const media = mediaChipLabel(row);
                       // Stable across element switches (unlike `key`, which embeds the row index).
                       const collapseKey = `${row.selector ?? ''}|${row.mediaText ?? ''}`;
                       const collapsed = collapsedRules.has(collapseKey);
@@ -291,7 +290,6 @@ export function CssCascadePanel({
                             selector={row.selector ?? ''}
                             file={row.file}
                             line={row.line}
-                            mediaLabel={media}
                             mediaText={row.mediaText}
                             layer={row.layer}
                             inactive={row.inactiveMedia}
@@ -324,7 +322,6 @@ export function CssCascadePanel({
                           selector={row.selector ?? 'element.style'}
                           file={row.file}
                           line={row.line}
-                          mediaLabel={media}
                           mediaText={row.mediaText}
                           layer={row.layer}
                           inactive={row.inactiveMedia}

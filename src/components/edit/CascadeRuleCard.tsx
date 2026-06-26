@@ -45,7 +45,6 @@ interface CommonHeader {
   selector: string;
   file?: string;
   line?: number;
-  mediaLabel?: string | null;
   /** The raw `@media` condition (e.g. `(max-width: 768px)`) — for editing the chip. */
   mediaText?: string | null;
   layer?: string | null;
@@ -339,11 +338,9 @@ function NestedSelectorInput({
 /** A click-to-edit `@media` condition chip (shows the compact label, edits the raw
  *  condition with a native datalist of common conditions). */
 function MediaChip({
-  label,
   condition,
   onCommit,
 }: {
-  label: string;
   condition: string;
   onCommit: (newMedia: string) => void;
 }) {
@@ -355,7 +352,7 @@ function MediaChip({
     return (
       <span
         className="ss-card__chip ss-card__chip--media ss-card__chip--editable"
-        title={`${condition} — click to edit`}
+        title="Click to edit the condition"
         role="button"
         tabIndex={0}
         onClick={() => {
@@ -371,7 +368,8 @@ function MediaChip({
           }
         }}
       >
-        {label}
+        {/* The full condition, in CSS form — never abbreviated/truncated. */}
+        <span className="ss-card__media-at">@media</span> {condition}
       </span>
     );
   }
@@ -501,11 +499,10 @@ function KeyframesNameChip({
 }
 
 function Chips({
-  mediaLabel,
   mediaText,
   layer,
   onRenameAtRule,
-}: Pick<CommonHeader, 'mediaLabel' | 'mediaText' | 'layer'> & {
+}: Pick<CommonHeader, 'mediaText' | 'layer'> & {
   onRenameAtRule?: (newMedia: string) => void;
 }) {
   return (
@@ -516,11 +513,14 @@ function Chips({
           {layer}
         </span>
       )}
-      {mediaLabel &&
-        (onRenameAtRule && mediaText ? (
-          <MediaChip label={mediaLabel} condition={mediaText} onCommit={onRenameAtRule} />
+      {mediaText &&
+        (onRenameAtRule ? (
+          <MediaChip condition={mediaText} onCommit={onRenameAtRule} />
         ) : (
-          <span className="ss-card__chip ss-card__chip--media">{mediaLabel}</span>
+          // Read-only rule: still show the full condition, just not editable.
+          <span className="ss-card__chip ss-card__chip--media">
+            <span className="ss-card__media-at">@media</span> {mediaText}
+          </span>
         ))}
     </>
   );
@@ -542,82 +542,85 @@ export function CascadeRuleCard(props: Props) {
   const isKeyframes = !isStep && isKeyframesSelector(props.selector);
   const onRenameAtRule = props.editable ? props.onRenameAtRule : undefined;
 
-  const selectorRow = (
-    <div className="ss-card__selector-row">
-      <button
-        type="button"
-        className={`ss-card__collapse${collapsed ? ' is-collapsed' : ''}`}
-        aria-expanded={!collapsed}
-        aria-label={collapsed ? 'Expand rule' : 'Collapse rule'}
-        onClick={toggleCollapse}
-      >
-        <ChevronIcon size={12} />
-      </button>
-      {props.editable && isKeyframes && props.onRenameKeyframes ? (
-        <KeyframesNameChip
-          name={keyframesName(props.selector)}
-          onCommit={props.onRenameKeyframes}
-        />
-      ) : editable && props.onSelectorChange ? (
-        <NestedSelectorInput
-          value={props.selector}
-          suggestions={props.selectorSuggestions ?? []}
-          vocab={isStep ? 'keyframe' : 'nesting'}
-          onChange={(sel) => props.onSelectorChange?.(sel)}
-        />
-      ) : props.editable && props.onRename ? (
-        <SelectorChip
-          selector={props.selector}
-          suggestions={props.selectorSuggestions ?? []}
-          onCommit={props.onRename}
-          onWrap={props.onWrap}
-        />
-      ) : (
-        <code className="ss-card__selector-chip" title={props.selector}>
-          {props.selector}
-        </code>
+  const headerContent = (
+    <>
+      {/* Devtools-style context line: the rule's enclosing `@media (…)` / `@layer`, shown
+          in full above the selector — the literal CSS, never abbreviated or pushed off. */}
+      {(props.mediaText || props.layer) && (
+        <div className={`ss-card__context${inactive ? ' is-inactive' : ''}`}>
+          <Chips mediaText={props.mediaText} layer={props.layer} onRenameAtRule={onRenameAtRule} />
+          {inactive && (
+            <span
+              className="ss-card__context-note"
+              title="This condition doesn't match the current preview size — these styles aren't applying right now"
+            >
+              not active now
+            </span>
+          )}
+        </div>
       )}
-      <span className="ss-card__head-spacer" />
-      <Chips
-        mediaLabel={props.mediaLabel}
-        mediaText={props.mediaText}
-        layer={props.layer}
-        onRenameAtRule={onRenameAtRule}
-      />
-      {inactive && (
-        <span
-          className="ss-card__chip ss-card__chip--inactive"
-          title="This condition doesn't match the current preview size — these styles aren't applying right now"
-        >
-          inactive
-        </span>
-      )}
-      {props.editable && props.draft && (
-        <span
-          className="ss-card__chip ss-card__chip--new"
-          title="No rule yet — it's created in your stylesheet when you add the first property"
-        >
-          new
-        </span>
-      )}
-      {!editable &&
-        ('proposal' in props && props.proposal?.active ? (
-          <span className="ss-card__src ss-card__src--proposing">✎ proposing</span>
-        ) : (
-          <span className="ss-card__src ss-card__src--ro">read-only</span>
-        ))}
-      {editable && props.onDelete && !props.draft && (
+      <div className="ss-card__selector-row">
         <button
           type="button"
-          className="ss-card__trash"
-          title="Delete rule"
-          aria-label="Delete rule"
-          onClick={props.onDelete}
+          className={`ss-card__collapse${collapsed ? ' is-collapsed' : ''}`}
+          aria-expanded={!collapsed}
+          aria-label={collapsed ? 'Expand rule' : 'Collapse rule'}
+          onClick={toggleCollapse}
         >
-          <TrashIcon size={12} />
+          <ChevronIcon size={12} />
         </button>
-      )}
-    </div>
+        {props.editable && isKeyframes && props.onRenameKeyframes ? (
+          <KeyframesNameChip
+            name={keyframesName(props.selector)}
+            onCommit={props.onRenameKeyframes}
+          />
+        ) : editable && props.onSelectorChange ? (
+          <NestedSelectorInput
+            value={props.selector}
+            suggestions={props.selectorSuggestions ?? []}
+            vocab={isStep ? 'keyframe' : 'nesting'}
+            onChange={(sel) => props.onSelectorChange?.(sel)}
+          />
+        ) : props.editable && props.onRename ? (
+          <SelectorChip
+            selector={props.selector}
+            suggestions={props.selectorSuggestions ?? []}
+            onCommit={props.onRename}
+            onWrap={props.onWrap}
+          />
+        ) : (
+          <code className="ss-card__selector-chip" title={props.selector}>
+            {props.selector}
+          </code>
+        )}
+        <span className="ss-card__head-spacer" />
+        {props.editable && props.draft && (
+          <span
+            className="ss-card__chip ss-card__chip--new"
+            title="No rule yet — it's created in your stylesheet when you add the first property"
+          >
+            new
+          </span>
+        )}
+        {!editable &&
+          ('proposal' in props && props.proposal?.active ? (
+            <span className="ss-card__src ss-card__src--proposing">✎ proposing</span>
+          ) : (
+            <span className="ss-card__src ss-card__src--ro">read-only</span>
+          ))}
+        {editable && props.onDelete && !props.draft && (
+          <button
+            type="button"
+            className="ss-card__trash"
+            title="Delete rule"
+            aria-label="Delete rule"
+            onClick={props.onDelete}
+          >
+            <TrashIcon size={12} />
+          </button>
+        )}
+      </div>
+    </>
   );
 
   if (!editable) {
@@ -626,7 +629,7 @@ export function CascadeRuleCard(props: Props) {
         className={`ss-card is-readonly${depth ? ' is-nested' : ''}${collapsed ? ' is-collapsed' : ''}${inactive ? ' is-inactive' : ''}`}
         data-testid="cascade-card"
       >
-        <header className="ss-card__head">{selectorRow}</header>
+        <header className="ss-card__head">{headerContent}</header>
         {!collapsed && (
           <div className="ss-card__body">
             {props.proposal?.active ? (
@@ -670,7 +673,7 @@ export function CascadeRuleCard(props: Props) {
       className={`ss-card${depth ? ' is-nested' : ''}${collapsed ? ' is-collapsed' : ''}${inactive ? ' is-inactive' : ''}${props.draft ? ' is-draft' : ''}`}
       data-testid="cascade-card"
     >
-      <header className="ss-card__head">{selectorRow}</header>
+      <header className="ss-card__head">{headerContent}</header>
 
       {!collapsed && (
         <div className="ss-card__body">
