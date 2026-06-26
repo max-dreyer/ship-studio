@@ -548,6 +548,18 @@ export function useCssCascadeEditor({ iframeRef, projectPath, enabled, onToast }
           : null;
         const min = /min-width\s*:\s*([\d.]+)px/i.exec(condition);
         condMinPx = min ? Math.round(parseFloat(min[1])) : null;
+        // This exact conditional rule already on screen? Don't create a duplicate
+        // `@media (…) { sel { } }` — it's right there to edit. (The backend skips its
+        // dup-check for wrapped rules, so this guard lives here.)
+        const norm = (s: string | null | undefined) => (s ?? '').replace(/\s+/g, '');
+        const alreadyShown = [...rowByKeyRef.current.values()].some(
+          (r) =>
+            r.editable &&
+            r.selector === sel &&
+            norm(r.mediaText) === norm(condMediaText) &&
+            !!r.mediaText
+        );
+        if (alreadyShown) return;
       } else {
         // Already shown as a base rule? Don't duplicate or error — it's right there.
         const alreadyShown = [...rowByKeyRef.current.values()].some(
