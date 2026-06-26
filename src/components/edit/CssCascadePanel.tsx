@@ -10,8 +10,11 @@
 
 import { useCallback, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
 import { PinIcon } from '../icons/layout';
-import { CloseIcon } from '../icons/common';
+import { CloseIcon, CheckIcon } from '../icons/common';
 import { PlusIcon } from '../icons/utility';
+import { CopyIcon } from '../icons/editor';
+import { useCopyToClipboard } from '../../hooks/useCopyToClipboard';
+import { useOptionalToast } from '../../contexts/ToastContext';
 import { Spinner } from '../primitives/Spinner';
 import { CascadeRuleCard } from './CascadeRuleCard';
 import { ElementSettingsPanel } from './ElementSettingsPanel';
@@ -87,6 +90,12 @@ export function CssCascadePanel({
 }: Props) {
   const [tab, setTab] = useState<'style' | 'settings'>('style');
   const [scope, setScope] = useState<Scope>('element');
+  // "Copy id": the element's selector (tag + classes), so you can paste it to your agent
+  // and describe the change you want ("make a.btn-secondary's hover state pop").
+  const { showToast } = useOptionalToast();
+  const { copy: copyElementId, isCopied: idCopied } = useCopyToClipboard({
+    onCopy: () => showToast('Element id copied — paste it to your agent', 'success'),
+  });
   // Collapse state keyed by rule identity (selector + media), not the per-element row
   // key — so minimizing a shared rule like `*` keeps it minimized across element
   // switches. Lives on the panel (which stays mounted), so it survives reselection.
@@ -237,6 +246,19 @@ export function CssCascadePanel({
               {selection.instanceCount > 1 && (
                 <span className="ss-cascade-target__count">×{selection.instanceCount}</span>
               )}
+              <button
+                type="button"
+                className="ss-cascade-target__copy"
+                title="Copy this element's selector to paste into your agent"
+                aria-label="Copy element id"
+                onClick={() => {
+                  const id = `${selection.signature.tagName}${classes.map((c) => `.${c}`).join('')}`;
+                  void copyElementId(id);
+                }}
+              >
+                {idCopied ? <CheckIcon size={12} /> : <CopyIcon size={12} />}
+                {idCopied ? 'Copied' : 'Copy id'}
+              </button>
             </div>
 
             <div className="ss-cascade-tabs" role="tablist">

@@ -43,9 +43,28 @@
   color: var(--text-secondary);
 }
 .ss-cascade-target__count {
-  margin-left: auto;
   color: var(--text-muted);
   font-size: var(--font-size-xs);
+}
+/* "Copy id" — copies the element's selector to paste into the agent. Pushed right. */
+.ss-cascade-target__copy {
+  all: unset;
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--spacing-xs);
+  padding: 2px var(--spacing-xs); /* css-ok: chip padding below scale */
+  border-radius: var(--radius-sm);
+  color: var(--text-muted);
+  font-size: var(--font-size-xs);
+  cursor: pointer;
+  transition:
+    color var(--transition-fast),
+    background var(--transition-fast);
+}
+.ss-cascade-target__copy:hover {
+  color: var(--text-primary);
+  background: var(--tint-subtle);
 }
 
 /* ── Style / Settings tabs (segmented control, matching the editor) ── */
