@@ -5,7 +5,7 @@
  * Overridden declarations render struck-through, with a tooltip naming what wins.
  */
 
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { CloseIcon } from '../icons/common';
 import { PlusIcon } from '../icons/utility';
@@ -29,6 +29,9 @@ interface EditableProps {
   variables?: string[];
   /** Project `@keyframes` names, suggested as `animation` values. */
   animations?: string[];
+  /** Open the value editor automatically on mount — for the editing flow (right after
+   *  adding a property, land in its value input without a second click). */
+  autoEditValue?: boolean;
 }
 interface ReadonlyProps {
   decl: Decl;
@@ -92,6 +95,16 @@ export function DeclarationRow(props: Props) {
     setEditing((cur) => (cur?.field === field ? null : { field, anchor }));
   };
 
+  // Editing-flow: when this row was just added, open its value editor on mount so the
+  // user lands straight in the value input (anchored to the value button).
+  const valueBtnRef = useRef<HTMLButtonElement>(null);
+  const autoEditValue = props.editable && props.autoEditValue;
+  useEffect(() => {
+    if (autoEditValue && valueBtnRef.current) {
+      setEditing({ field: 'value', anchor: valueBtnRef.current });
+    }
+  }, [autoEditValue]);
+
   if (!props.editable) {
     return (
       <div className={`ss-decl is-readonly${overridden ? ' is-overridden' : ''}`} {...tipHandlers}>
@@ -116,7 +129,12 @@ export function DeclarationRow(props: Props) {
         {decl.prop || <span className="ss-decl__ph">property</span>}
       </button>
       <span className="ss-decl__colon">:</span>
-      <button type="button" className="ss-decl__value ss-decl__edit" onClick={toggle('value')}>
+      <button
+        ref={valueBtnRef}
+        type="button"
+        className="ss-decl__value ss-decl__edit"
+        onClick={toggle('value')}
+      >
         <Swatch value={decl.value} />
         {decl.value || <span className="ss-decl__ph">value</span>}
         {decl.important && <span className="ss-decl__imp"> !important</span>}

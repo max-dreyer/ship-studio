@@ -37,6 +37,9 @@ interface Props {
   /** Add a nested rule with this selector/prelude (a nested selector or keyframe step). */
   onNest: (selector: string) => void;
   mode?: AddMode;
+  /** Open the menu automatically on mount — for the editing flow (e.g. right after
+   *  creating a rule, jump straight to picking its first property). */
+  autoOpen?: boolean;
 }
 
 type RowKind = 'prop' | 'nest';
@@ -57,7 +60,7 @@ const MENU_WIDTH = 288;
 const SEL_START = /^[&:>+~.#[*]/;
 const LOOKS_PROP = /^[a-zA-Z-]+$/;
 
-export function AddMenu({ onAddProperty, onNest, mode = 'full' }: Props) {
+export function AddMenu({ onAddProperty, onNest, mode = 'full', autoOpen = false }: Props) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState('');
   const [active, setActive] = useState(0);
@@ -66,6 +69,16 @@ export function AddMenu({ onAddProperty, onNest, mode = 'full' }: Props) {
   const [anchor, setAnchor] = useState<DOMRect | null>(null);
   const btnRef = useRef<HTMLButtonElement>(null);
   const popRef = useRef<HTMLDivElement>(null);
+
+  // Editing-flow: open on mount when asked (e.g. right after creating the rule), so
+  // the user lands straight in property selection without a second click.
+  useEffect(() => {
+    if (autoOpen && btnRef.current) {
+      setAnchor(btnRef.current.getBoundingClientRect());
+      setOpen(true);
+    }
+    // One-shot on the autoOpen signal.
+  }, [autoOpen]);
 
   const close = () => {
     setOpen(false);

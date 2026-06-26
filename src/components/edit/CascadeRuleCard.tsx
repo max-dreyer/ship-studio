@@ -90,6 +90,9 @@ interface EditableCard extends CommonHeader {
   /** A not-yet-created rule (one of the element's own selectors) — shown dashed with a
    *  "new" chip; the rule is written to source on the first property. */
   draft?: boolean;
+  /** Editing-flow: open the "+ Add" menu on mount (right after this rule was created via
+   *  "Add selector"), so the user jumps straight to its first property. */
+  autoOpenAdd?: boolean;
 }
 
 interface ReadonlyCard extends CommonHeader {
@@ -533,6 +536,9 @@ export function CascadeRuleCard(props: Props) {
   const controlled = props.onToggleCollapse != null;
   const collapsed = controlled ? (props.collapsed ?? false) : localCollapsed;
   const toggleCollapse = controlled ? props.onToggleCollapse! : () => setLocalCollapsed((c) => !c);
+  // Editing-flow: the property just added via "+ Add" — its row auto-opens the value
+  // input so the user types the value immediately (no second click).
+  const [autoEditProp, setAutoEditProp] = useState<string | null>(null);
   const depth = props.depth ?? 0;
   const editable = props.editable;
   const inactive = props.inactive ?? false;
@@ -687,6 +693,7 @@ export function CascadeRuleCard(props: Props) {
               nestTargets={nested.map((r) => r.selector)}
               variables={props.variables}
               animations={props.animations}
+              autoEditValue={autoEditProp === d.prop}
               onChange={(next) => onChange(replaceItem(body, d.index, { kind: 'decl', ...next }))}
               onRemove={() => onChange(removeItem(body, d.index))}
               onNest={(sel) => onChange(moveDeclIntoNested(body, d.index, sel))}
@@ -720,9 +727,11 @@ export function CascadeRuleCard(props: Props) {
           <footer className="ss-card__foot">
             <AddMenu
               mode={isKeyframes ? 'keyframes' : isStep ? 'props' : 'full'}
-              onAddProperty={(prop) =>
-                onChange(addDeclaration(body, { prop, value: '', important: false }))
-              }
+              autoOpen={props.editable && props.autoOpenAdd}
+              onAddProperty={(prop) => {
+                onChange(addDeclaration(body, { prop, value: '', important: false }));
+                setAutoEditProp(prop); // → the new row opens its value input
+              }}
               onNest={(sel) => onChange(addNestedRule(body, sel))}
             />
             {props.file && (

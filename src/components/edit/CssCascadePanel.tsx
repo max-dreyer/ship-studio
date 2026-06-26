@@ -55,6 +55,8 @@ interface Props {
   variables: string[];
   /** Project `@keyframes` names for `animation` value autocomplete. */
   animations: string[];
+  /** rowKey of a just-created rule — its card auto-opens its "+ Add" menu (editing flow). */
+  justCreatedKey?: string | null;
   settings: ElementSettings;
   /** Project-global Variables editor state (custom properties / design tokens). */
   variablesState: ReturnType<typeof useCssVariables>;
@@ -81,6 +83,7 @@ export function CssCascadePanel({
   existingSelectors,
   variables,
   animations,
+  justCreatedKey,
   settings,
   variablesState,
   animationsState,
@@ -329,6 +332,7 @@ export function CssCascadePanel({
                             }
                             body={bodies[key]}
                             draft={row.draft}
+                            autoOpenAdd={key === justCreatedKey}
                             onChange={(b) => onChangeBody(key, b)}
                             onDelete={() => onDeleteRule(key)}
                             // A draft rule doesn't exist in source yet — no rename/wrap

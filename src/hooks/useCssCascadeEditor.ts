@@ -94,6 +94,9 @@ export function useCssCascadeEditor({ iframeRef, projectPath, enabled, onToast }
   const [bodies, setBodies] = useState<Record<string, RuleBody>>({});
   const [overridden, setOverridden] = useState<Record<string, Map<string, string>>>({});
   const [savingKeys, setSavingKeys] = useState<Set<string>>(() => new Set());
+  // The rowKey of a just-created rule ("Add selector"), so the panel can auto-open its
+  // "+ Add" menu for the editing flow. Cleared shortly after (one-shot).
+  const [justCreatedKey, setJustCreatedKey] = useState<string | null>(null);
   // Project class names for selector autocomplete (loaded when edit mode opens).
   const [classSuggestions, setClassSuggestions] = useState<string[]>([]);
   // Every existing rule selector (full text), so "Add selector" can suggest what's
@@ -620,6 +623,10 @@ export function useCssCascadeEditor({ iframeRef, projectPath, enabled, onToast }
         bodiesRef.current[key] = body;
         baselineInner.current[key] = innerText;
         setOverridden((prev) => ({ ...prev, [key]: new Map() }));
+        // Editing-flow: open the new card's "+ Add" menu so the user jumps straight to
+        // its first property. One-shot — cleared so later refreshes don't re-open it.
+        setJustCreatedKey(key);
+        window.setTimeout(() => setJustCreatedKey((k) => (k === key ? null : k)), 1500);
       };
 
       post({ type: 'ss:suppressReload' });
@@ -850,6 +857,7 @@ export function useCssCascadeEditor({ iframeRef, projectPath, enabled, onToast }
     existingSelectors,
     variableSuggestions,
     animationSuggestions,
+    justCreatedKey,
     loading,
     savingKeys,
   };
