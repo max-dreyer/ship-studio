@@ -422,7 +422,10 @@
 
 /* The single grouped, searchable "+ Add" menu (portaled, fixed — never clipped). */
 .ss-add-menu {
-  z-index: var(--z-dropdown);
+  /* Above the floating editor panel (z-index 1000) — at z-dropdown (100) the portaled
+     menu rendered BEHIND the panel and was invisible ("+ Add did nothing"). The value
+     editor / autocomplete already sit at z-tooltip, which is why those worked. */
+  z-index: var(--z-tooltip);
   display: flex;
   flex-direction: column;
   max-height: 320px;
