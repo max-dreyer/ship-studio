@@ -125,6 +125,11 @@ export function useCssCascadeEditor({ iframeRef, projectPath, enabled, onToast }
   // Keys of draft cards (the element's own selectors with no rule yet). A draft's rule
   // is created in source on its first saved property; until then it's display-only.
   const draftKeysRef = useRef<Set<string>>(new Set());
+  // Stable synthetic index per draft selector, REUSED across cascade rebuilds — so a
+  // draft's rowKey (and thus its React key) doesn't change every refresh. Without this,
+  // each rebuild remounted the draft card, destroying any open "+ Add" menu / edit state
+  // ("+ Add doesn't work" on NEW cards). Reset only on a genuine element change.
+  const draftIndexRef = useRef<Map<string, number>>(new Map());
   const editModeOnRef = useRef(false);
   useEffect(() => {
     editModeOnRef.current = editModeOn;
@@ -219,6 +224,7 @@ export function useCssCascadeEditor({ iframeRef, projectPath, enabled, onToast }
         setSelection({ signature: d.signature, instanceCount: d.count ?? 1 });
         if (!sameElement) {
           createdRowsRef.current = new Map();
+          draftIndexRef.current = new Map();
           setRows([]);
           setBodies({});
           bodiesRef.current = {};
@@ -309,8 +315,15 @@ export function useCssCascadeEditor({ iframeRef, projectPath, enabled, onToast }
                 );
                 for (const selector of candidates) {
                   if (styledBase.has(selector)) continue;
+                  // Stable index per selector → stable rowKey → the draft card isn't
+                  // remounted on each cascade rebuild (preserves its open "+ Add" menu).
+                  let draftIdx = draftIndexRef.current.get(selector);
+                  if (draftIdx === undefined) {
+                    draftIdx = ++synthIndex.current;
+                    draftIndexRef.current.set(selector, draftIdx);
+                  }
                   const draft: CascadeRow = {
-                    index: ++synthIndex.current,
+                    index: draftIdx,
                     selector,
                     declarations: [],
                     specificity: draftSpecificity(selector),
