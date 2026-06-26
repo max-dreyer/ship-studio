@@ -33,12 +33,22 @@ describe('rulesToLocate', () => {
     ];
     const out = rulesToLocate(matched);
     expect(out).toEqual([
-      { index: 0, query: { selector: '.a', mediaText: null, href: null } },
+      { index: 0, query: { selector: '.a', mediaText: null, href: null, layer: null } },
       {
         index: 2,
-        query: { selector: '.b', mediaText: '(max-width: 768px)', href: 'http://x/s.css' },
+        query: {
+          selector: '.b',
+          mediaText: '(max-width: 768px)',
+          href: 'http://x/s.css',
+          layer: null,
+        },
       },
     ]);
+  });
+
+  it('forwards the @layer name so locate can disambiguate same-selector layers', () => {
+    const out = rulesToLocate([rule({ selector: '.btn', layer: 'theme' })]);
+    expect(out[0].query.layer).toBe('theme');
   });
 });
 

@@ -242,6 +242,10 @@ pub struct MatchedRuleQuery {
     /// basename tie-breaker when the same selector lives in several files.
     #[serde(default)]
     pub href: Option<String>,
+    /// The enclosing `@layer` name, if the rule is inside one. Distinguishes the same
+    /// selector declared in different layers (which would otherwise collide → Multiple).
+    #[serde(default)]
+    pub layer: Option<String>,
 }
 
 /// Where a cascade rule lives in source — the editable seam for the code panel.
@@ -277,6 +281,9 @@ struct RuleSpan {
     /// Byte range of the enclosing `@media` condition text (for editing the at-rule),
     /// if the rule is inside one.
     media_prelude: Option<(usize, usize)>,
+    /// The name of the enclosing `@layer` (innermost), if any. Distinguishes the same
+    /// selector declared in different cascade layers so locate doesn't collide them.
+    layer: Option<String>,
     /// Byte offset of the first significant byte of the selector (for delete/wrap,
     /// which need the rule's start, not just its block).
     selector_start: usize,
@@ -544,10 +551,28 @@ fn locate_rule(sheets: &[SheetIndex], q: &MatchedRuleQuery) -> RuleLocation {
             resolved(rel, content, rule)
         }
         _ => {
-            // Same selector in several files — let the served href's basename break
-            // the tie when it pins exactly one. Otherwise it's read-only.
+            // Several rules share this selector + media. Break the tie — as a tie-break,
+            // never a hard filter, so a single-hit locate can't regress. First by cascade
+            // LAYER (the same selector in different `@layer`s is genuinely distinct), then
+            // by the served href's basename (same selector across files). Resolve only if
+            // exactly one survives; otherwise it's honestly ambiguous → read-only.
+            let by_layer: Vec<_> = hits
+                .iter()
+                .copied()
+                .filter(|(_, _, rule)| rule.layer == q.layer)
+                .collect();
+            let pool = if by_layer.len() == 1 {
+                return {
+                    let (rel, content, rule) = by_layer[0];
+                    resolved(rel, content, rule)
+                };
+            } else if !by_layer.is_empty() && by_layer.len() < hits.len() {
+                by_layer
+            } else {
+                hits.clone()
+            };
             if let Some(base) = q.href.as_deref().and_then(href_basename) {
-                let narrowed: Vec<_> = hits
+                let narrowed: Vec<_> = pool
                     .iter()
                     .copied()
                     .filter(|(rel, _, _)| rel_basename(rel) == base)
@@ -558,7 +583,7 @@ fn locate_rule(sheets: &[SheetIndex], q: &MatchedRuleQuery) -> RuleLocation {
                 }
             }
             RuleLocation::Multiple {
-                files: hits.iter().map(|(rel, _, _)| rel.to_string()).collect(),
+                files: pool.iter().map(|(rel, _, _)| rel.to_string()).collect(),
             }
         }
     }
@@ -832,13 +857,34 @@ fn index_rules(css: &str) -> Vec<RuleSpan> {
         Media(String, usize, usize),
         /// A grouping at-rule that holds ordinary style rules (`@layer`, `@supports`,
         /// `@container`): we descend and index the rules inside it so they stay
-        /// editable. (Its condition isn't surfaced as a media context yet.)
-        Transparent,
+        /// editable. Payload is the `@layer` name (innermost), so same-selector rules in
+        /// different layers are distinguishable; `None` for anonymous layers / supports /
+        /// container (their conditions aren't surfaced as a discriminator yet).
+        Group(Option<String>),
         /// An at-rule whose inner blocks are NOT style rules (`@keyframes` stops,
         /// `@font-face`/`@page` descriptors), or a malformed block — not indexed.
         Other,
         /// A style rule; payload is its index in `rules`.
         Rule(usize),
+    }
+
+    /// The nearest enclosing `@media` condition + its byte range, if any.
+    fn enclosing_media(stack: &[Frame]) -> (Option<String>, Option<(usize, usize)>) {
+        stack
+            .iter()
+            .rev()
+            .find_map(|f| match f {
+                Frame::Media(m, cs, ce) => Some((Some(m.clone()), Some((*cs, *ce)))),
+                _ => None,
+            })
+            .unwrap_or((None, None))
+    }
+    /// The nearest enclosing named `@layer`, if any.
+    fn enclosing_layer(stack: &[Frame]) -> Option<String> {
+        stack.iter().rev().find_map(|f| match f {
+            Frame::Group(Some(name)) => Some(name.clone()),
+            _ => None,
+        })
     }
 
     let bytes = css.as_bytes();
@@ -923,8 +969,20 @@ fn index_rules(css: &str) -> Vec<RuleSpan> {
                     ));
                 } else if name == "layer" || name == "supports" || name == "container" {
                     // Grouping at-rules that hold ordinary style rules — descend so
-                    // their contents are editable (font-face/page do NOT).
-                    stack.push(Frame::Transparent);
+                    // their contents are editable (font-face/page do NOT). Capture the
+                    // `@layer` name so same-selector rules in different layers don't
+                    // collide on locate; supports/container carry no name (yet).
+                    let layer = if name == "layer" {
+                        let n = rest["layer".len()..].trim();
+                        if n.is_empty() {
+                            None
+                        } else {
+                            Some(n.to_string())
+                        }
+                    } else {
+                        None
+                    };
+                    stack.push(Frame::Group(layer));
                 } else if name.ends_with("keyframes") {
                     // `@keyframes <name>` / `@-webkit-keyframes <name>`: a named
                     // animation. Index the whole rule as ONE locatable/editable block
@@ -932,14 +990,8 @@ fn index_rules(css: &str) -> Vec<RuleSpan> {
                     // (`0%`, `from`, …) are written verbatim as body text rather than
                     // indexed as separate style rules (so the body round-trips through
                     // `apply_css_rule_text`).
-                    let (media, media_prelude) = stack
-                        .iter()
-                        .rev()
-                        .find_map(|f| match f {
-                            Frame::Media(m, cs, ce) => Some((Some(m.clone()), Some((*cs, *ce)))),
-                            _ => None,
-                        })
-                        .unwrap_or((None, None));
+                    let (media, media_prelude) = enclosing_media(&stack);
+                    let layer = enclosing_layer(&stack);
                     let selector_start = first_significant(css, prelude_start, i);
                     let selector_line = line_of(css, selector_start);
                     let idx = rules.len();
@@ -947,6 +999,7 @@ fn index_rules(css: &str) -> Vec<RuleSpan> {
                         selector: prelude.to_string(),
                         media,
                         media_prelude,
+                        layer,
                         selector_start,
                         block_inner_start: i + 1,
                         block_inner_end: i + 1,
@@ -957,14 +1010,8 @@ fn index_rules(css: &str) -> Vec<RuleSpan> {
                     stack.push(Frame::Other);
                 }
             } else if !prelude.is_empty() {
-                let (media, media_prelude) = stack
-                    .iter()
-                    .rev()
-                    .find_map(|f| match f {
-                        Frame::Media(m, cs, ce) => Some((Some(m.clone()), Some((*cs, *ce)))),
-                        _ => None,
-                    })
-                    .unwrap_or((None, None));
+                let (media, media_prelude) = enclosing_media(&stack);
+                let layer = enclosing_layer(&stack);
                 let selector_start = first_significant(css, prelude_start, i);
                 let selector_line = line_of(css, selector_start);
                 let idx = rules.len();
@@ -972,6 +1019,7 @@ fn index_rules(css: &str) -> Vec<RuleSpan> {
                     selector: prelude.to_string(),
                     media,
                     media_prelude,
+                    layer,
                     selector_start,
                     block_inner_start: i + 1,
                     block_inner_end: i + 1,
@@ -2650,6 +2698,7 @@ mod tests {
             selector: selector.into(),
             media_text: media_text.map(|s| s.into()),
             href: href.map(|s| s.into()),
+            layer: None,
         }
     }
 
@@ -3282,6 +3331,45 @@ mod tests {
             "conditional must be gone"
         );
         assert!(braces_balanced(&out));
+    }
+
+    #[test]
+    fn same_selector_in_two_layers_indexes_the_layer_and_locates_by_it() {
+        let css = "@layer base {\n  .btn {\n    color: blue;\n  }\n}\n@layer theme {\n  .btn {\n    color: red;\n  }\n}\n";
+        // Both .btn rules carry their layer name.
+        let rules = index_rules(css);
+        let layers: Vec<_> = rules
+            .iter()
+            .filter(|r| rule_selector_matches(&r.selector, ".btn"))
+            .map(|r| r.layer.clone())
+            .collect();
+        assert_eq!(
+            layers,
+            vec![Some("base".to_string()), Some("theme".to_string())]
+        );
+
+        // Locating with the layer tie-break resolves each distinctly (not Multiple).
+        let sheets = idx(vec![("s.css".into(), css.to_string())]);
+        let q_base = MatchedRuleQuery {
+            selector: ".btn".into(),
+            media_text: None,
+            href: None,
+            layer: Some("base".into()),
+        };
+        match locate_rule(&sheets, &q_base) {
+            RuleLocation::Resolved { inner_text, .. } => assert!(inner_text.contains("blue")),
+            o => panic!("layer base .btn should resolve, got {o:?}"),
+        }
+        let q_theme = MatchedRuleQuery {
+            selector: ".btn".into(),
+            media_text: None,
+            href: None,
+            layer: Some("theme".into()),
+        };
+        match locate_rule(&sheets, &q_theme) {
+            RuleLocation::Resolved { inner_text, .. } => assert!(inner_text.contains("red")),
+            o => panic!("layer theme .btn should resolve, got {o:?}"),
+        }
     }
 
     #[test]

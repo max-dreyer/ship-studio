@@ -58,6 +58,8 @@ export interface MatchedRuleQuery {
   /** The enclosing media condition text (e.g. `(max-width: 768px)`), or null for base. */
   mediaText: string | null;
   href: string | null;
+  /** The enclosing `@layer` name, or null — disambiguates the same selector across layers. */
+  layer?: string | null;
 }
 
 /** A matched rule joined with its source provenance — the panel's row model. */
@@ -268,7 +270,10 @@ export function rulesToLocate(
   const out: { index: number; query: MatchedRuleQuery }[] = [];
   matched.forEach((m, index) => {
     if (m.origin === 'author' && m.selector) {
-      out.push({ index, query: { selector: m.selector, mediaText: m.mediaText, href: m.href } });
+      out.push({
+        index,
+        query: { selector: m.selector, mediaText: m.mediaText, href: m.href, layer: m.layer },
+      });
     }
   });
   return out;
