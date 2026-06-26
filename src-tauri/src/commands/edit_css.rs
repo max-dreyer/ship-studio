@@ -1016,17 +1016,25 @@ fn index_rules(css: &str) -> Vec<RuleSpan> {
                         prelude_start + cs,
                         prelude_start + ce,
                     ));
-                } else if name == "layer" || name == "supports" || name == "container" {
+                } else if name == "layer"
+                    || name == "supports"
+                    || name == "container"
+                    || name == "scope"
+                {
                     // Grouping at-rules that hold ordinary style rules — descend so their
                     // contents are editable (font-face/page do NOT). Capture the condition
                     // (layer name / container query / supports test) so the same selector
-                    // in different contexts doesn't collide on locate.
+                    // in different contexts doesn't collide on locate. `@scope` descends
+                    // too (its `:scope`/nested rules are editable) — without this it was
+                    // `Frame::Other` so everything inside was read-only, and the `@scope`
+                    // wrap-menu action stranded the rule out of the editor.
                     let cond = rest[name.len()..].trim();
                     let kind = match name.as_str() {
                         "layer" if cond.is_empty() => GroupKind::Anonymous,
                         "layer" => GroupKind::Layer(cond.to_string()),
                         "container" => GroupKind::Container(cond.to_string()),
-                        _ => GroupKind::Supports(cond.to_string()),
+                        "supports" => GroupKind::Supports(cond.to_string()),
+                        _ => GroupKind::Anonymous, // @scope — descend; no disambiguator yet
                     };
                     stack.push(Frame::Group(kind));
                 } else if name.ends_with("keyframes") {
@@ -3397,6 +3405,31 @@ mod tests {
         assert!(
             !out.contains("max-width: 768px"),
             "conditional must be gone"
+        );
+        assert!(braces_balanced(&out));
+    }
+
+    #[test]
+    fn scope_rule_bodies_are_indexed_and_editable() {
+        // @scope used to be Frame::Other → everything inside read-only, and the @scope
+        // wrap-menu action bricked the rule. Now its inner rules are indexed + editable.
+        let css = "@scope (.card) to (.content) {\n  a {\n    color: blue;\n  }\n  :scope {\n    padding: 1rem;\n  }\n}\n";
+        let rules = index_rules(css);
+        assert!(
+            rules.iter().any(|r| r.selector == "a"),
+            "inner `a` should be indexed"
+        );
+        assert!(
+            rules.iter().any(|r| r.selector == ":scope"),
+            "`:scope` should be indexed"
+        );
+        let inner = inner_of(css, "a", &None).expect("locate `a` inside @scope");
+        let out =
+            apply_rule_text_to_source(css, "a", &None, inner, "\n    color: red;\n  ").unwrap();
+        assert!(out.contains("color: red;"));
+        assert!(
+            out.contains("@scope (.card) to (.content)"),
+            "scope wrapper intact"
         );
         assert!(braces_balanced(&out));
     }
