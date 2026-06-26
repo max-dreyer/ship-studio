@@ -246,6 +246,12 @@ pub struct MatchedRuleQuery {
     /// selector declared in different layers (which would otherwise collide → Multiple).
     #[serde(default)]
     pub layer: Option<String>,
+    /// The enclosing `@container` condition, if any — same disambiguation role as `layer`.
+    #[serde(default)]
+    pub container: Option<String>,
+    /// The enclosing `@supports` condition, if any — same disambiguation role as `layer`.
+    #[serde(default)]
+    pub supports: Option<String>,
 }
 
 /// Where a cascade rule lives in source — the editable seam for the code panel.
@@ -284,6 +290,10 @@ struct RuleSpan {
     /// The name of the enclosing `@layer` (innermost), if any. Distinguishes the same
     /// selector declared in different cascade layers so locate doesn't collide them.
     layer: Option<String>,
+    /// The enclosing `@container` condition (innermost), if any — same disambiguation role.
+    container: Option<String>,
+    /// The enclosing `@supports` condition (innermost), if any — same disambiguation role.
+    supports: Option<String>,
     /// Byte offset of the first significant byte of the selector (for delete/wrap,
     /// which need the rule's start, not just its block).
     selector_start: usize,
@@ -452,15 +462,18 @@ fn rule_selector_matches(rule_selector: &str, target: &str) -> bool {
 /// (whitespace/case-insensitive). Both empty → a base (un-mediated) rule. This
 /// matches by the FULL condition so max-width / feature queries don't collide with
 /// the base rule the way a min-width-only comparison did.
+/// Normalize an at-rule condition for comparison: drop whitespace, lowercase. So
+/// `(max-width: 768px)` and `(max-width:768px)` (browser vs source) compare equal.
+fn norm_cond(s: &str) -> String {
+    s.chars()
+        .filter(|c| !c.is_whitespace())
+        .flat_map(|c| c.to_lowercase())
+        .collect()
+}
+
 fn media_text_matches(rule_media: &Option<String>, query: &Option<String>) -> bool {
-    fn norm(s: &str) -> String {
-        s.chars()
-            .filter(|c| !c.is_whitespace())
-            .flat_map(|c| c.to_lowercase())
-            .collect()
-    }
-    let r = rule_media.as_deref().map(norm).unwrap_or_default();
-    let q = query.as_deref().map(norm).unwrap_or_default();
+    let r = rule_media.as_deref().map(norm_cond).unwrap_or_default();
+    let q = query.as_deref().map(norm_cond).unwrap_or_default();
     r == q
 }
 
@@ -552,22 +565,32 @@ fn locate_rule(sheets: &[SheetIndex], q: &MatchedRuleQuery) -> RuleLocation {
         }
         _ => {
             // Several rules share this selector + media. Break the tie — as a tie-break,
-            // never a hard filter, so a single-hit locate can't regress. First by cascade
-            // LAYER (the same selector in different `@layer`s is genuinely distinct), then
-            // by the served href's basename (same selector across files). Resolve only if
-            // exactly one survives; otherwise it's honestly ambiguous → read-only.
-            let by_layer: Vec<_> = hits
+            // never a hard filter, so a single-hit locate can't regress. First by at-rule
+            // CONTEXT (layer / container / supports — the same selector in a different
+            // cascade layer or condition is genuinely a distinct rule), then by the served
+            // href's basename (same selector across files). Resolve only if exactly one
+            // survives; otherwise it's honestly ambiguous → read-only.
+            let cond_eq = |a: &Option<String>, b: &Option<String>| match (a, b) {
+                (Some(x), Some(y)) => norm_cond(x) == norm_cond(y),
+                (None, None) => true,
+                _ => false,
+            };
+            let by_ctx: Vec<_> = hits
                 .iter()
                 .copied()
-                .filter(|(_, _, rule)| rule.layer == q.layer)
+                .filter(|(_, _, r)| {
+                    cond_eq(&r.layer, &q.layer)
+                        && cond_eq(&r.container, &q.container)
+                        && cond_eq(&r.supports, &q.supports)
+                })
                 .collect();
-            let pool = if by_layer.len() == 1 {
+            let pool = if by_ctx.len() == 1 {
                 return {
-                    let (rel, content, rule) = by_layer[0];
+                    let (rel, content, rule) = by_ctx[0];
                     resolved(rel, content, rule)
                 };
-            } else if !by_layer.is_empty() && by_layer.len() < hits.len() {
-                by_layer
+            } else if !by_ctx.is_empty() && by_ctx.len() < hits.len() {
+                by_ctx
             } else {
                 hits.clone()
             };
@@ -598,27 +621,14 @@ fn apply_rule_text_to_source(
     old_inner: &str,
     new_inner: &str,
 ) -> Result<String, CommandError> {
-    let matches: Vec<RuleSpan> = index_rules(src)
-        .into_iter()
+    let all = index_rules(src);
+    let matches: Vec<&RuleSpan> = all
+        .iter()
         .filter(|r| {
             rule_selector_matches(&r.selector, selector) && media_text_matches(&r.media, media_text)
         })
         .collect();
-    let rule = match matches.len() {
-        1 => &matches[0],
-        0 => {
-            return Err(CommandError::Validation {
-                field: "selector".into(),
-                reason: "rule no longer matches — reselect the element".into(),
-            })
-        }
-        _ => {
-            return Err(CommandError::Validation {
-                field: "selector".into(),
-                reason: "selector matches multiple rules — not editable".into(),
-            })
-        }
-    };
+    let rule = pick_by_body(&matches, src, old_inner)?;
     // Drift guard: the source must still read exactly what the editor was seeded
     // with, or another change has landed and we'd clobber it.
     let current = &src[rule.block_inner_start..rule.block_inner_end];
@@ -633,6 +643,38 @@ fn apply_rule_text_to_source(
     out.push_str(new_inner);
     out.push_str(&src[rule.block_inner_end..]);
     Ok(out)
+}
+
+/// Pin the ONE rule to edit among candidates that share a selector + media. When more
+/// than one matches (a base rule plus the same selector inside `@container`/`@supports`/
+/// `@layer`, which the write API doesn't otherwise distinguish), narrow by the body the
+/// editor was seeded with (`old_inner`) — a natural, drift-safe discriminator.
+fn pick_by_body<'a>(
+    matches: &[&'a RuleSpan],
+    src: &str,
+    old_inner: &str,
+) -> Result<&'a RuleSpan, CommandError> {
+    match matches.len() {
+        0 => Err(CommandError::Validation {
+            field: "selector".into(),
+            reason: "rule no longer matches — reselect the element".into(),
+        }),
+        1 => Ok(matches[0]),
+        _ => {
+            let narrowed: Vec<&'a RuleSpan> = matches
+                .iter()
+                .copied()
+                .filter(|r| src[r.block_inner_start..r.block_inner_end] == *old_inner)
+                .collect();
+            match narrowed.len() {
+                1 => Ok(narrowed[0]),
+                _ => Err(CommandError::Validation {
+                    field: "selector".into(),
+                    reason: "selector matches multiple rules — not editable".into(),
+                }),
+            }
+        }
+    }
 }
 
 /// Find the single rule matching `selector`+`media_text` and verify its body still
@@ -650,21 +692,7 @@ fn locate_one_editable<'a>(
             rule_selector_matches(&r.selector, selector) && media_text_matches(&r.media, media_text)
         })
         .collect();
-    let rule = match matches.len() {
-        1 => matches[0],
-        0 => {
-            return Err(CommandError::Validation {
-                field: "selector".into(),
-                reason: "rule no longer matches — reselect the element".into(),
-            })
-        }
-        _ => {
-            return Err(CommandError::Validation {
-                field: "selector".into(),
-                reason: "selector matches multiple rules — not editable".into(),
-            })
-        }
-    };
+    let rule = pick_by_body(&matches, src, old_inner)?;
     if &src[rule.block_inner_start..rule.block_inner_end] != old_inner {
         return Err(CommandError::Validation {
             field: "css".into(),
@@ -856,16 +884,23 @@ fn index_rules(css: &str) -> Vec<RuleSpan> {
         /// `@media` block — condition string + byte range of the condition text.
         Media(String, usize, usize),
         /// A grouping at-rule that holds ordinary style rules (`@layer`, `@supports`,
-        /// `@container`): we descend and index the rules inside it so they stay
-        /// editable. Payload is the `@layer` name (innermost), so same-selector rules in
-        /// different layers are distinguishable; `None` for anonymous layers / supports /
-        /// container (their conditions aren't surfaced as a discriminator yet).
-        Group(Option<String>),
+        /// `@container`): we descend and index the rules inside it so they stay editable.
+        /// Payload carries the kind + condition so same-selector rules in different
+        /// layers/containers/supports are distinguishable on locate.
+        Group(GroupKind),
         /// An at-rule whose inner blocks are NOT style rules (`@keyframes` stops,
         /// `@font-face`/`@page` descriptors), or a malformed block — not indexed.
         Other,
         /// A style rule; payload is its index in `rules`.
         Rule(usize),
+    }
+    /// What kind of grouping at-rule a `Frame::Group` is, with its discriminating text.
+    enum GroupKind {
+        Layer(String),
+        Container(String),
+        Supports(String),
+        /// Anonymous `@layer { }` — descended but carries no discriminator.
+        Anonymous,
     }
 
     /// The nearest enclosing `@media` condition + its byte range, if any.
@@ -882,7 +917,21 @@ fn index_rules(css: &str) -> Vec<RuleSpan> {
     /// The nearest enclosing named `@layer`, if any.
     fn enclosing_layer(stack: &[Frame]) -> Option<String> {
         stack.iter().rev().find_map(|f| match f {
-            Frame::Group(Some(name)) => Some(name.clone()),
+            Frame::Group(GroupKind::Layer(name)) => Some(name.clone()),
+            _ => None,
+        })
+    }
+    /// The nearest enclosing `@container` condition, if any.
+    fn enclosing_container(stack: &[Frame]) -> Option<String> {
+        stack.iter().rev().find_map(|f| match f {
+            Frame::Group(GroupKind::Container(c)) => Some(c.clone()),
+            _ => None,
+        })
+    }
+    /// The nearest enclosing `@supports` condition, if any.
+    fn enclosing_supports(stack: &[Frame]) -> Option<String> {
+        stack.iter().rev().find_map(|f| match f {
+            Frame::Group(GroupKind::Supports(c)) => Some(c.clone()),
             _ => None,
         })
     }
@@ -968,21 +1017,18 @@ fn index_rules(css: &str) -> Vec<RuleSpan> {
                         prelude_start + ce,
                     ));
                 } else if name == "layer" || name == "supports" || name == "container" {
-                    // Grouping at-rules that hold ordinary style rules — descend so
-                    // their contents are editable (font-face/page do NOT). Capture the
-                    // `@layer` name so same-selector rules in different layers don't
-                    // collide on locate; supports/container carry no name (yet).
-                    let layer = if name == "layer" {
-                        let n = rest["layer".len()..].trim();
-                        if n.is_empty() {
-                            None
-                        } else {
-                            Some(n.to_string())
-                        }
-                    } else {
-                        None
+                    // Grouping at-rules that hold ordinary style rules — descend so their
+                    // contents are editable (font-face/page do NOT). Capture the condition
+                    // (layer name / container query / supports test) so the same selector
+                    // in different contexts doesn't collide on locate.
+                    let cond = rest[name.len()..].trim();
+                    let kind = match name.as_str() {
+                        "layer" if cond.is_empty() => GroupKind::Anonymous,
+                        "layer" => GroupKind::Layer(cond.to_string()),
+                        "container" => GroupKind::Container(cond.to_string()),
+                        _ => GroupKind::Supports(cond.to_string()),
                     };
-                    stack.push(Frame::Group(layer));
+                    stack.push(Frame::Group(kind));
                 } else if name.ends_with("keyframes") {
                     // `@keyframes <name>` / `@-webkit-keyframes <name>`: a named
                     // animation. Index the whole rule as ONE locatable/editable block
@@ -992,6 +1038,8 @@ fn index_rules(css: &str) -> Vec<RuleSpan> {
                     // `apply_css_rule_text`).
                     let (media, media_prelude) = enclosing_media(&stack);
                     let layer = enclosing_layer(&stack);
+                    let container = enclosing_container(&stack);
+                    let supports = enclosing_supports(&stack);
                     let selector_start = first_significant(css, prelude_start, i);
                     let selector_line = line_of(css, selector_start);
                     let idx = rules.len();
@@ -1000,6 +1048,8 @@ fn index_rules(css: &str) -> Vec<RuleSpan> {
                         media,
                         media_prelude,
                         layer,
+                        container,
+                        supports,
                         selector_start,
                         block_inner_start: i + 1,
                         block_inner_end: i + 1,
@@ -1012,6 +1062,8 @@ fn index_rules(css: &str) -> Vec<RuleSpan> {
             } else if !prelude.is_empty() {
                 let (media, media_prelude) = enclosing_media(&stack);
                 let layer = enclosing_layer(&stack);
+                let container = enclosing_container(&stack);
+                let supports = enclosing_supports(&stack);
                 let selector_start = first_significant(css, prelude_start, i);
                 let selector_line = line_of(css, selector_start);
                 let idx = rules.len();
@@ -1020,6 +1072,8 @@ fn index_rules(css: &str) -> Vec<RuleSpan> {
                     media,
                     media_prelude,
                     layer,
+                    container,
+                    supports,
                     selector_start,
                     block_inner_start: i + 1,
                     block_inner_end: i + 1,
@@ -2699,6 +2753,8 @@ mod tests {
             media_text: media_text.map(|s| s.into()),
             href: href.map(|s| s.into()),
             layer: None,
+            container: None,
+            supports: None,
         }
     }
 
@@ -3050,17 +3106,29 @@ mod tests {
     fn delete_is_fail_closed_on_drift_or_ambiguity() {
         let src = ".btn {\n  padding: 10px;\n}\n";
         assert!(remove_rule_from_source(src, ".btn", &None, "\n  WRONG;\n").is_err());
+        // Two same-selector rules with DIFFERENT bodies are disambiguated by old_inner
+        // (so a base rule + its @container/@supports override can each be deleted).
         let dup = ".a { color: red; }\n.a { color: blue; }";
-        assert!(remove_rule_from_source(dup, ".a", &None, " color: red; ").is_err());
+        let out = remove_rule_from_source(dup, ".a", &None, " color: red; ").unwrap();
+        assert_eq!(out, ".a { color: blue; }"); // the red one removed, blue kept
+                                                // But two with the SAME body are genuinely ambiguous → refused.
+        let same = ".a { color: red; }\n.a { color: red; }";
+        assert!(remove_rule_from_source(same, ".a", &None, " color: red; ").is_err());
     }
 
     #[test]
     fn rule_text_write_rejects_a_missing_or_ambiguous_rule() {
         let one = ".a { color: red; }";
         assert!(apply_rule_text_to_source(one, ".missing", &None, "", " color: blue; ").is_err());
+        // Different bodies → old_inner pins the right one (base vs @container/@supports).
         let dup = ".a { color: red; }\n.a { color: blue; }";
+        let out = apply_rule_text_to_source(dup, ".a", &None, " color: red; ", " color: green; ")
+            .unwrap();
+        assert_eq!(out, ".a { color: green; }\n.a { color: blue; }");
+        // Identical bodies → genuinely ambiguous → refused.
+        let same = ".a { color: red; }\n.a { color: red; }";
         assert!(
-            apply_rule_text_to_source(dup, ".a", &None, " color: red; ", " color: green; ")
+            apply_rule_text_to_source(same, ".a", &None, " color: red; ", " color: green; ")
                 .is_err()
         );
     }
@@ -3334,6 +3402,53 @@ mod tests {
     }
 
     #[test]
+    fn container_and_supports_conditions_disambiguate_same_selector() {
+        // The canonical container-query / progressive-enhancement idioms: a base rule plus
+        // an override inside @container / @supports for the SAME selector, same file. These
+        // used to collide into Multiple → read-only; the context tie-break resolves each.
+        let css = ".card {\n  padding: 12px;\n}\n\
+                   @container sidebar (min-width: 400px) {\n  .card {\n    padding: 24px;\n  }\n}\n\
+                   @supports (display: grid) {\n  .card {\n    display: grid;\n  }\n}\n";
+        let rules = index_rules(css);
+        let card: Vec<_> = rules
+            .iter()
+            .filter(|r| rule_selector_matches(&r.selector, ".card"))
+            .collect();
+        assert_eq!(card.len(), 3);
+        assert!(card
+            .iter()
+            .any(|r| r.container.as_deref() == Some("sidebar (min-width: 400px)")));
+        assert!(card
+            .iter()
+            .any(|r| r.supports.as_deref() == Some("(display: grid)")));
+
+        let sheets = idx(vec![("s.css".into(), css.to_string())]);
+        let q = |container: Option<&str>, supports: Option<&str>| MatchedRuleQuery {
+            selector: ".card".into(),
+            media_text: None,
+            href: None,
+            layer: None,
+            container: container.map(|s| s.into()),
+            supports: supports.map(|s| s.into()),
+        };
+        // base
+        match locate_rule(&sheets, &q(None, None)) {
+            RuleLocation::Resolved { inner_text, .. } => assert!(inner_text.contains("12px")),
+            o => panic!("base .card should resolve, got {o:?}"),
+        }
+        // container
+        match locate_rule(&sheets, &q(Some("sidebar (min-width: 400px)"), None)) {
+            RuleLocation::Resolved { inner_text, .. } => assert!(inner_text.contains("24px")),
+            o => panic!("@container .card should resolve, got {o:?}"),
+        }
+        // supports
+        match locate_rule(&sheets, &q(None, Some("(display: grid)"))) {
+            RuleLocation::Resolved { inner_text, .. } => assert!(inner_text.contains("grid")),
+            o => panic!("@supports .card should resolve, got {o:?}"),
+        }
+    }
+
+    #[test]
     fn same_selector_in_two_layers_indexes_the_layer_and_locates_by_it() {
         let css = "@layer base {\n  .btn {\n    color: blue;\n  }\n}\n@layer theme {\n  .btn {\n    color: red;\n  }\n}\n";
         // Both .btn rules carry their layer name.
@@ -3355,6 +3470,8 @@ mod tests {
             media_text: None,
             href: None,
             layer: Some("base".into()),
+            container: None,
+            supports: None,
         };
         match locate_rule(&sheets, &q_base) {
             RuleLocation::Resolved { inner_text, .. } => assert!(inner_text.contains("blue")),
@@ -3365,6 +3482,8 @@ mod tests {
             media_text: None,
             href: None,
             layer: Some("theme".into()),
+            container: None,
+            supports: None,
         };
         match locate_rule(&sheets, &q_theme) {
             RuleLocation::Resolved { inner_text, .. } => assert!(inner_text.contains("red")),

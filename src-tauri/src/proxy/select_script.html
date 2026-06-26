@@ -87,19 +87,22 @@ function cascade(el){
       if(r.type===1){ /* style rule */
         var parts=ssSplitSel(r.selectorText||'');
         for(var pi=0;pi<parts.length;pi++){var norm=ssNormSel(parts[pi]);if(!norm)continue;var ok=false;try{ok=el.matches(norm);}catch(e){try{ok=el.matches(parts[pi]);}catch(e2){}}if(!ok)continue;var decls=ssDecls(r.style);if(!decls.length)continue;
-          matched.push({selector:norm,declarations:decls,specificity:ssSpec(norm),sourceOrder:order.n,mediaText:ctx.media,mediaMinPx:ctx.minPx,inactiveMedia:ctx.inactive,layer:ctx.layer,href:ssHref(r),origin:'author'});}
+          matched.push({selector:norm,declarations:decls,specificity:ssSpec(norm),sourceOrder:order.n,mediaText:ctx.media,mediaMinPx:ctx.minPx,inactiveMedia:ctx.inactive,layer:ctx.layer,container:ctx.container,supports:ctx.supports,href:ssHref(r),origin:'author'});}
       }else if(r.type===4){ /* @media */
         var cond=r.conditionText||(r.media&&r.media.mediaText)||'';var bad=false;try{bad=!window.matchMedia(cond).matches;}catch(e){}
-        if(r.cssRules)walk(r.cssRules,{media:cond,minPx:ssMinPx(cond),inactive:ctx.inactive||bad,layer:ctx.layer});
+        if(r.cssRules)walk(r.cssRules,{media:cond,minPx:ssMinPx(cond),inactive:ctx.inactive||bad,layer:ctx.layer,container:ctx.container,supports:ctx.supports});
       }else if(r.type===3&&r.styleSheet){ /* @import — descend the same-origin sheet (cross-origin throws) */
         try{walk(r.styleSheet.cssRules,ctx);}catch(e){}
-      }else if(r.cssRules){ /* @layer / @supports / nesting — descend, tracking layer name */
-        var lname=(r.constructor&&r.constructor.name==='CSSLayerBlockRule')?(r.name||ctx.layer):ctx.layer;
-        try{walk(r.cssRules,{media:ctx.media,minPx:ctx.minPx,inactive:ctx.inactive,layer:lname});}catch(e){}
+      }else if(r.cssRules){ /* @layer / @container / @supports / nesting — descend, tracking the condition so same-selector rules in different contexts stay distinguishable */
+        var cn=r.constructor&&r.constructor.name;
+        var lname=cn==='CSSLayerBlockRule'?(r.name||ctx.layer):ctx.layer;
+        var cont=cn==='CSSContainerRule'?(r.conditionText||r.containerQuery||ctx.container):ctx.container;
+        var sup=cn==='CSSSupportsRule'?(r.conditionText||ctx.supports):ctx.supports;
+        try{walk(r.cssRules,{media:ctx.media,minPx:ctx.minPx,inactive:ctx.inactive,layer:lname,container:cont,supports:sup});}catch(e){}
       }
     }
   }
-  var sheets=document.styleSheets;for(var si=0;si<sheets.length;si++){try{var rr=sheets[si].cssRules;if(rr)walk(rr,{media:null,minPx:null,inactive:false,layer:null});}catch(e){}}
+  var sheets=document.styleSheets;for(var si=0;si<sheets.length;si++){try{var rr=sheets[si].cssRules;if(rr)walk(rr,{media:null,minPx:null,inactive:false,layer:null,container:null,supports:null});}catch(e){}}
   /* Inline style="" — highest priority, read-only in v1. */
   if(el.getAttribute&&el.getAttribute('style')){var idecls=ssDecls(el.style);if(idecls.length)matched.push({selector:null,declarations:idecls,specificity:[1,0,0],sourceOrder:1e9,mediaText:null,mediaMinPx:null,inactiveMedia:false,layer:null,href:null,origin:'inline'});}
   /* Per-property winner among currently-active rules: priority = [important, inline,

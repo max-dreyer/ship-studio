@@ -40,6 +40,10 @@ export interface MatchedRule {
   inactiveMedia: boolean;
   /** The `@layer` name the rule lives in, if any. */
   layer: string | null;
+  /** The enclosing `@container` condition, if any. */
+  container?: string | null;
+  /** The enclosing `@supports` condition, if any. */
+  supports?: string | null;
   /** The served stylesheet URL (`parentStyleSheet.href`), or null for `<style>`. */
   href: string | null;
   origin: 'author' | 'inline';
@@ -60,6 +64,10 @@ export interface MatchedRuleQuery {
   href: string | null;
   /** The enclosing `@layer` name, or null — disambiguates the same selector across layers. */
   layer?: string | null;
+  /** The enclosing `@container` condition, or null — disambiguates same-selector containers. */
+  container?: string | null;
+  /** The enclosing `@supports` condition, or null — disambiguates same-selector supports. */
+  supports?: string | null;
 }
 
 /** A matched rule joined with its source provenance — the panel's row model. */
@@ -272,7 +280,14 @@ export function rulesToLocate(
     if (m.origin === 'author' && m.selector) {
       out.push({
         index,
-        query: { selector: m.selector, mediaText: m.mediaText, href: m.href, layer: m.layer },
+        query: {
+          selector: m.selector,
+          mediaText: m.mediaText,
+          href: m.href,
+          layer: m.layer,
+          container: m.container,
+          supports: m.supports,
+        },
       });
     }
   });
