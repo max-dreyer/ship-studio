@@ -12,8 +12,9 @@
  * controlled — it emits a new body via `onChange`.
  */
 
-import { useState } from 'react';
-import { ChevronIcon } from '../icons/common';
+import { useMemo, useState } from 'react';
+import { predictNextDeclaration } from '../../lib/cssPredict';
+import { ChevronIcon, CloseIcon } from '../icons/common';
 import { LayersIcon } from '../icons/utility';
 import { TrashIcon, FileIcon } from '../icons/editor';
 import { DeclarationRow } from './DeclarationRow';
@@ -539,6 +540,9 @@ export function CascadeRuleCard(props: Props) {
   // Editing-flow: the property just added via "+ Add" — its row auto-opens the value
   // input so the user types the value immediately (no second click).
   const [autoEditProp, setAutoEditProp] = useState<string | null>(null);
+  // Predictive autofill (v1, heuristic): the most likely next declaration, shown as a
+  // ghost row you accept with Tab. Dismissed props (Esc) aren't re-suggested.
+  const [dismissedPreds, setDismissedPreds] = useState<ReadonlySet<string>>(() => new Set());
   const depth = props.depth ?? 0;
   const editable = props.editable;
   const inactive = props.inactive ?? false;
@@ -547,6 +551,20 @@ export function CascadeRuleCard(props: Props) {
   // itself is never a keyframes container, even if oddly named.)
   const isKeyframes = !isStep && isKeyframesSelector(props.selector);
   const onRenameAtRule = props.editable ? props.onRenameAtRule : undefined;
+
+  // The next-declaration prediction for this rule (ordinary editable rules only — not
+  // keyframe steps / @keyframes containers). Computed unconditionally to keep hooks stable.
+  const editBody = props.editable ? props.body : null;
+  const prediction = useMemo(
+    () =>
+      editBody && !isStep && !isKeyframes
+        ? predictNextDeclaration(
+            declarations(editBody).map((d) => ({ prop: d.prop, value: d.value })),
+            dismissedPreds
+          )
+        : null,
+    [editBody, isStep, isKeyframes, dismissedPreds]
+  );
 
   const headerContent = (
     <>
@@ -674,10 +692,36 @@ export function CascadeRuleCard(props: Props) {
   const decls = declarations(body);
   const nested = nestedRules(body);
 
+  // Accept the ghost prediction: add it (with its suggested value) — the next prediction
+  // then appears, so Tab-Tab-Tab fills in companions. Dismiss just hides this one.
+  const acceptPrediction = () => {
+    if (!prediction) return;
+    onChange(
+      addDeclaration(body, { prop: prediction.prop, value: prediction.value, important: false })
+    );
+  };
+  const dismissPrediction = () => {
+    if (prediction) setDismissedPreds((s) => new Set(s).add(prediction.prop.toLowerCase()));
+  };
+
   return (
     <section
       className={`ss-card${depth ? ' is-nested' : ''}${collapsed ? ' is-collapsed' : ''}${inactive ? ' is-inactive' : ''}${props.draft ? ' is-draft' : ''}`}
       data-testid="cascade-card"
+      onKeyDown={(e) => {
+        // Tab accepts the ghost; Esc dismisses it. Portaled popovers (add-menu, value
+        // editor) don't bubble here, so this only fires for focus within the card.
+        if (!prediction) return;
+        const t = e.target as HTMLElement;
+        if (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA') return;
+        if (e.key === 'Tab' && !e.shiftKey) {
+          e.preventDefault();
+          acceptPrediction();
+        } else if (e.key === 'Escape') {
+          e.preventDefault();
+          dismissPrediction();
+        }
+      }}
     >
       <header className="ss-card__head">{headerContent}</header>
 
@@ -699,6 +743,35 @@ export function CascadeRuleCard(props: Props) {
               onNest={(sel) => onChange(moveDeclIntoNested(body, d.index, sel))}
             />
           ))}
+
+          {prediction && (
+            <div
+              className="ss-decl ss-decl--ghost"
+              title="Predicted next — Tab to accept, Esc to dismiss"
+            >
+              <button
+                type="button"
+                className="ss-decl__ghost-accept"
+                onClick={acceptPrediction}
+                aria-label={`Add ${prediction.prop}: ${prediction.value}`}
+              >
+                <span className="ss-decl__prop">{prediction.prop}</span>
+                <span className="ss-decl__colon">:</span>
+                <span className="ss-decl__value">{prediction.value}</span>
+                {prediction.hint && <span className="ss-decl__ghost-hint">{prediction.hint}</span>}
+              </button>
+              <kbd className="ss-decl__ghost-kbd">Tab</kbd>
+              <button
+                type="button"
+                className="ss-decl__ghost-dismiss"
+                onClick={dismissPrediction}
+                title="Dismiss"
+                aria-label="Dismiss prediction"
+              >
+                <CloseIcon size={11} />
+              </button>
+            </div>
+          )}
 
           {nested.map((r) => (
             <CascadeRuleCard
