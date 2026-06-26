@@ -517,9 +517,32 @@
   grid-auto-flow: row;
   align-content: start;
   gap: 1px; /* css-ok: menu row gap */
+  /* Bound the list so it actually scrolls: as a flex child of the column it needs
+     flex + min-height:0, otherwise it grows to its full content height and the menu
+     just clips it (overflow-y:auto never fires). */
+  flex: 1 1 auto;
+  min-height: 0;
   overflow-y: auto;
+  overscroll-behavior: contain;
   padding: var(--spacing-xs);
+  /* Custom scrollbar so it's consistent in the packaged WebKit build (not the OS
+     default). Firefox: thin + tokened colors; WebKit: the rules below. */
   scrollbar-width: thin;
+  scrollbar-color: var(--border) transparent;
+}
+.ss-add-menu__list::-webkit-scrollbar {
+  width: 8px; /* css-ok: scrollbar width */
+}
+.ss-add-menu__list::-webkit-scrollbar-track {
+  background: transparent;
+}
+.ss-add-menu__list::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: 999px; /* css-ok: pill thumb */
+  border: 2px solid var(--bg-secondary); /* css-ok: thumb inset */
+}
+.ss-add-menu__list::-webkit-scrollbar-thumb:hover {
+  background: var(--text-muted);
 }
 .ss-add-menu__group {
   padding: var(--spacing-xs) var(--spacing-xs) 2px;
