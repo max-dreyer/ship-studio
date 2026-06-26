@@ -94,6 +94,10 @@ interface EditableCard extends CommonHeader {
   /** Editing-flow: open the "+ Add" menu on mount (right after this rule was created via
    *  "Add selector"), so the user jumps straight to its first property. */
   autoOpenAdd?: boolean;
+  /** This created rule's selector doesn't match the selected element — show a note so it
+   *  doesn't look like it applies (e.g. `cool` typed for an `<h1>`, or a class the
+   *  element doesn't have). */
+  unmatched?: boolean;
 }
 
 interface ReadonlyCard extends CommonHeader {
@@ -706,7 +710,7 @@ export function CascadeRuleCard(props: Props) {
 
   return (
     <section
-      className={`ss-card${depth ? ' is-nested' : ''}${collapsed ? ' is-collapsed' : ''}${inactive ? ' is-inactive' : ''}${props.draft ? ' is-draft' : ''}`}
+      className={`ss-card${depth ? ' is-nested' : ''}${collapsed ? ' is-collapsed' : ''}${inactive ? ' is-inactive' : ''}${props.draft ? ' is-draft' : ''}${props.unmatched ? ' is-unmatched' : ''}`}
       data-testid="cascade-card"
       onKeyDown={(e) => {
         // Tab accepts the ghost; Esc dismisses it. Portaled popovers (add-menu, value
@@ -727,6 +731,12 @@ export function CascadeRuleCard(props: Props) {
 
       {!collapsed && (
         <div className="ss-card__body">
+          {props.unmatched && (
+            <p className="ss-card__note ss-card__note--unmatched">
+              This selector doesn&apos;t match the selected element, so it isn&apos;t applying here
+              — add the class in Settings, or rename it to one of the element&apos;s selectors.
+            </p>
+          )}
           {decls.map((d) => (
             <DeclarationRow
               key={d.index}

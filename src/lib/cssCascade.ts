@@ -93,6 +93,10 @@ export interface CascadeRow {
   /** A not-yet-created rule for one of the element's own selectors — an empty editable
    *  card shown in cascade order; the rule is written to source on the first property. */
   draft?: boolean;
+  /** A locally-created rule whose selector doesn't actually match the selected element
+   *  (e.g. you typed `cool` for an `<h1>`). It's pinned so it doesn't vanish, but it
+   *  isn't part of this element's cascade — the card says so rather than implying it applies. */
+  unmatched?: boolean;
 }
 
 /** Map a batch of cascade matches to their source locations (index-aligned). */

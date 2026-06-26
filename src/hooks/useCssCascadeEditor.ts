@@ -286,11 +286,16 @@ export function useCssCascadeEditor({ iframeRef, projectPath, enabled, onToast }
                 createdRowsRef.current.delete(key);
                 continue;
               }
-              extraRows.push(createdRow);
-              nextBodies[key] =
-                bodiesRef.current[key] ?? parseRuleBody(createdRow.innerText ?? '\n');
+              const body = bodiesRef.current[key] ?? parseRuleBody(createdRow.innerText ?? '\n');
+              nextBodies[key] = body;
               nextBaseline[key] = baselineInner.current[key] ?? createdRow.innerText ?? '\n';
               nextOverridden[key] = new Map();
+              // A created rule WITH content that the cascade doesn't report → its selector
+              // doesn't match this element (the walker reports every matching non-empty
+              // rule). Flag it so the card says "doesn't match" instead of implying it
+              // applies. An empty one is just a fresh rule being built — don't flag it.
+              const unmatched = body.items.length > 0;
+              extraRows.push(unmatched ? { ...createdRow, unmatched: true } : createdRow);
             }
             const finalRows = [...extraRows, ...merged];
 

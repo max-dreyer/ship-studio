@@ -1154,6 +1154,18 @@
   border-style: dashed;
   background: transparent;
 }
+/* A created rule that doesn't match the selected element — dimmed + a warm note, so it
+   reads as "not applying here" rather than a normal cascade rule. */
+.ss-card.is-unmatched {
+  opacity: 0.7;
+  border-style: dashed;
+}
+.ss-card.is-unmatched:hover {
+  opacity: 1;
+}
+.ss-card__note--unmatched {
+  color: var(--warning);
+}
 .ss-card.is-draft .ss-card__selector-chip {
   opacity: 0.85;
 }

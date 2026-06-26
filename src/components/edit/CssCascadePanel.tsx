@@ -332,6 +332,7 @@ export function CssCascadePanel({
                             }
                             body={bodies[key]}
                             draft={row.draft}
+                            unmatched={row.unmatched}
                             autoOpenAdd={key === justCreatedKey}
                             onChange={(b) => onChangeBody(key, b)}
                             onDelete={() => onDeleteRule(key)}
