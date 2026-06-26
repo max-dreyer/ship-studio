@@ -46,6 +46,8 @@ export interface ElementSettings {
   removeAttribute: (name: string) => void;
   /** Whether the element resolved to editable source markup (attributes editable). */
   canEditAttributes: boolean;
+  /** The element's resolved markup location in source (file + 1-based line), if known. */
+  location: { file: string; line: number } | null;
   busy: boolean;
 }
 
@@ -85,6 +87,8 @@ export function useElementSettings({
   const [attributes, setAttributes] = useState<ElementAttr[]>([]);
   const [canEditAttributes, setCanEditAttributes] = useState(false);
   const [busy, setBusy] = useState(false);
+  // The element's resolved markup location in source (file + 1-based line), for "Copy id".
+  const [location, setLocation] = useState<{ file: string; line: number } | null>(null);
 
   const sigRef = useRef<ElementSignature | null>(signature);
   sigRef.current = signature;
@@ -103,6 +107,7 @@ export function useElementSettings({
       setClasses([]);
       setAttributes([]);
       setCanEditAttributes(false);
+      setLocation(null);
       htmlRef.current = null;
       return;
     }
@@ -114,12 +119,14 @@ export function useElementSettings({
         htmlRef.current = res.html;
         setAttributes(parseAttributes(res.html));
         setCanEditAttributes(true);
+        setLocation({ file: res.file, line: res.line });
       })
       .catch(() => {
         if (cancelled) return;
         htmlRef.current = null;
         setAttributes([]);
         setCanEditAttributes(false);
+        setLocation(null);
       });
     return () => {
       cancelled = true;
@@ -262,6 +269,7 @@ export function useElementSettings({
     renameAttribute: (oldName, newName, value) => void renameAttr(oldName, newName, value),
     removeAttribute: (name) => void applyAttr(name, null),
     canEditAttributes,
+    location,
     busy,
   };
 }

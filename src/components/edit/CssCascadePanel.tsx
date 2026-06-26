@@ -249,10 +249,19 @@ export function CssCascadePanel({
               <button
                 type="button"
                 className="ss-cascade-target__copy"
-                title="Copy this element's selector to paste into your agent"
-                aria-label="Copy element id"
+                title={
+                  settings.location
+                    ? `Copy this element's source location (${settings.location.file}:${settings.location.line}) to paste into your agent`
+                    : "Copy this element's selector to paste into your agent"
+                }
+                aria-label="Copy element location"
                 onClick={() => {
-                  const id = `${selection.signature.tagName}${classes.map((c) => `.${c}`).join('')}`;
+                  const sel = `${selection.signature.tagName}${classes.map((c) => `.${c}`).join('')}`;
+                  // Prefer the element's REAL source location (file:line) so the agent can
+                  // jump straight to it; fall back to the selector when it can't be resolved.
+                  const id = settings.location
+                    ? `${settings.location.file}:${settings.location.line} (${sel})`
+                    : sel;
                   void copyElementId(id);
                 }}
               >
