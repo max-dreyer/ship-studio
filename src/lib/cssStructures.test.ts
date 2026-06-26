@@ -127,6 +127,28 @@ describe('parseRulePrelude (smart selector field)', () => {
       stage: 'selector',
     });
   });
+
+  it('handles chained conditions (and/or)', () => {
+    expect(
+      parseRulePrelude('@media (min-width: 1024px) and (max-width: 1440px) .card')
+    ).toMatchObject({
+      condition: '@media (min-width: 1024px) and (max-width: 1440px)',
+      selector: '.card',
+    });
+  });
+
+  it('does not choke on adversarial / partial input', () => {
+    for (const t of ['', '   ', '@', '@m', '@media', '@media (', '@media ()', '.a .b > .c']) {
+      const r = parseRulePrelude(t);
+      // Never throws, always returns a well-formed result.
+      expect(r).toHaveProperty('stage');
+      expect(typeof r.selector).toBe('string');
+      // A bare/partial @-rule stays in the condition stage (no false selector).
+      if (t.trimStart().startsWith('@') && !/\)\s+\S/.test(t)) {
+        expect(r.stage).toBe('condition');
+      }
+    }
+  });
 });
 
 describe('condition (@media) recommendations', () => {

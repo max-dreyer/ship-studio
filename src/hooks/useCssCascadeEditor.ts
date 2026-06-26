@@ -202,18 +202,30 @@ export function useCssCascadeEditor({ iframeRef, projectPath, enabled, onToast }
       if (!d) return;
 
       if (d.type === 'ss:select' && d.signature) {
+        // Is this the SAME element re-selected (e.g. the iframe re-arms after an HMR
+        // reload), or a genuinely different element? On a re-select we must NOT wipe the
+        // optimistic state: a freshly-created rule lives only in `createdRowsRef` until
+        // it has a property (the cascade walker skips empty rules), so clearing it here
+        // made new rules — especially conditional `@media` ones — vanish on the next HMR.
+        const prev = lastSignatureRef.current;
+        const sameElement =
+          !!prev &&
+          prev.tagName === d.signature.tagName &&
+          prev.className === d.signature.className;
         lastSignatureRef.current = d.signature;
         ++selTokenRef.current;
         clearTimers();
         post({ type: 'ss:clearRulePreview' });
         setSelection({ signature: d.signature, instanceCount: d.count ?? 1 });
-        createdRowsRef.current = new Map();
-        setRows([]);
-        setBodies({});
-        bodiesRef.current = {};
-        baselineInner.current = {};
-        setOverridden({});
-        setSavingKeys(new Set());
+        if (!sameElement) {
+          createdRowsRef.current = new Map();
+          setRows([]);
+          setBodies({});
+          bodiesRef.current = {};
+          baselineInner.current = {};
+          setOverridden({});
+          setSavingKeys(new Set());
+        }
         setLoading(true);
         void trackEvent('visual_element_selected', { mode: 'css-code', tag: d.signature.tagName });
         return;
@@ -586,9 +598,28 @@ export function useCssCascadeEditor({ iframeRef, projectPath, enabled, onToast }
       };
 
       post({ type: 'ss:suppressReload' });
+      const token = selTokenRef.current;
       try {
         await createCssRule(projectPath, targetFile, sel, atPrelude);
-        pin(targetFile, '\n');
+        // Re-locate the just-written rule and pin it with the EXACT source body, so the
+        // drift baseline matches and the first edit never trips the drift guard. This is
+        // critical for conditional (`@media`) rules: their wrapped indentation differs
+        // from a naive empty body, which previously forced a drift retry on first save.
+        let pinFile = targetFile;
+        let innerText = '\n';
+        try {
+          const [loc] = await locateCssRules(projectPath, [
+            { selector: sel, mediaText: condMediaText, href: null },
+          ]);
+          if (loc?.status === 'resolved') {
+            pinFile = loc.file;
+            innerText = loc.inner_text;
+          }
+        } catch {
+          /* keep the empty-body fallback — the drift retry covers the mismatch */
+        }
+        if (selTokenRef.current !== token) return; // element changed while writing
+        pin(pinFile, innerText);
         void trackEvent('visual_style_saved', {
           mode: 'css-code',
           created_rule: true,

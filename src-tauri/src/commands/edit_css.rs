@@ -673,6 +673,49 @@ fn remove_rule_from_source(
     if end < bytes.len() && bytes[end] == b'\n' {
         end += 1;
     }
+
+    // If the rule is the SOLE child of an enclosing `@media`, take the whole wrapper
+    // with it — don't leave an empty `@media (…) {}` behind (which would accumulate as
+    // you add/remove conditional rules). Only when it's truly the only child: a sibling
+    // rule before or after means the wrapper must stay.
+    if let Some((cs, ce)) = rule.media_prelude {
+        // The at-rule's `@` (scan back from the condition text) and opening `{`.
+        let mut at = cs;
+        while at > 0 && bytes[at - 1] != b'@' && bytes[at - 1] != b'\n' {
+            at -= 1;
+        }
+        let at_start = if at > 0 && bytes[at - 1] == b'@' {
+            at - 1
+        } else {
+            at
+        };
+        let mut ob = ce;
+        while ob < bytes.len() && bytes[ob] != b'{' {
+            ob += 1;
+        }
+        let before_empty = ob < bytes.len()
+            && ob + 1 <= rule.selector_start
+            && src[ob + 1..rule.selector_start].trim().is_empty();
+        let mut after = rule.block_inner_end + 1;
+        while after < bytes.len() && (bytes[after] as char).is_whitespace() {
+            after += 1;
+        }
+        let after_is_wrapper_close = after < bytes.len() && bytes[after] == b'}';
+        if before_empty && after_is_wrapper_close {
+            start = at_start;
+            while start > 0 && (bytes[start - 1] == b' ' || bytes[start - 1] == b'\t') {
+                start -= 1;
+            }
+            end = after + 1; // past the wrapper's `}`
+            while end < bytes.len() && (bytes[end] == b' ' || bytes[end] == b'\t') {
+                end += 1;
+            }
+            if end < bytes.len() && bytes[end] == b'\n' {
+                end += 1;
+            }
+        }
+    }
+
     let mut out = String::with_capacity(src.len() - (end - start));
     out.push_str(&src[..start]);
     out.push_str(&src[end..]);
@@ -3109,5 +3152,185 @@ mod tests {
         std::fs::write(root.join("Card.astro"), "<div></div>\n").unwrap();
         // No <style> block → index 0 doesn't exist.
         assert!(load_editable_css(root, "Card.astro?style=0").is_err());
+    }
+
+    // ───────────── Conditional rules: full lifecycle stress test ─────────────
+    //
+    // Mirrors the "Add selector → @media (…)" flow end to end on the pure core: build
+    // the wrapped rule, index it, locate it (distinct from any base rule), then edit it
+    // with the located body as the drift baseline. Run across the whole condition space
+    // the UI offers so an indexing gap (e.g. `@media print`) can't slip through.
+
+    /// The verbatim inner body of the first rule matching `selector`+`media` in `css`.
+    fn inner_of<'a>(css: &'a str, selector: &str, media: &Option<String>) -> Option<&'a str> {
+        index_rules(css)
+            .into_iter()
+            .find(|r| {
+                rule_selector_matches(&r.selector, selector) && media_text_matches(&r.media, media)
+            })
+            .map(|r| &css[r.block_inner_start..r.block_inner_end])
+    }
+
+    const CONDITIONS: &[&str] = &[
+        "@media (max-width: 768px)",
+        "@media (min-width: 1024px)",
+        "@media (min-width: 1440px)",
+        "@media (prefers-color-scheme: dark)",
+        "@media (prefers-reduced-motion: reduce)",
+        "@media (hover: hover)",
+        "@media (orientation: landscape)",
+        "@media print",
+    ];
+
+    #[test]
+    fn every_condition_indexes_locates_and_round_trip_edits() {
+        for cond in CONDITIONS {
+            // 1. Create (what `create_css_class` writes for an empty conditional rule).
+            let css = build_rule_text(".card", &[], None, Some(cond));
+
+            // 2. Index: exactly one `.card` rule, carrying the condition as media context.
+            let rules = index_rules(&css);
+            let card: Vec<_> = rules
+                .iter()
+                .filter(|r| rule_selector_matches(&r.selector, ".card"))
+                .collect();
+            assert_eq!(
+                card.len(),
+                1,
+                "[{cond}] expected one .card rule, got {}",
+                card.len()
+            );
+            let media = card[0].media.clone();
+            assert!(
+                media.is_some(),
+                "[{cond}] should set a media context (none → unlocatable)"
+            );
+
+            // 3. The empty body the UI pins must equal what create wrote (drift baseline
+            //    matches → first edit never trips the guard). This is the re-locate path.
+            let inner = inner_of(&css, ".card", &media).expect("[cond] locate empty rule");
+
+            // 4. Edit: add a declaration, drift-guarded against that exact inner.
+            let edited =
+                apply_rule_text_to_source(&css, ".card", &media, inner, "\n    color: red;\n  ")
+                    .unwrap_or_else(|e| panic!("[{cond}] first edit failed: {e:?}"));
+            assert!(edited.contains("color: red;"), "[{cond}] edit didn't land");
+            assert!(
+                edited.contains(cond),
+                "[{cond}] condition must survive the edit"
+            );
+            assert!(
+                braces_balanced(&edited),
+                "[{cond}] edit left unbalanced braces"
+            );
+        }
+    }
+
+    #[test]
+    fn base_and_conditional_for_same_selector_locate_distinctly() {
+        // A base rule and a conditional rule for the SAME selector must each resolve to
+        // their own rule — never collide into "multiple" (the bug that made new @media
+        // rules uneditable / vanish).
+        let css = ".card {\n  color: blue;\n}\n@media (max-width: 768px) {\n  .card {\n    color: red;\n  }\n}\n";
+        let sheets = idx(vec![("s.css".into(), css.to_string())]);
+
+        match locate_rule(&sheets, &query(".card", None, None)) {
+            RuleLocation::Resolved { inner_text, .. } => assert!(inner_text.contains("blue")),
+            o => panic!("base .card should resolve, got {o:?}"),
+        }
+        match locate_rule(&sheets, &query(".card", Some("(max-width: 768px)"), None)) {
+            RuleLocation::Resolved { inner_text, .. } => assert!(inner_text.contains("red")),
+            o => panic!("conditional .card should resolve, got {o:?}"),
+        }
+    }
+
+    #[test]
+    fn creating_a_conditional_rule_in_an_astro_block_round_trips() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let root = dir.path();
+        let before =
+            "---\n---\n<h1 class=\"hero\">x</h1>\n<style>\n.hero {\n  color: blue;\n}\n</style>\n";
+        std::fs::write(root.join("Hero.astro"), before).unwrap();
+
+        // Append a conditional rule the way create_css_class does (into the block).
+        let ec = load_editable_css(root, "Hero.astro?style=0").unwrap();
+        let rule = build_rule_text(".hero", &[], None, Some("@media (max-width: 768px)"));
+        ec.write_back(root, &format!("{}\n\n{rule}\n", ec.css))
+            .unwrap();
+
+        let after = std::fs::read_to_string(root.join("Hero.astro")).unwrap();
+        assert!(after.contains("@media (max-width: 768px)"));
+        assert!(after.contains(".hero {\n  color: blue;")); // base untouched
+        assert!(after.contains("<h1 class=\"hero\">")); // markup untouched
+                                                        // The new conditional rule is locatable inside the block.
+        let block = load_editable_css(root, "Hero.astro?style=0").unwrap();
+        assert!(inner_of(&block.css, ".hero", &Some("(max-width: 768px)".into())).is_some());
+    }
+
+    #[test]
+    fn deleting_a_conditional_rule_leaves_the_base_intact() {
+        let css = ".card {\n  color: blue;\n}\n\n@media (max-width: 768px) {\n  .card {\n    color: red;\n  }\n}\n";
+        let inner = inner_of(&css, ".card", &Some("(max-width: 768px)".into()))
+            .unwrap()
+            .to_string();
+        let out =
+            remove_rule_from_source(&css, ".card", &Some("(max-width: 768px)".into()), &inner)
+                .expect("delete conditional");
+        assert!(out.contains(".card {\n  color: blue;"), "base must remain");
+        assert!(
+            !out.contains("max-width: 768px"),
+            "conditional must be gone"
+        );
+        assert!(braces_balanced(&out));
+    }
+
+    #[test]
+    fn deleting_one_of_several_rules_keeps_the_shared_media_wrapper() {
+        // Two rules share one `@media`; deleting one must NOT take the wrapper (the
+        // other rule still needs it). Guards against over-eager wrapper removal.
+        let css = "@media (max-width: 768px) {\n  .a {\n    color: red;\n  }\n  .b {\n    color: blue;\n  }\n}\n";
+        let inner = inner_of(&css, ".a", &Some("(max-width: 768px)".into()))
+            .unwrap()
+            .to_string();
+        let out = remove_rule_from_source(&css, ".a", &Some("(max-width: 768px)".into()), &inner)
+            .unwrap();
+        assert!(!out.contains(".a"), ".a should be gone");
+        assert!(out.contains(".b"), ".b must remain");
+        assert!(
+            out.contains("max-width: 768px"),
+            "wrapper must remain for .b"
+        );
+        assert!(braces_balanced(&out));
+    }
+
+    #[test]
+    fn repeated_create_then_edit_never_corrupts_the_sheet() {
+        // Stack several conditional rules for different selectors, editing each — the
+        // sheet must stay valid CSS throughout (no drift/offset corruption).
+        let mut css = String::new();
+        for (i, cond) in CONDITIONS.iter().enumerate() {
+            let sel = format!(".s{i}");
+            let rule = build_rule_text(&sel, &[], None, Some(cond));
+            css = if css.is_empty() {
+                rule
+            } else {
+                format!("{css}\n\n{rule}")
+            };
+        }
+        // Edit every rule once.
+        for (i, cond) in CONDITIONS.iter().enumerate() {
+            let sel = format!(".s{i}");
+            let media = cond.strip_prefix("@media").map(|s| s.trim().to_string());
+            let inner = inner_of(&css, &sel, &media).expect("locate").to_string();
+            css = apply_rule_text_to_source(&css, &sel, &media, &inner, "\n    gap: 1px;\n  ")
+                .unwrap_or_else(|e| panic!("[{sel} {cond}] edit failed: {e:?}"));
+        }
+        assert!(braces_balanced(&css));
+        // All edits present, all conditions intact.
+        for (i, cond) in CONDITIONS.iter().enumerate() {
+            assert!(css.contains(&format!(".s{i}")), "lost selector .s{i}");
+            assert!(css.contains(cond), "lost condition {cond}");
+        }
+        assert_eq!(css.matches("gap: 1px;").count(), CONDITIONS.len());
     }
 }
