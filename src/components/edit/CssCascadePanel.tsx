@@ -18,7 +18,7 @@ import { ElementSettingsPanel } from './ElementSettingsPanel';
 import { CssVariablesPanel } from './CssVariablesPanel';
 import { CssAnimationsPanel } from './CssAnimationsPanel';
 import { SuggestionPopover, type Suggestion } from './SuggestionPopover';
-import { WRAP_ITEMS, searchStructures } from '../../lib/cssStructures';
+import { WRAP_ITEMS, searchStructures, parseRulePrelude } from '../../lib/cssStructures';
 import { mediaChipLabel, rowKey, type CascadeRow } from '../../lib/cssCascade';
 import type { RuleBody } from '../../lib/cssBody';
 import type { CascadeSelection } from '../../hooks/useCssCascadeEditor';
@@ -389,32 +389,37 @@ function AddSelectorBar({
     );
   }
 
-  const typed = text.trim();
   const existingSet = new Set(existing);
-  // Typing `@` switches to CONDITIONS: create a new rule for this element scoped to a
-  // breakpoint. Only `@media` is offered (a rule inside `@container`/`@supports` would
-  // collide with the element's base rule on save); use the selector chip's `@`-wrap to
-  // scope an existing rule under those. `@keyframes` isn't an element rule at all.
+  // Smart staged autofill: compose one rule prelude `[@condition] [selector]`. While you
+  // type the `@…` it suggests CONDITIONS (any kind — width, dark mode, print, container
+  // / style query, supports); once the condition is set it suggests your project's
+  // CLASSES for the selector. Picking a condition keeps you typing; picking a class (or
+  // Enter) creates `@condition { selector { } }`.
+  const parsed = parseRulePrelude(text);
   let items: Suggestion[];
-  if (typed.startsWith('@')) {
-    const mediaItems = searchStructures(WRAP_ITEMS, typed).filter((w) =>
+  if (parsed.stage === 'condition') {
+    // `@media` covers the full media-query space the catalog offers — widths AND dark
+    // mode, print, hover, reduced motion, orientation. `@container`/`@supports` aren't
+    // suggested yet (the cascade walker doesn't report their condition, so a rule inside
+    // them wouldn't stay locatable on save); they'll join once that lands.
+    const conds = searchStructures(WRAP_ITEMS, text.trim()).filter((w) =>
       w.insert.startsWith('@media')
     );
-    const showFree = typed.length > 1 && !mediaItems.some((w) => w.insert === typed);
+    const showFree = text.trim().length > 1 && !conds.some((w) => w.insert === text.trim());
     items = [
-      ...(showFree ? [{ value: typed, label: typed, hint: 'new condition' }] : []),
-      ...mediaItems.map((w) => ({ value: w.insert, label: w.label, hint: w.hint })),
+      ...(showFree ? [{ value: text.trim(), label: text.trim(), hint: 'new condition' }] : []),
+      ...conds.map((w) => ({ value: w.insert, label: w.label, hint: w.hint })),
     ];
   } else {
+    const q = parsed.selector;
     const selectorMatches = (
-      typed ? suggestions.filter((s) => s.toLowerCase().includes(typed.toLowerCase())) : suggestions
+      q ? suggestions.filter((s) => s.toLowerCase().includes(q.toLowerCase())) : suggestions
     )
       .filter((s) => !s.trim().startsWith('@'))
       .slice(0, 10);
-    const showCreate = typed.length > 0 && !selectorMatches.includes(typed);
+    const showCreate = q.length > 0 && !selectorMatches.includes(q);
     items = [
-      ...(showCreate ? [{ value: typed, label: typed, hint: 'new rule' }] : []),
-      // Existing rules are tagged so it's clear picking one re-opens it (no duplicate).
+      ...(showCreate ? [{ value: q, label: q, hint: 'new rule' }] : []),
       ...selectorMatches.map((s) => ({
         value: s,
         label: s,
@@ -422,6 +427,18 @@ function AddSelectorBar({
       })),
     ];
   }
+
+  // Picking a CONDITION fills it and leaves you typing the selector; picking a SELECTOR
+  // (or pressing Enter on one) composes `condition selector` and creates the rule.
+  const pick = (value: string) => {
+    if (parsed.stage === 'condition') {
+      setText(`${value} `);
+      setActive(0);
+      anchorEl?.focus();
+    } else {
+      submit(parsed.condition ? `${parsed.condition} ${value}` : value);
+    }
+  };
 
   return (
     <div className="ss-cascade-add-selector__wrap">
@@ -431,7 +448,7 @@ function AddSelectorBar({
         value={text}
         spellCheck={false}
         autoComplete="off"
-        placeholder="New selector (.card, h1.title) or @media (…)"
+        placeholder="Selector (.card) — or @media (…), @container (…) then a selector"
         onFocus={(e) => setAnchorEl(e.currentTarget)}
         onChange={(e) => {
           setText(e.target.value);
@@ -440,7 +457,8 @@ function AddSelectorBar({
         onKeyDown={(e) => {
           if (e.key === 'Enter') {
             e.preventDefault();
-            submit(items[active]?.value ?? text);
+            if (items[active]) pick(items[active].value);
+            else submit(text);
           } else if (e.key === 'ArrowDown') {
             e.preventDefault();
             setActive((a) => Math.min(a + 1, items.length - 1));
@@ -459,7 +477,7 @@ function AddSelectorBar({
         anchor={anchorEl}
         items={items}
         active={active}
-        onPick={submit}
+        onPick={pick}
         width={280}
       />
     </div>

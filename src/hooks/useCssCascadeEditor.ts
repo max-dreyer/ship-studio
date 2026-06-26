@@ -34,7 +34,7 @@ import {
   type CascadeRow,
 } from '../lib/cssCascade';
 import { parseRuleBody, serializeRuleBody, overriddenProps, type RuleBody } from '../lib/cssBody';
-import { keyframesName } from '../lib/cssStructures';
+import { keyframesName, parseRulePrelude } from '../lib/cssStructures';
 import { logger } from '../lib/logger';
 import { trackEvent } from '../lib/analytics';
 import { asCommandError, formatCommandError } from '../lib/errors';
@@ -500,30 +500,34 @@ export function useCssCascadeEditor({ iframeRef, projectPath, enabled, onToast }
       const raw = input.trim();
       if (!raw) return;
 
-      // A condition (`@media (…)`) typed here isn't a selector — create a new rule for
-      // the element's PRIMARY selector scoped to that breakpoint (base styles stay; the
-      // condition overrides). Only `@media` is offered here: index_rules tracks `@media`
-      // context (so the conditional rule stays locatable on save), whereas a rule inside
-      // `@container`/`@supports` would collide with the base on save.
-      const isCondition = raw.startsWith('@');
-      let sel = raw;
+      // The smart selector field composes `[@condition] [selector]`. Split it: a
+      // condition (`@media (…)`, `@container (…)`, `@supports (…)`) creates a CONDITIONAL
+      // rule (`@condition { selector { } }`); a bare condition with no selector targets
+      // the element's primary selector. A plain selector creates a base rule.
+      const parsed = parseRulePrelude(raw);
+      const condition = parsed.condition ?? (raw.startsWith('@') ? raw : null);
+      let sel = parsed.condition ? parsed.selector : raw;
       let atPrelude: string | null = null;
       let condMediaText: string | null = null;
       let condMinPx: number | null = null;
-      if (isCondition) {
-        const sig = lastSignatureRef.current;
-        const firstClass = sig?.className.split(/\s+/).filter(Boolean)[0];
-        const primary = firstClass ? `.${firstClass}` : (sig?.tagName ?? null);
-        if (!primary) {
-          onToast('Select an element first to add a conditional rule.', 'error');
+      if (condition) {
+        if (!sel) {
+          // Condition but no selector typed → scope the element's primary selector.
+          const sig = lastSignatureRef.current;
+          const firstClass = sig?.className.split(/\s+/).filter(Boolean)[0];
+          sel = firstClass ? `.${firstClass}` : (sig?.tagName ?? '');
+        }
+        if (!sel) {
+          onToast('Type a selector (or select an element) for the conditional rule.', 'error');
           return;
         }
-        sel = primary;
-        atPrelude = raw;
-        condMediaText = raw.toLowerCase().startsWith('@media')
-          ? raw.slice('@media'.length).trim()
+        atPrelude = condition;
+        // For @media, capture the condition text + min-width so the optimistic card shows
+        // the right media chip immediately (other conditions resolve on the next reload).
+        condMediaText = condition.toLowerCase().startsWith('@media')
+          ? condition.slice('@media'.length).trim()
           : null;
-        const min = /min-width\s*:\s*([\d.]+)px/i.exec(raw);
+        const min = /min-width\s*:\s*([\d.]+)px/i.exec(condition);
         condMinPx = min ? Math.round(parseFloat(min[1])) : null;
       } else {
         // Already shown as a base rule? Don't duplicate or error — it's right there.
@@ -581,7 +585,7 @@ export function useCssCascadeEditor({ iframeRef, projectPath, enabled, onToast }
         void trackEvent('visual_style_saved', {
           mode: 'css-code',
           created_rule: true,
-          conditional: isCondition,
+          conditional: condition != null,
         });
       } catch (err) {
         const msg = String(err);

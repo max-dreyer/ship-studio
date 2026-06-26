@@ -349,6 +349,42 @@ export const WRAP_ITEMS: StructureItem[] = [
   },
 ];
 
+/** A complete condition prelude (`@media (…)`, `@media print`, `@container style(…)`,
+ *  `@supports (…)`, with optional `and`/`or`/`,` chains) followed by whitespace and the
+ *  rest. Used to tell when the user has finished the condition and is now typing the
+ *  selector. */
+const COMPLETE_CONDITION =
+  /^(@[a-z-]+(?:\s+[a-z][\w-]*|\s*(?:style\s*)?\([^)]*\)(?:\s*(?:and|or|,)\s*(?:style\s*)?\([^)]*\))*))\s+(.*)$/i;
+
+/** How the smart selector field reads a half-typed rule prelude, so it can suggest the
+ *  right thing: a condition catalog while you compose the `@…`, then class names once
+ *  the condition is complete and you've moved on to the selector. */
+export interface ParsedPrelude {
+  /** The complete `@…` condition if one has been finished, else null. */
+  condition: string | null;
+  /** The selector portion typed so far (after the condition, or the whole text). */
+  selector: string;
+  /** Which part the user is composing right now — drives which suggestions to show. */
+  stage: 'condition' | 'selector';
+}
+
+/**
+ * Parse a smart-selector field value into `[condition] [selector]`. Typing `@…` is the
+ * condition stage (suggest conditions); once a full condition is followed by whitespace
+ * the rest is the selector stage (suggest classes). Text not starting with `@` is a
+ * plain selector.
+ */
+export function parseRulePrelude(text: string): ParsedPrelude {
+  const m = COMPLETE_CONDITION.exec(text);
+  if (m) {
+    return { condition: m[1].trim(), selector: m[2].trim(), stage: 'selector' };
+  }
+  if (text.trimStart().startsWith('@')) {
+    return { condition: null, selector: '', stage: 'condition' };
+  }
+  return { condition: null, selector: text.trim(), stage: 'selector' };
+}
+
 function matches(item: StructureItem, q: string): boolean {
   if (!q) return true;
   const hay = `${item.label} ${item.hint ?? ''} ${(item.keywords ?? []).join(' ')}`.toLowerCase();

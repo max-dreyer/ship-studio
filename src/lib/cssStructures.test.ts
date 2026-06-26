@@ -9,6 +9,7 @@ import {
   classifyKeyframeStep,
   isKeyframesSelector,
   keyframesName,
+  parseRulePrelude,
 } from './cssStructures';
 
 describe('searchStructures', () => {
@@ -83,6 +84,48 @@ describe('isKeyframesSelector', () => {
     expect(isKeyframesSelector('.card')).toBe(false);
     expect(isKeyframesSelector('@media (min-width: 600px)')).toBe(false);
     expect(isKeyframesSelector('@font-face')).toBe(false);
+  });
+});
+
+describe('parseRulePrelude (smart selector field)', () => {
+  it('treats a plain selector as the selector stage', () => {
+    expect(parseRulePrelude('.card')).toEqual({
+      condition: null,
+      selector: '.card',
+      stage: 'selector',
+    });
+  });
+
+  it('is in the condition stage while composing an @-rule', () => {
+    expect(parseRulePrelude('@me')).toMatchObject({ stage: 'condition', condition: null });
+    expect(parseRulePrelude('@media (min-width: 1024px)')).toMatchObject({ stage: 'condition' });
+  });
+
+  it('switches to the selector stage once a complete condition is followed by space', () => {
+    expect(parseRulePrelude('@media (min-width: 1024px) .car')).toEqual({
+      condition: '@media (min-width: 1024px)',
+      selector: '.car',
+      stage: 'selector',
+    });
+  });
+
+  it('handles keyword conditions and container style queries', () => {
+    expect(parseRulePrelude('@media print .x')).toMatchObject({
+      condition: '@media print',
+      selector: '.x',
+    });
+    expect(parseRulePrelude('@container style(--a: 1) .card')).toMatchObject({
+      condition: '@container style(--a: 1)',
+      selector: '.card',
+    });
+  });
+
+  it('reports an empty selector right after a condition + space', () => {
+    expect(parseRulePrelude('@media (max-width: 768px) ')).toEqual({
+      condition: '@media (max-width: 768px)',
+      selector: '',
+      stage: 'selector',
+    });
   });
 });
 
