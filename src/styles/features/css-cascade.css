@@ -236,7 +236,8 @@
   font-size: var(--font-size-sm);
   font-weight: 600;
   white-space: normal;
-  overflow-wrap: anywhere;
+  overflow-wrap: break-word;
+  word-break: normal;
 }
 .is-readonly .ss-card__selector-chip {
   background: transparent;
@@ -272,15 +273,13 @@
 }
 /* Devtools-style condition context line above the selector: the rule's enclosing
    `@media (…)` / `@layer` shown literally and in full. Indented to sit under the
-   selector (past the collapse rail). Wraps — never truncates. */
+   selector (past the collapse rail). A normal text block so the condition wraps like
+   prose — at spaces only, never mid-word. */
 .ss-card__context {
-  display: flex;
-  align-items: baseline;
-  flex-wrap: wrap;
-  gap: var(--spacing-xs);
   padding: 0 var(--spacing-xs) var(--spacing-xs) calc(var(--cascade-rail) + var(--spacing-xs));
   font-family: var(--font-mono);
   font-size: var(--font-size-xs);
+  line-height: 1.5;
 }
 .ss-card__context.is-inactive {
   opacity: 0.55;
@@ -289,20 +288,24 @@
   color: var(--text-muted);
 }
 .ss-card__context-note {
+  display: block;
   color: var(--text-muted);
   font-style: italic;
 }
-/* In the context line, the condition shows its FULL text — wrap, never truncate or
-   shrink. (Overrides the inline-row chip's ellipsis defaults.) */
+/* The condition flows as normal inline text — full, wrapping at spaces, never
+   truncated and never broken inside a word like `@media`. (Overrides the inline-row
+   chip's inline-flex + ellipsis defaults.) */
 .ss-card__context .ss-card__chip,
-.ss-card__context .ss-card__chip--media,
-.ss-card__context .ss-card__chip--media-input {
-  flex: 0 1 auto;
+.ss-card__context .ss-card__chip--media {
+  display: inline;
   max-width: none;
   overflow: visible;
   white-space: normal;
-  overflow-wrap: anywhere;
-  text-overflow: clip;
+  overflow-wrap: normal;
+  word-break: normal;
+}
+.ss-card__context .ss-card__chip--media-input {
+  max-width: none;
 }
 .ss-card__chip {
   display: inline-flex;
