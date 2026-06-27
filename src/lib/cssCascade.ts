@@ -77,6 +77,9 @@ export interface CascadeRow {
   selector: string | null;
   declarations: CascadeDecl[];
   specificity: [number, number, number];
+  /** The rule's position in the cascade walk — lets the iframe pin THE rule to live-preview
+   *  or delete even when the same selector occurs in several rules (base + `@layer`, …). */
+  sourceOrder?: number;
   mediaText: string | null;
   mediaMinPx: number | null;
   inactiveMedia: boolean;
@@ -315,6 +318,7 @@ export function mergeCascade(
       selector: m.selector,
       declarations: m.declarations,
       specificity: m.specificity,
+      sourceOrder: m.sourceOrder,
       mediaText: m.mediaText,
       mediaMinPx: m.mediaMinPx,
       inactiveMedia: m.inactiveMedia,

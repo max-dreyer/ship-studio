@@ -11,7 +11,7 @@
  * honored. Portaled + flip-up positioned so it's never clipped by the panel.
  */
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useId, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { PlusIcon } from '../icons/utility';
 import { suggestProperties } from '../../lib/cssProperties';
@@ -69,6 +69,8 @@ export function AddMenu({ onAddProperty, onNest, mode = 'full', autoOpen = false
   const [anchor, setAnchor] = useState<DOMRect | null>(null);
   const btnRef = useRef<HTMLButtonElement>(null);
   const popRef = useRef<HTMLDivElement>(null);
+  const listId = useId();
+  const optionId = (i: number) => `${listId}-opt-${i}`;
 
   // Editing-flow: open on mount when asked (e.g. right after creating the rule), so
   // the user lands straight in property selection without a second click.
@@ -282,6 +284,12 @@ export function AddMenu({ onAddProperty, onNest, mode = 'full', autoOpen = false
             value={query}
             spellCheck={false}
             autoComplete="off"
+            role="combobox"
+            aria-expanded={flat.length > 0}
+            aria-controls={listId}
+            aria-activedescendant={flat.length > 0 ? optionId(active) : undefined}
+            aria-autocomplete="list"
+            aria-label={label}
             placeholder={placeholder}
             onChange={(e) => {
               setQuery(e.target.value);
@@ -305,11 +313,23 @@ export function AddMenu({ onAddProperty, onNest, mode = 'full', autoOpen = false
           />
           {/* Layout forced inline (block flow) — beats any class/global rule that was
               otherwise reflowing the rows into columns. */}
-          <div className="ss-add-menu__list" style={{ display: 'block', overflowY: 'auto' }}>
+          <div
+            className="ss-add-menu__list"
+            role="listbox"
+            id={listId}
+            style={{ display: 'block', overflowY: 'auto' }}
+          >
             {flat.length === 0 && <div className="ss-add-menu__empty">No matches</div>}
             {sections.map((section) => (
-              <div key={section.title} style={{ display: 'block' }}>
-                <div className="ss-add-menu__group">{section.title}</div>
+              <div
+                key={section.title}
+                role="group"
+                aria-label={section.title}
+                style={{ display: 'block' }}
+              >
+                <div className="ss-add-menu__group" role="presentation">
+                  {section.title}
+                </div>
                 {section.rows.map((row) => {
                   idx += 1;
                   const isActive = idx === active;
@@ -317,6 +337,9 @@ export function AddMenu({ onAddProperty, onNest, mode = 'full', autoOpen = false
                     <button
                       key={row.key}
                       type="button"
+                      role="option"
+                      id={optionId(idx)}
+                      aria-selected={isActive}
                       className={`ss-add-menu__item${isActive ? ' is-active' : ''}`}
                       onMouseDown={(e) => e.preventDefault()}
                       onClick={() => applyRow(row)}

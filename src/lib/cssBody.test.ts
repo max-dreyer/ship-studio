@@ -32,12 +32,38 @@ describe('parseRuleBody', () => {
     expect(declarations(nested[0].body).map((d) => [d.prop, d.value])).toEqual([['color', 'blue']]);
   });
 
-  it('ignores comments and tolerates a missing trailing semicolon', () => {
+  it('keeps comments out of the declaration list but tolerates a missing trailing semicolon', () => {
     const body = parseRuleBody('\n  /* note */ gap: 1rem;\n  padding: 0 8px\n');
     expect(declarations(body).map((d) => [d.prop, d.value])).toEqual([
       ['gap', '1rem'],
       ['padding', '0 8px'],
     ]);
+  });
+
+  it('PRESERVES a between-declarations comment through a write-back (no silent deletion)', () => {
+    // The exact data-loss scenario: open a commented rule, edit it, save. The comment
+    // must survive serialization rather than be dropped.
+    const src = '\n  color: red; /* brand — do not change */\n  margin: 0;\n';
+    const body = parseRuleBody(src);
+    expect(body.items.some((it) => it.kind === 'comment')).toBe(true);
+    const out = serializeRuleBody(body);
+    expect(out).toContain('/* brand — do not change */');
+    // …and the declarations are still both present.
+    expect(declarations(body).map((d) => d.prop)).toEqual(['color', 'margin']);
+  });
+
+  it('keeps an inline comment inside a declaration value', () => {
+    const body = parseRuleBody('\n  color: /* tweak */ red;\n');
+    const decl = declarations(body)[0];
+    expect(decl.prop).toBe('color');
+    expect(decl.value).toContain('/* tweak */');
+    expect(serializeRuleBody(body)).toContain('/* tweak */');
+  });
+
+  it('does not drop a declaration when the value has a stray closing paren', () => {
+    // findColon must not underflow paren depth on a stray ')'.
+    const body = parseRuleBody('\n  --x: a) b;\n  color: red;\n');
+    expect(declarations(body).map((d) => d.prop)).toEqual(['--x', 'color']);
   });
 
   it('keeps semicolons inside strings out of the split', () => {
@@ -75,11 +101,11 @@ describe('mutations', () => {
   it('adds a declaration after the last declaration, before nested rules', () => {
     const body = parseRuleBody('\n  color: red;\n  &:hover { x: y; }\n');
     const next = addDeclaration(body, { prop: 'gap', value: '1rem', important: false });
-    expect(next.items.map((it) => (it.kind === 'decl' ? it.prop : `&${it.selector}`))).toEqual([
-      'color',
-      'gap',
-      '&&:hover',
-    ]);
+    expect(
+      next.items.map((it) =>
+        it.kind === 'decl' ? it.prop : it.kind === 'rule' ? `&${it.selector}` : it.text
+      )
+    ).toEqual(['color', 'gap', '&&:hover']);
   });
 
   it('adds a nested rule and removes an item by index', () => {

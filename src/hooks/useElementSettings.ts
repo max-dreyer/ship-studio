@@ -8,7 +8,12 @@
  *     shown for reference. (Editing tag/attributes is a fast-follow — markup
  *     rewrites need care.)
  *
- * Security: only the preview iframe's own contentWindow is trusted.
+ * Security: messages are posted only to the preview iframe's own contentWindow. The
+ * `'*'` target origin is deliberate — the preview's origin is a per-project
+ * `http://localhost:<port>` and is `about:blank` between refreshes, so a fixed origin
+ * would silently drop messages. The trust boundary that matters is INBOUND: the in-iframe
+ * script (`select_script.html`) ignores `message` events whose source isn't its parent, so
+ * a foreign page loaded in the preview can't drive edits.
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react';

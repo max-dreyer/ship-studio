@@ -20,7 +20,9 @@ interface EditableProps {
   overriddenBy?: string;
   editable: true;
   onChange: (decl: Decl) => void;
-  onRemove: () => void;
+  /** Remove this declaration. Receives this row's DOM element so the caller can move
+   *  focus to a surviving sibling before the row unmounts (#14). */
+  onRemove: (rowEl: HTMLElement | null) => void;
   /** Existing nested-rule selectors in this card (targets to nest this decl into). */
   nestTargets: string[];
   /** Move this declaration into a nested rule for `selector` (created if missing). */
@@ -147,7 +149,7 @@ export function DeclarationRow(props: Props) {
           className="ss-decl__remove"
           title="Remove property"
           aria-label="Remove property"
-          onClick={onRemove}
+          onClick={(e) => onRemove(e.currentTarget.closest('.ss-decl'))}
         >
           <CloseIcon size={11} />
         </button>
@@ -195,24 +197,54 @@ function NestControl({
   onNest: (selector: string) => void;
 }) {
   const [open, setOpen] = useState(false);
+  const wrapRef = useRef<HTMLSpanElement>(null);
+  const btnRef = useRef<HTMLButtonElement>(null);
+
+  // Dismiss on Escape (returning focus to the trigger) or an outside click — a
+  // keyboard user can't reach an onMouseLeave, so both are required to close it.
+  // Mirrors the mousedown-capture click-outside pattern used by AddMenu.
+  useEffect(() => {
+    if (!open) return;
+    const onDown = (e: MouseEvent) => {
+      if (wrapRef.current?.contains(e.target as Node)) return;
+      setOpen(false);
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        setOpen(false);
+        btnRef.current?.focus();
+      }
+    };
+    document.addEventListener('mousedown', onDown, true);
+    document.addEventListener('keydown', onKey, true);
+    return () => {
+      document.removeEventListener('mousedown', onDown, true);
+      document.removeEventListener('keydown', onKey, true);
+    };
+  }, [open]);
+
   return (
-    <span className="ss-decl__nest">
+    <span className="ss-decl__nest" ref={wrapRef}>
       <button
+        ref={btnRef}
         type="button"
         className={`ss-decl__nest-btn${open ? ' is-open' : ''}`}
         title="Move into a nested rule"
         aria-label="Move into a nested rule"
+        aria-haspopup="menu"
         aria-expanded={open}
         onClick={() => setOpen((o) => !o)}
       >
         <NestGlyph />
       </button>
       {open && (
-        <span className="ss-decl__nest-menu" onMouseLeave={() => setOpen(false)}>
+        <span className="ss-decl__nest-menu" role="menu" aria-label="Move into a nested rule">
           {nestTargets.map((sel) => (
             <button
               key={sel}
               type="button"
+              role="menuitem"
               className="ss-decl__nest-item"
               onClick={() => {
                 onNest(sel);
@@ -224,6 +256,7 @@ function NestControl({
           ))}
           <button
             type="button"
+            role="menuitem"
             className="ss-decl__nest-item ss-decl__nest-item--new"
             onClick={() => {
               onNest('&:hover');

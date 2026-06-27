@@ -555,10 +555,20 @@ fn braces_balanced(s: &str) -> bool {
         }
         if c == b'/' && i + 1 < b.len() && b[i + 1] == b'*' {
             i += 2;
-            while i + 1 < b.len() && !(b[i] == b'*' && b[i + 1] == b'/') {
+            let mut closed = false;
+            while i + 1 < b.len() {
+                if b[i] == b'*' && b[i + 1] == b'/' {
+                    closed = true;
+                    i += 2;
+                    break;
+                }
                 i += 1;
             }
-            i = (i + 2).min(b.len());
+            // An unterminated comment swallows the rest of the source — including this
+            // body's own closing brace and every following rule. Refuse the write.
+            if !closed {
+                return false;
+            }
             continue;
         }
         match c {
@@ -1818,6 +1828,12 @@ fn value_is_safe(value: &str) -> bool {
             b')' => depth -= 1,
             b'{' | b'}' => return false,
             b';' if depth == 0 => return false,
+            // A property VALUE never legitimately contains a CSS comment. Reject the
+            // opener AND closer: an unterminated `/*` would comment out the rule's
+            // closing brace and every rule after it in the file (silent corruption),
+            // and a stray `*/` is equally a sign the value is structural, not a value.
+            b'/' if i + 1 < bytes.len() && bytes[i + 1] == b'*' => return false,
+            b'*' if i + 1 < bytes.len() && bytes[i + 1] == b'/' => return false,
             _ => {}
         }
         i += 1;
@@ -2332,8 +2348,15 @@ mod tests {
         assert!(!value_is_safe("red; .evil { color: blue")); // injects a rule
         assert!(!value_is_safe("\"unterminated")); // dangling quote
         assert!(!value_is_safe("rgb(0,0,0")); // unbalanced parens
+                                              // Comment injection: an unterminated `/*` would comment out the rule's closing
+                                              // brace and every following rule; a `*/` is equally structural. Both rejected.
+        assert!(!value_is_safe("red /*")); // opens a comment that eats the rest of the file
+        assert!(!value_is_safe("red /* x")); // ditto, with content
+        assert!(!value_is_safe("red */")); // stray closer
+        assert!(value_is_safe("\"a/*b*/c\"")); // comment chars inside a string are fine
 
         assert!(validate_declaration("color", Some("red }")).is_err());
+        assert!(validate_declaration("color", Some("red /*")).is_err()); // comment vector blocked
         assert!(validate_declaration("color", Some("red")).is_ok());
         assert!(validate_declaration("color", None).is_ok());
         assert!(validate_selector(".hero:hover").is_ok());
@@ -3222,6 +3245,22 @@ mod tests {
         assert!(braces_balanced("\n  /* } */ color: red;\n")); // brace in a comment is fine
         assert!(!braces_balanced("\n  color: red;\n}\n.evil { x: y;\n")); // breaks out
         assert!(!braces_balanced("\n  & { color: red;\n")); // unclosed
+                                                            // An UNTERMINATED comment is rejected — otherwise it would swallow this body's
+                                                            // closing brace and the rest of the file as comment text.
+        assert!(!braces_balanced("\n  color: red; /* dangling\n"));
+        assert!(!braces_balanced("\n  color: red; /*")); // bare opener at EOF
+        assert!(braces_balanced("\n  color: red; /* fine */\n")); // terminated is allowed
+    }
+
+    #[test]
+    fn rule_text_write_refuses_a_comment_that_would_eat_the_file() {
+        // `apply_css_rule_text` gates every body on `braces_balanced` before writing.
+        // A body ending in an unterminated comment would comment out the rule's own
+        // closing brace and every following rule — the guard must reject it.
+        let eats_the_file = "\n  color: red; /* oops\n";
+        assert!(!braces_balanced(eats_the_file));
+        // The benign version (terminated) still writes.
+        assert!(braces_balanced("\n  color: red; /* fine */\n"));
     }
 
     #[test]

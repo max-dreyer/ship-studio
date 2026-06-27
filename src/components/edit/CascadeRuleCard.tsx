@@ -12,15 +12,13 @@
  * controlled — it emits a new body via `onChange`.
  */
 
-import { useMemo, useState } from 'react';
+import { useId, useMemo, useRef, useState } from 'react';
 import { predictNextDeclaration } from '../../lib/cssPredict';
 import { ChevronIcon, CloseIcon } from '../icons/common';
 import { LayersIcon } from '../icons/utility';
 import { TrashIcon, FileIcon } from '../icons/editor';
 import { DeclarationRow } from './DeclarationRow';
-import { CascadeProposal } from './CascadeProposal';
 import { AddMenu } from './AddMenu';
-import type { CssProposal } from '../../hooks/useCssProposals';
 import { suggestMediaConditions } from '../../lib/cssProperties';
 import {
   NEST_ITEMS,
@@ -29,7 +27,7 @@ import {
   searchStructures,
   isKeyframesSelector,
 } from '../../lib/cssStructures';
-import { SuggestionPopover, type Suggestion } from './SuggestionPopover';
+import { SuggestionPopover, suggestionOptionId, type Suggestion } from './SuggestionPopover';
 import {
   declarations,
   nestedRules,
@@ -109,15 +107,6 @@ interface ReadonlyCard extends CommonHeader {
   decls: Decl[];
   overridden: Map<string, string>;
   readonlyReason?: string;
-  /** "Send to agent": when present, the card can host a preview-only proposal that's
-   *  handed to the agent to implement (for rules we can't write deterministically). */
-  proposal?: {
-    active?: CssProposal;
-    begin: () => void;
-    edit: (prop: string, to: string) => void;
-    send: () => void;
-    discard: () => void;
-  };
 }
 
 type Props = EditableCard | ReadonlyCard;
@@ -151,6 +140,7 @@ function SelectorChip({
   const [text, setText] = useState(selector);
   const [active, setActive] = useState(0);
   const [anchorEl, setAnchorEl] = useState<HTMLElement | null>(null);
+  const listId = useId();
 
   if (!editing) {
     return (
@@ -219,6 +209,11 @@ function SelectorChip({
         value={text}
         spellCheck={false}
         autoComplete="off"
+        role="combobox"
+        aria-expanded={matches.length > 0}
+        aria-controls={listId}
+        aria-activedescendant={matches.length > 0 ? suggestionOptionId(listId, active) : undefined}
+        aria-autocomplete="list"
         aria-label="Rule selector"
         placeholder="selector, or @media (…) to scope it"
         onFocus={(e) => setAnchorEl(e.currentTarget)}
@@ -244,7 +239,13 @@ function SelectorChip({
         }}
         onBlur={() => setEditing(false)}
       />
-      <SuggestionPopover anchor={anchorEl} items={matches} active={active} onPick={commit} />
+      <SuggestionPopover
+        anchor={anchorEl}
+        items={matches}
+        active={active}
+        onPick={commit}
+        listId={listId}
+      />
     </div>
   );
 }
@@ -268,6 +269,7 @@ function NestedSelectorInput({
   const [focused, setFocused] = useState(false);
   const [active, setActive] = useState(0);
   const [anchorEl, setAnchorEl] = useState<HTMLElement | null>(null);
+  const listId = useId();
 
   const typed = value.trim();
   const q = typed.toLowerCase();
@@ -301,6 +303,11 @@ function NestedSelectorInput({
         value={value}
         spellCheck={false}
         autoComplete="off"
+        role="combobox"
+        aria-expanded={showMenu}
+        aria-controls={listId}
+        aria-activedescendant={showMenu ? suggestionOptionId(listId, active) : undefined}
+        aria-autocomplete="list"
         aria-label={vocab === 'keyframe' ? 'Keyframe step' : 'Nested selector'}
         placeholder={
           vocab === 'keyframe' ? 'from, to, 50%…' : '&:hover, &:nth-child(2n), & .child…'
@@ -337,6 +344,7 @@ function NestedSelectorInput({
           anchor={anchorEl}
           items={matches}
           active={active}
+          listId={listId}
           onPick={(v) => {
             onChange(v);
             setFocused(false);
@@ -360,6 +368,7 @@ function MediaChip({
   const [text, setText] = useState(condition);
   const [active, setActive] = useState(0);
   const [anchorEl, setAnchorEl] = useState<HTMLElement | null>(null);
+  const listId = useId();
   if (!editing) {
     return (
       <span
@@ -399,6 +408,11 @@ function MediaChip({
         value={text}
         spellCheck={false}
         autoComplete="off"
+        role="combobox"
+        aria-expanded={matches.length > 0}
+        aria-controls={listId}
+        aria-activedescendant={matches.length > 0 ? suggestionOptionId(listId, active) : undefined}
+        aria-autocomplete="list"
         aria-label="Media condition"
         onFocus={(e) => setAnchorEl(e.currentTarget)}
         onChange={(e) => {
@@ -429,6 +443,7 @@ function MediaChip({
         active={active}
         onPick={commit}
         width={220}
+        listId={listId}
       />
     </div>
   );
@@ -574,6 +589,55 @@ export function CascadeRuleCard(props: Props) {
   const isKeyframes = !isStep && isKeyframesSelector(props.selector);
   const onRenameAtRule = props.editable ? props.onRenameAtRule : undefined;
 
+  // Focus management after a destructive action (#14): the focused button unmounts, so
+  // without intervention focus falls to <body>. Capture a stable target *before* mutating,
+  // then restore focus once React has re-rendered.
+  const sectionRef = useRef<HTMLElement>(null);
+
+  /** Focus a stable element inside this card after a delete/remove (its row unmounted).
+   *  Prefers the next/previous sibling of the removed row, else the card's "+ Add" button,
+   *  else the collapse toggle. `rowSelector` matches the surviving siblings. */
+  const focusWithinCard = (removed: HTMLElement | null, rowSelector: string) => {
+    const card = sectionRef.current;
+    if (!card) return;
+    const fallback = () => {
+      const add = card.querySelector<HTMLElement>('.ss-card__add');
+      const collapse = card.querySelector<HTMLElement>('.ss-card__collapse');
+      (add ?? collapse)?.focus();
+    };
+    // The DOM still holds the removed node at click time; resolve its surviving sibling.
+    const next = removed?.nextElementSibling as HTMLElement | null;
+    const prev = removed?.previousElementSibling as HTMLElement | null;
+    const sibling = (el: HTMLElement | null) =>
+      el && el.matches(rowSelector) ? el.querySelector<HTMLElement>('button, [tabindex]') : null;
+    requestAnimationFrame(() => {
+      const target = sibling(next) ?? sibling(prev);
+      if (target && card.contains(target)) target.focus();
+      else fallback();
+    });
+  };
+
+  /** Focus a sibling card (or the panel's Add-selector control) after this whole card is
+   *  deleted — the card itself unmounts, so the target lives in the parent list. */
+  const focusAfterCardDelete = () => {
+    const card = sectionRef.current;
+    if (!card) return;
+    const next = card.nextElementSibling as HTMLElement | null;
+    const prev = card.previousElementSibling as HTMLElement | null;
+    const cardCollapse = (el: HTMLElement | null) =>
+      el && el.classList.contains('ss-card')
+        ? el.querySelector<HTMLElement>('.ss-card__collapse')
+        : null;
+    const panel = card.closest('.ss-cascade-panel');
+    requestAnimationFrame(() => {
+      const target =
+        cardCollapse(next) ??
+        cardCollapse(prev) ??
+        panel?.querySelector<HTMLElement>('.ss-cascade-add-selector');
+      target?.focus();
+    });
+  };
+
   // The next-declaration prediction for this rule (ordinary editable rules only — not
   // keyframe steps / @keyframes containers). Computed unconditionally to keep hooks stable.
   const editBody = props.editable ? props.body : null;
@@ -655,19 +719,17 @@ export function CascadeRuleCard(props: Props) {
             new
           </span>
         )}
-        {!editable &&
-          ('proposal' in props && props.proposal?.active ? (
-            <span className="ss-card__src ss-card__src--proposing">✎ proposing</span>
-          ) : (
-            <span className="ss-card__src ss-card__src--ro">read-only</span>
-          ))}
+        {!editable && <span className="ss-card__src ss-card__src--ro">read-only</span>}
         {editable && props.onDelete && !props.draft && (
           <button
             type="button"
             className="ss-card__trash"
             title="Delete rule"
             aria-label="Delete rule"
-            onClick={props.onDelete}
+            onClick={() => {
+              focusAfterCardDelete();
+              props.onDelete?.();
+            }}
           >
             <TrashIcon size={12} />
           </button>
@@ -685,32 +747,16 @@ export function CascadeRuleCard(props: Props) {
         <header className="ss-card__head">{headerContent}</header>
         {!collapsed && (
           <div className="ss-card__body">
-            {props.proposal?.active ? (
-              <CascadeProposal
-                proposal={props.proposal.active}
-                onEdit={props.proposal.edit}
-                onSend={props.proposal.send}
-                onDiscard={props.proposal.discard}
+            {props.decls.map((d, i) => (
+              <DeclarationRow
+                key={`${d.prop}-${i}`}
+                editable={false}
+                decl={d}
+                overridden={props.overridden.has(d.prop.toLowerCase())}
+                overriddenBy={props.overridden.get(d.prop.toLowerCase())}
               />
-            ) : (
-              <>
-                {props.decls.map((d, i) => (
-                  <DeclarationRow
-                    key={`${d.prop}-${i}`}
-                    editable={false}
-                    decl={d}
-                    overridden={props.overridden.has(d.prop.toLowerCase())}
-                    overriddenBy={props.overridden.get(d.prop.toLowerCase())}
-                  />
-                ))}
-                {props.readonlyReason && <p className="ss-card__note">{props.readonlyReason}</p>}
-                {props.proposal && props.decls.length > 0 && (
-                  <button type="button" className="ss-card__propose" onClick={props.proposal.begin}>
-                    Suggest edit → send to agent
-                  </button>
-                )}
-              </>
-            )}
+            ))}
+            {props.readonlyReason && <p className="ss-card__note">{props.readonlyReason}</p>}
           </div>
         )}
       </section>
@@ -735,6 +781,7 @@ export function CascadeRuleCard(props: Props) {
 
   return (
     <section
+      ref={sectionRef}
       className={`ss-card${depth ? ' is-nested' : ''}${collapsed ? ' is-collapsed' : ''}${inactive ? ' is-inactive' : ''}${props.draft ? ' is-draft' : ''}${props.unmatched ? ' is-unmatched' : ''}`}
       data-testid="cascade-card"
       onKeyDown={(e) => {
@@ -774,7 +821,10 @@ export function CascadeRuleCard(props: Props) {
               animations={props.animations}
               autoEditValue={autoEditProp === d.prop}
               onChange={(next) => onChange(replaceItem(body, d.index, { kind: 'decl', ...next }))}
-              onRemove={() => onChange(removeItem(body, d.index))}
+              onRemove={(rowEl) => {
+                focusWithinCard(rowEl, '.ss-decl');
+                onChange(removeItem(body, d.index));
+              }}
               onNest={(sel) => onChange(moveDeclIntoNested(body, d.index, sel))}
             />
           ))}
@@ -799,7 +849,12 @@ export function CascadeRuleCard(props: Props) {
               <button
                 type="button"
                 className="ss-decl__ghost-dismiss"
-                onClick={dismissPrediction}
+                onClick={(e) => {
+                  // The ghost row unmounts on dismiss — move focus to a stable sibling
+                  // (the "+ Add" button) so it doesn't fall to <body> (#14).
+                  focusWithinCard(e.currentTarget.closest('.ss-decl'), '.ss-decl');
+                  dismissPrediction();
+                }}
                 title="Dismiss"
                 aria-label="Dismiss prediction"
               >

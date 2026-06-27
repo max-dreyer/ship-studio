@@ -8,7 +8,14 @@
  * editor panels.
  */
 
-import { useCallback, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
+import {
+  useCallback,
+  useEffect,
+  useId,
+  useRef,
+  useState,
+  type PointerEvent as ReactPointerEvent,
+} from 'react';
 import { PinIcon } from '../icons/layout';
 import { CloseIcon, CheckIcon } from '../icons/common';
 import { PlusIcon } from '../icons/utility';
@@ -20,7 +27,7 @@ import { CascadeRuleCard } from './CascadeRuleCard';
 import { ElementSettingsPanel } from './ElementSettingsPanel';
 import { CssVariablesPanel } from './CssVariablesPanel';
 import { CssAnimationsPanel } from './CssAnimationsPanel';
-import { SuggestionPopover, type Suggestion } from './SuggestionPopover';
+import { SuggestionPopover, suggestionOptionId, type Suggestion } from './SuggestionPopover';
 import { WRAP_ITEMS, searchStructures, parseRulePrelude } from '../../lib/cssStructures';
 import { rowKey, type CascadeRow } from '../../lib/cssCascade';
 import type { RuleBody } from '../../lib/cssBody';
@@ -65,6 +72,10 @@ interface Props {
   onClose: () => void;
   pinned?: boolean;
   onTogglePin?: () => void;
+  /** Controlled scope (Element / Variables / Animations) — lets the Cmd+K palette open
+   *  the panel straight to a scope. Uncontrolled (local state) when omitted. */
+  scope?: Scope;
+  onScopeChange?: (scope: Scope) => void;
 }
 
 export function CssCascadePanel({
@@ -90,9 +101,21 @@ export function CssCascadePanel({
   onClose,
   pinned,
   onTogglePin,
+  scope: controlledScope,
+  onScopeChange,
 }: Props) {
   const [tab, setTab] = useState<'style' | 'settings'>('style');
-  const [scope, setScope] = useState<Scope>('element');
+  const [localScope, setLocalScope] = useState<Scope>('element');
+  const scope = controlledScope ?? localScope;
+  const setScope = onScopeChange ?? setLocalScope;
+  // Refresh the project-global data when its scope becomes visible — works whether the
+  // scope was entered via the tabs or opened directly from the Cmd+K palette.
+  const reloadVariables = variablesState.reload;
+  const reloadAnimations = animationsState.reload;
+  useEffect(() => {
+    if (scope === 'variables') void reloadVariables();
+    else if (scope === 'animations') void reloadAnimations();
+  }, [scope, reloadVariables, reloadAnimations]);
   // "Copy id": the element's selector (tag + classes), so you can paste it to your agent
   // and describe the change you want ("make a.btn-secondary's hover state pop").
   const { showToast } = useOptionalToast();
@@ -201,11 +224,7 @@ export function CssCascadePanel({
               role="tab"
               aria-selected={scope === s}
               className={`ss-cascade-scope__tab${scope === s ? ' is-active' : ''}`}
-              onClick={() => {
-                setScope(s);
-                if (s === 'variables') void variablesState.reload();
-                else if (s === 'animations') void animationsState.reload();
-              }}
+              onClick={() => setScope(s)}
             >
               {s === 'element' ? 'Element' : s === 'variables' ? 'Variables' : 'Animations'}
             </button>
@@ -409,6 +428,7 @@ function AddSelectorBar({
   const [text, setText] = useState('');
   const [active, setActive] = useState(0);
   const [anchorEl, setAnchorEl] = useState<HTMLElement | null>(null);
+  const listId = useId();
 
   const submit = (value: string) => {
     const v = value.trim();
@@ -485,6 +505,12 @@ function AddSelectorBar({
         value={text}
         spellCheck={false}
         autoComplete="off"
+        role="combobox"
+        aria-expanded={items.length > 0}
+        aria-controls={listId}
+        aria-activedescendant={items.length > 0 ? suggestionOptionId(listId, active) : undefined}
+        aria-autocomplete="list"
+        aria-label="Add selector"
         placeholder="Selector (.card) — or @media (…), @container (…) then a selector"
         onFocus={(e) => setAnchorEl(e.currentTarget)}
         onChange={(e) => {
@@ -516,6 +542,7 @@ function AddSelectorBar({
         active={active}
         onPick={pick}
         width={280}
+        listId={listId}
       />
     </div>
   );

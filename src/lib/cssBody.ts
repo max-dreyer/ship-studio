@@ -28,7 +28,8 @@ export interface NestedRule {
 /** An ordered body item — kept ordered so serialization preserves source order. */
 export type BodyItem =
   | ({ kind: 'decl' } & Decl)
-  | { kind: 'rule'; selector: string; body: RuleBody };
+  | { kind: 'rule'; selector: string; body: RuleBody }
+  | { kind: 'comment'; text: string };
 
 /** A rule body: its items in source order. */
 export interface RuleBody {
@@ -64,8 +65,11 @@ function findColon(t: string): number {
       continue;
     }
     if (ch === '(') depth++;
-    else if (ch === ')') depth--;
-    else if (ch === ':' && depth === 0) return k;
+    else if (ch === ')') {
+      // Guard against underflow on a stray `)` — without it, depth goes negative and
+      // the real top-level `:` is never found, so the declaration is silently dropped.
+      if (depth > 0) depth--;
+    } else if (ch === ':' && depth === 0) return k;
   }
   return -1;
 }
@@ -99,11 +103,19 @@ export function parseRuleBody(src: string): RuleBody {
 
   while (i < n) {
     const c = src[i];
-    // Comment — dropped (intra-rule comments are not modeled in v1).
+    // Comment — preserved, not dropped (a write-back would otherwise delete an
+    // author's `/* … */` annotation). A comment sitting BETWEEN items (the prelude is
+    // empty/whitespace) becomes its own ordered body item so it round-trips in place;
+    // a comment WITHIN a declaration (`color: /* x */ red`) stays inline in that
+    // declaration's text.
     if (c === '/' && src[i + 1] === '*') {
       let j = i + 2;
       while (j + 1 < n && !(src[j] === '*' && src[j + 1] === '/')) j++;
-      i = Math.min(j + 2, n);
+      const end = j + 1 < n ? j + 2 : n; // include the closing */ when present
+      const text = src.slice(i, end);
+      if (prelude.trim() === '') items.push({ kind: 'comment', text });
+      else prelude += text;
+      i = end;
       continue;
     }
     // String — copy verbatim into the current segment.
@@ -205,6 +217,9 @@ export function serializeRuleBody(body: RuleBody, level = 1): string {
     .map((it) => {
       if (it.kind === 'decl') {
         return `${at}${it.prop}: ${it.value}${it.important ? ' !important' : ''};`;
+      }
+      if (it.kind === 'comment') {
+        return `${at}${it.text}`;
       }
       return `${at}${it.selector} {${serializeRuleBody(it.body, level + 1)}}`;
     });

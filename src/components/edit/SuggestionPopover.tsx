@@ -28,9 +28,17 @@ interface Props {
   active: number;
   onPick: (value: string) => void;
   width?: number;
+  /** ARIA listbox id — the owning combobox input points its `aria-controls` here, and
+   *  each option's id is derived from it (`${listId}-opt-${i}`) for `aria-activedescendant`. */
+  listId?: string;
 }
 
-export function SuggestionPopover({ anchor, items, active, onPick, width = 240 }: Props) {
+/** Stable per-option id for the owning input's `aria-activedescendant`. */
+export function suggestionOptionId(listId: string | undefined, index: number): string | undefined {
+  return listId ? `${listId}-opt-${index}` : undefined;
+}
+
+export function SuggestionPopover({ anchor, items, active, onPick, width = 240, listId }: Props) {
   const pos = useMemo(() => {
     if (!anchor || items.length === 0) return null;
     const r = anchor.getBoundingClientRect();
@@ -50,6 +58,8 @@ export function SuggestionPopover({ anchor, items, active, onPick, width = 240 }
   return createPortal(
     <div
       className="ss-suggest"
+      role="listbox"
+      id={listId}
       style={{
         position: 'fixed',
         left: pos.left,
@@ -70,6 +80,9 @@ export function SuggestionPopover({ anchor, items, active, onPick, width = 240 }
         <button
           key={it.value}
           type="button"
+          role="option"
+          id={suggestionOptionId(listId, i)}
+          aria-selected={i === active}
           className={`ss-suggest__item${i === active ? ' is-active' : ''}`}
           // Keep the input focused so its blur doesn't close us before the click lands.
           onMouseDown={(e) => e.preventDefault()}

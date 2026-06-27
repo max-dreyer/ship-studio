@@ -286,6 +286,7 @@ interface CascadeRule {
   origin: string;
   layered?: boolean;
 }
+
 /** Resolve with the next `ss:cascade` the script posts to the parent. */
 function nextCascade(): Promise<{ rules: CascadeRule[] }> {
   return new Promise((res) => {
@@ -393,6 +394,112 @@ it('an !important layered declaration wins over an unlayered one (layer order in
   const layered = rules.find((r) => r.selector === '.c' && r.layered)!;
   expect(layered.declarations.find((d) => d.prop === 'color')!.active).toBe(true);
   expect(unlayered.declarations.find((d) => d.prop === 'color')!.active).toBe(false);
+  send({ type: 'ss:deactivate' });
+});
+
+it('takes :is()/:not() specificity as the MAX of args, not a flat count', async () => {
+  // `.btn:is(.x, .y, .z)` is (0,2,0) — `.btn` + the most-specific arg `.x` — NOT (0,4,0).
+  // So `.a.b.c` (0,3,0) wins. A flat count would give the :is() rule (0,4,0) and flip it.
+  document.body.innerHTML =
+    '<style>.btn:is(.x, .y, .z){color:blue}.a.b.c{color:red}</style>' +
+    '<button class="btn x a b c">x</button>';
+  send({ type: 'ss:activate', cascade: true });
+  await flushMessages();
+  const got = nextCascade();
+  document.querySelector('.btn')!.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+  const { rules } = await got;
+  const isRule = rules.find((r) => r.selector!.includes(':is'))!;
+  const abc = rules.find((r) => r.selector === '.a.b.c')!;
+  expect(isRule.specificity).toEqual([0, 2, 0]);
+  expect(abc.declarations.find((d) => d.prop === 'color')!.active).toBe(true); // .a.b.c wins
+  expect(isRule.declarations.find((d) => d.prop === 'color')!.active).toBe(false);
+  send({ type: 'ss:deactivate' });
+});
+
+it('orders layer-vs-layer: a later layer beats an earlier one regardless of specificity', async () => {
+  // @layer a then @layer b. `#hero .btn` lives in a (higher specificity); `.btn` in b.
+  // A later layer wins for normal declarations → `.btn` (in b) wins despite lower specificity.
+  document.body.innerHTML =
+    '<style>@layer a{#hero .btn{color:red}}@layer b{.btn{color:blue}}</style>' +
+    '<div id="hero"><button class="btn">x</button></div>';
+  send({ type: 'ss:activate', cascade: true });
+  await flushMessages();
+  const got = nextCascade();
+  document.querySelector('.btn')!.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+  const { rules } = await got;
+  const later = rules.find((r) => r.selector === '.btn')!;
+  const earlier = rules.find((r) => r.selector === '#hero .btn')!;
+  expect(later.declarations.find((d) => d.prop === 'color')!.active).toBe(true);
+  expect(earlier.declarations.find((d) => d.prop === 'color')!.active).toBe(false);
+  send({ type: 'ss:deactivate' });
+});
+
+it('treats a rule inside an unsupported @supports as inactive', async () => {
+  // jsdom has no CSS.supports, so inject one: the bogus feature query is unsupported.
+  const realCSS = (globalThis as { CSS?: unknown }).CSS;
+  (globalThis as { CSS?: unknown }).CSS = { supports: (c: string) => !/bogus-feature/.test(c) };
+  try {
+    document.body.innerHTML =
+      '<style>.s{color:blue}@supports (bogus-feature: 1){.s{color:red}}</style>' +
+      '<div class="s">x</div>';
+    send({ type: 'ss:activate', cascade: true });
+    await flushMessages();
+    const got = nextCascade();
+    document.querySelector('.s')!.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    const { rules } = await got;
+    // The unsupported rule comes later in source but must NOT win — it doesn't apply.
+    const supported = rules.find((r) => r.declarations.some((d) => d.value === 'blue'))!;
+    const unsupported = rules.find((r) => r.declarations.some((d) => d.value === 'red'))!;
+    expect(supported.declarations.find((d) => d.prop === 'color')!.active).toBe(true);
+    expect(unsupported.declarations.find((d) => d.prop === 'color')!.active).toBe(false);
+    send({ type: 'ss:deactivate' });
+  } finally {
+    (globalThis as { CSS?: unknown }).CSS = realCSS;
+  }
+});
+
+it('previews the EXACT rule by source order when a selector occurs in several rules', async () => {
+  // `.q` exists twice (base + inside @layer). Previewing by sourceOrder must hit the
+  // layered one, not the first `.q` a selector match would find.
+  document.body.innerHTML =
+    '<style>.q{color:red}@layer x{.q{color:blue}}</style><div class="q">x</div>';
+  send({ type: 'ss:activate', cascade: true });
+  await flushMessages();
+  const got = nextCascade();
+  document.querySelector('.q')!.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+  const { rules } = await got;
+  const layered = rules.find((r) => r.selector === '.q' && r.layered)!;
+  send({
+    type: 'ss:previewRuleText',
+    ruleKey: 'k',
+    selector: '.q',
+    mediaText: null,
+    order: layered.sourceOrder,
+    cssText: '.q { color: green; }',
+  });
+  // Target the project's own <style> in <body>, not the script's #ss-preview in <head>.
+  const sheet = document.body.querySelector('style')!.sheet!;
+  const base = sheet.cssRules[0] as CSSStyleRule;
+  const inLayer = (sheet.cssRules[1] as CSSGroupingRule).cssRules[0] as CSSStyleRule;
+  expect(base.style.color).toBe('red'); // untouched
+  expect(inLayer.style.color).toBe('green'); // the layered rule was the one edited
+  send({ type: 'ss:deactivate' });
+});
+
+it('reports a distinct domPath for same-tag, same-class siblings (no aliasing)', async () => {
+  document.body.innerHTML =
+    '<div><button class="btn">A</button><button class="btn">B</button></div>';
+  send({ type: 'ss:activate', cascade: true });
+  const a = nextSelect();
+  document.querySelectorAll('.btn')[0].dispatchEvent(new MouseEvent('click', { bubbles: true }));
+  const sigA = await a;
+  const b = nextSelect();
+  document.querySelectorAll('.btn')[1].dispatchEvent(new MouseEvent('click', { bubbles: true }));
+  const sigB = await b;
+  expect(sigA.signature.tagName).toBe(sigB.signature.tagName);
+  expect(sigA.signature.className).toBe(sigB.signature.className);
+  expect(sigA.signature.domPath).toBeTruthy();
+  expect(sigA.signature.domPath).not.toBe(sigB.signature.domPath); // the discriminator
   send({ type: 'ss:deactivate' });
 });
 

@@ -9,7 +9,7 @@
  * menu styling as the rest of the editor. Lengths/draggers etc. can slot in too.
  */
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useId, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { ColorPicker } from './ColorPicker';
 import { colorSwatch, parseNumericValue, formatNumericValue } from '../../lib/cssProperties';
@@ -29,6 +29,8 @@ export function EditPopover({ anchor, initial, options, placeholder, onCommit, o
   const [active, setActive] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
   const popRef = useRef<HTMLDivElement>(null);
+  const listId = useId();
+  const optionId = (i: number) => `${listId}-opt-${i}`;
   const textRef = useRef(text);
   useEffect(() => {
     textRef.current = text;
@@ -146,6 +148,11 @@ export function EditPopover({ anchor, initial, options, placeholder, onCommit, o
                 value={text}
                 spellCheck={false}
                 autoComplete="off"
+                role="combobox"
+                aria-expanded={showMenu}
+                aria-controls={listId}
+                aria-activedescendant={showMenu ? optionId(active) : undefined}
+                aria-autocomplete="list"
                 placeholder={placeholder}
                 onChange={(e) => {
                   setText(e.target.value);
@@ -181,11 +188,14 @@ export function EditPopover({ anchor, initial, options, placeholder, onCommit, o
           </div>
           {showMenu && (
             <div className="ss-add-menu ss-value-pop__menu">
-              <div className="ss-add-menu__list">
+              <div className="ss-add-menu__list" role="listbox" id={listId}>
                 {matches.map((o, i) => (
                   <button
                     key={o}
                     type="button"
+                    role="option"
+                    id={optionId(i)}
+                    aria-selected={active === i}
                     className={`ss-add-menu__item${active === i ? ' is-active' : ''}`}
                     onMouseDown={(e) => e.preventDefault()}
                     onClick={() => {

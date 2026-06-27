@@ -216,10 +216,18 @@ export function useCssCascadeEditor({ iframeRef, projectPath, enabled, onToast }
         // it has a property (the cascade walker skips empty rules), so clearing it here
         // made new rules — especially conditional `@media` ones — vanish on the next HMR.
         const prev = lastSignatureRef.current;
+        // Identity is the element's structural path (`domPath`), not tag+class — two
+        // sibling `<button class="btn">` are different elements and must NOT share
+        // optimistic state. `domPath` is stable across an HMR reload of the same tree,
+        // so a genuine re-select still counts as the same element. (Fall back to
+        // tag+class only if the walker didn't report a path.)
+        const prevPath = (prev as { domPath?: string } | null)?.domPath;
+        const nextPath = (d.signature as { domPath?: string }).domPath;
         const sameElement =
           !!prev &&
-          prev.tagName === d.signature.tagName &&
-          prev.className === d.signature.className;
+          (prevPath != null || nextPath != null
+            ? prevPath === nextPath
+            : prev.tagName === d.signature.tagName && prev.className === d.signature.className);
         lastSignatureRef.current = d.signature;
         ++selTokenRef.current;
         clearTimers();
@@ -388,6 +396,9 @@ export function useCssCascadeEditor({ iframeRef, projectPath, enabled, onToast }
         ruleKey: key,
         selector: row.selector,
         mediaText: row.mediaText,
+        // Pin the exact rule by cascade position so a duplicate selector (base + @layer)
+        // previews the one the panel is showing, not the first textual match.
+        order: row.sourceOrder,
         cssText: `${row.selector} {${serializeRuleBody(body)}}`,
       });
     },
@@ -484,7 +495,12 @@ export function useCssCascadeEditor({ iframeRef, projectPath, enabled, onToast }
           baselineInner.current[key] ?? ''
         );
         post({ type: 'ss:clearRulePreview', ruleKey: key });
-        post({ type: 'ss:deleteRulePreview', selector: row.selector, mediaText: row.mediaText });
+        post({
+          type: 'ss:deleteRulePreview',
+          selector: row.selector,
+          mediaText: row.mediaText,
+          order: row.sourceOrder,
+        });
         setRows((prev) => prev.filter((r) => rowKey(r) !== key));
         setBodies((prev) => {
           const n = { ...prev };
@@ -569,25 +585,37 @@ export function useCssCascadeEditor({ iframeRef, projectPath, enabled, onToast }
           : null;
         const min = /min-width\s*:\s*([\d.]+)px/i.exec(condition);
         condMinPx = min ? Math.round(parseFloat(min[1])) : null;
-        // This exact conditional rule already on screen? Don't create a duplicate
-        // `@media (…) { sel { } }` — it's right there to edit. (The backend skips its
-        // dup-check for wrapped rules, so this guard lives here.)
-        const norm = (s: string | null | undefined) => (s ?? '').replace(/\s+/g, '');
-        const alreadyShown = [...rowByKeyRef.current.values()].some(
-          (r) =>
-            r.editable &&
-            r.selector === sel &&
-            norm(r.mediaText) === norm(condMediaText) &&
-            !!r.mediaText
-        );
-        if (alreadyShown) return;
-      } else {
-        // Already shown as a base rule? Don't duplicate or error — it's right there.
-        const alreadyShown = [...rowByKeyRef.current.values()].some(
-          (r) => r.editable && r.selector === sel && !r.mediaText
-        );
-        if (alreadyShown) return;
       }
+
+      // Is this exact rule (selector + at-rule condition) already on screen? If so, don't
+      // create a duplicate — it's right there to edit. (The backend skips its dup-check for
+      // wrapped rules, so this guard lives here.) The condition is compared whitespace- and
+      // case-insensitively across @media / @container / @supports — not just @media — so a
+      // case-different or non-media condition can't slip a duplicate through.
+      const condSig = (kind: string, cond: string | null | undefined) =>
+        `${kind}|${(cond ?? '').replace(/\s+/g, '').toLowerCase()}`;
+      const rowCondSig = (r: CascadeRow) =>
+        r.mediaText
+          ? condSig('media', r.mediaText)
+          : r.container
+            ? condSig('container', r.container)
+            : r.supports
+              ? condSig('supports', r.supports)
+              : condSig('base', '');
+      const atLower = (atPrelude ?? '').trim().toLowerCase();
+      const newSig = !atPrelude
+        ? condSig('base', '')
+        : atLower.startsWith('@media')
+          ? condSig('media', atPrelude.slice(atLower.indexOf('@media') + 6))
+          : atLower.startsWith('@container')
+            ? condSig('container', atPrelude.slice(atLower.indexOf('@container') + 10))
+            : atLower.startsWith('@supports')
+              ? condSig('supports', atPrelude.slice(atLower.indexOf('@supports') + 9))
+              : condSig('other', atPrelude);
+      const alreadyShown = [...rowByKeyRef.current.values()].some(
+        (r) => r.editable && r.selector === sel && rowCondSig(r) === newSig
+      );
+      if (alreadyShown) return;
 
       let targetFile = [...rowByKeyRef.current.values()].find((r) => r.editable && r.file)?.file;
       if (!targetFile) {
@@ -700,6 +728,10 @@ export function useCssCascadeEditor({ iframeRef, projectPath, enabled, onToast }
       const ns = newSelector.trim();
       if (!row || !row.editable || row.file == null || row.selector == null) return;
       if (!ns || ns === row.selector) return;
+      // Cancel any in-flight debounced preview/save on the OLD key — once we re-key below
+      // it would fire against a dead key and silently drop the edit.
+      clearTimeout(previewTimers.current[key]);
+      clearTimeout(saveTimers.current[key]);
       post({ type: 'ss:suppressReload' });
       try {
         await renameCssSelector(
@@ -736,13 +768,18 @@ export function useCssCascadeEditor({ iframeRef, projectPath, enabled, onToast }
           delete n[key];
           return n;
         });
+        // Re-arm the save under the NEW key (deferred so the row refs settle first) so a
+        // body edit that was mid-debounce when the rename landed still persists. saveRule
+        // is a no-op when the body matches its baseline, so this is safe to always schedule.
+        clearTimeout(saveTimers.current[newKey]);
+        saveTimers.current[newKey] = setTimeout(() => void saveRule(newKey), SAVE_DEBOUNCE_MS);
         void trackEvent('visual_style_saved', { mode: 'css-code', renamed: true });
       } catch (err) {
         logger.error('[CssCascade] rename failed', { error: String(err) });
         onToast(toastText(err), 'error');
       }
     },
-    [projectPath, onToast, post]
+    [projectPath, onToast, post, saveRule]
   );
 
   /** Change the `@media` condition wrapping a rule. Re-keys on the new media; HMR
@@ -753,6 +790,9 @@ export function useCssCascadeEditor({ iframeRef, projectPath, enabled, onToast }
       const nm = newMedia.trim();
       if (!row || !row.editable || row.file == null || row.selector == null || !nm) return;
       if (nm === row.mediaText) return;
+      // Cancel any in-flight debounced preview/save on the OLD key (re-keyed below).
+      clearTimeout(previewTimers.current[key]);
+      clearTimeout(saveTimers.current[key]);
       post({ type: 'ss:suppressReload' });
       try {
         await renameCssAtRule(
@@ -793,13 +833,16 @@ export function useCssCascadeEditor({ iframeRef, projectPath, enabled, onToast }
           delete n[key];
           return n;
         });
+        // Re-arm a pending body save under the new key (deferred; no-op if unchanged).
+        clearTimeout(saveTimers.current[newKey]);
+        saveTimers.current[newKey] = setTimeout(() => void saveRule(newKey), SAVE_DEBOUNCE_MS);
         void trackEvent('visual_style_saved', { mode: 'css-code', renamedAtRule: true });
       } catch (err) {
         logger.error('[CssCascade] rename at-rule failed', { error: String(err) });
         onToast(toastText(err), 'error');
       }
     },
-    [projectPath, onToast, post]
+    [projectPath, onToast, post, saveRule]
   );
 
   /** Update one card's body model → debounced live preview + auto-save. */

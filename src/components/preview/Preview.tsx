@@ -60,6 +60,8 @@ import { CompactIcon, ExpandIcon, PanelLeftIcon, ResetIcon, UndoIcon, RedoIcon }
 import { Button } from '../primitives/Button';
 import { Spinner } from '../primitives/Spinner';
 import { pathLocale, switchPathLocale } from '../../lib/i18n';
+import { useCommands } from '../../commands/useCommands';
+import { logger } from '../../lib/logger';
 import type { ProjectType } from '../../lib/static-server';
 
 // SVG icons for breakpoints
@@ -593,6 +595,9 @@ export const Preview = forwardRef<PreviewHandle, PreviewProps>(function Preview(
     signature: cssEditor.selection?.signature ?? null,
     onToast,
   });
+  // The CSS panel's active scope (Element / Variables / Animations), lifted so the
+  // Cmd+K palette can open the editor straight to a given scope.
+  const [cssScope, setCssScope] = useState<'element' | 'variables' | 'animations'>('element');
   // Project-global scopes of the CSS panel: design tokens + animations.
   const cssVariables = useCssVariables({
     iframeRef,
@@ -614,6 +619,64 @@ export const Preview = forwardRef<PreviewHandle, PreviewProps>(function Preview(
   const activeEditMode = editor.editMode || cssEditor.editMode;
   const toggleActiveEditor =
     editorMode === 'css' ? cssEditor.toggleEditMode : editor.toggleEditMode;
+
+  // ── Cmd+K commands for the native CSS editor (vanilla-CSS projects only). The panel
+  // is opened by toggling edit mode; the scope state lets a command land straight on
+  // Variables or Animations. Registered only when this editor applies to the project.
+  const cssEditorOn = cssEditor.editMode;
+  const cssToggleEditMode = cssEditor.toggleEditMode;
+  const openCssEditor = useCallback(
+    (scope: 'element' | 'variables' | 'animations') => {
+      try {
+        setCssScope(scope);
+        if (!cssEditorOn) cssToggleEditMode();
+      } catch (err) {
+        onToast('Could not open the CSS editor', 'error');
+        logger.error('[Preview] openCssEditor failed', { error: String(err) });
+      }
+    },
+    [cssEditorOn, cssToggleEditMode, onToast]
+  );
+  useCommands(
+    () =>
+      cssEditorEnabled
+        ? [
+            {
+              id: 'edit.css',
+              title: cssEditorOn ? 'Exit CSS editor' : 'Edit CSS (visual cascade editor)',
+              category: 'action' as const,
+              when: 'project' as const,
+              keywords: ['css', 'style', 'cascade', 'edit', 'visual', 'stylesheet'],
+              run: () => {
+                try {
+                  if (cssEditorOn) cssToggleEditMode();
+                  else openCssEditor('element');
+                } catch (err) {
+                  onToast('Could not toggle the CSS editor', 'error');
+                  logger.error('[Preview] toggle CSS editor failed', { error: String(err) });
+                }
+              },
+            },
+            {
+              id: 'css.variables',
+              title: 'CSS variables (design tokens)',
+              category: 'action' as const,
+              when: 'project' as const,
+              keywords: ['css', 'variable', 'custom property', 'token', 'theme', '--'],
+              run: () => openCssEditor('variables'),
+            },
+            {
+              id: 'css.animations',
+              title: 'CSS animations (@keyframes)',
+              category: 'action' as const,
+              when: 'project' as const,
+              keywords: ['css', 'animation', 'keyframes', 'motion', 'transition'],
+              run: () => openCssEditor('animations'),
+            },
+          ]
+        : [],
+    [cssEditorEnabled, cssEditorOn, cssToggleEditMode, openCssEditor, onToast]
+  );
 
   // Element tree (navigator) — left column in fullscreen edit mode, like
   // Webflow's navigator: read-only, select-only. Toggleable from the toolbar;
@@ -1300,6 +1363,8 @@ export const Preview = forwardRef<PreviewHandle, PreviewProps>(function Preview(
               onClose={cssEditor.toggleEditMode}
               pinned={editorPinned}
               onTogglePin={toggleEditorPinned}
+              scope={cssScope}
+              onScopeChange={setCssScope}
             />
           );
           return editorPinned ? (
