@@ -740,18 +740,16 @@ export const WorkspaceView = memo(function WorkspaceView({
     undo: undoSnapshot,
     redo: redoSnapshot,
   } = useSnapshots(currentProject.path, showToast);
-  // Snapshots use `git stash`, so undo/redo need a git repo — explain that in the
-  // tooltip when the button is disabled.
-  const undoTitle = !isGitRepo
-    ? 'Undo unavailable — snapshots use git, so this project needs to be a git repo'
-    : canUndo
-      ? 'Undo last change (⌘Z)'
-      : 'Nothing to undo yet';
-  const redoTitle = !isGitRepo
-    ? 'Redo unavailable — snapshots use git, so this project needs to be a git repo'
-    : canRedo
-      ? 'Redo (⌘⇧Z)'
-      : 'Nothing to redo';
+  // Snapshots use `git stash`, so undo/redo need a git repo — say so in the tooltip
+  // when disabled, instead of the usual shortcut hint.
+  const snapTitle = (verb: string, enabled: boolean, hint: string, idle: string) =>
+    !isGitRepo
+      ? `${verb} unavailable — snapshots use git, so this project needs to be a git repo`
+      : enabled
+        ? hint
+        : idle;
+  const undoTitle = snapTitle('Undo', canUndo, 'Undo last change (⌘Z)', 'Nothing to undo yet');
+  const redoTitle = snapTitle('Redo', canRedo, 'Redo (⌘⇧Z)', 'Nothing to redo');
 
   // Cmd+Z / Cmd+Shift+Z. We let native text-undo handle inputs and
   // contentEditable so a user editing a PR title still gets character-level
