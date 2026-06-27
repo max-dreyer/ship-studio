@@ -673,15 +673,17 @@ export function CascadeRuleCard(props: Props) {
   // The next-declaration prediction for this rule (ordinary editable rules only — not
   // keyframe steps / @keyframes containers). Computed unconditionally to keep hooks stable.
   const editBody = props.editable ? props.body : null;
+  const predictVars = props.editable ? props.variables : undefined;
   const prediction = useMemo(
     () =>
       editBody && !isStep && !isKeyframes
         ? predictNextDeclaration(
             declarations(editBody).map((d) => ({ prop: d.prop, value: d.value })),
-            dismissedPreds
+            dismissedPreds,
+            { selector: props.selector, variables: predictVars }
           )
         : null,
-    [editBody, isStep, isKeyframes, dismissedPreds]
+    [editBody, isStep, isKeyframes, dismissedPreds, props.selector, predictVars]
   );
 
   const headerContent = (
