@@ -595,9 +595,9 @@ export function CascadeRuleCard(props: Props) {
   const sectionRef = useRef<HTMLElement>(null);
 
   /** Focus a stable element inside this card after a delete/remove (its row unmounted).
-   *  Prefers the next/previous sibling of the removed row, else the card's "+ Add" button,
-   *  else the collapse toggle. `rowSelector` matches the surviving siblings. */
-  const focusWithinCard = (removed: HTMLElement | null, rowSelector: string) => {
+   *  Prefers the next/previous declaration row of the removed one, else the card's
+   *  "+ Add" button, else the collapse toggle. */
+  const focusWithinCard = (removed: HTMLElement | null) => {
     const card = sectionRef.current;
     if (!card) return;
     const fallback = () => {
@@ -609,7 +609,7 @@ export function CascadeRuleCard(props: Props) {
     const next = removed?.nextElementSibling as HTMLElement | null;
     const prev = removed?.previousElementSibling as HTMLElement | null;
     const sibling = (el: HTMLElement | null) =>
-      el && el.matches(rowSelector) ? el.querySelector<HTMLElement>('button, [tabindex]') : null;
+      el && el.matches('.ss-decl') ? el.querySelector<HTMLElement>('button, [tabindex]') : null;
     requestAnimationFrame(() => {
       const target = sibling(next) ?? sibling(prev);
       if (target && card.contains(target)) target.focus();
@@ -822,7 +822,7 @@ export function CascadeRuleCard(props: Props) {
               autoEditValue={autoEditProp === d.prop}
               onChange={(next) => onChange(replaceItem(body, d.index, { kind: 'decl', ...next }))}
               onRemove={(rowEl) => {
-                focusWithinCard(rowEl, '.ss-decl');
+                focusWithinCard(rowEl);
                 onChange(removeItem(body, d.index));
               }}
               onNest={(sel) => onChange(moveDeclIntoNested(body, d.index, sel))}
@@ -852,7 +852,7 @@ export function CascadeRuleCard(props: Props) {
                 onClick={(e) => {
                   // The ghost row unmounts on dismiss — move focus to a stable sibling
                   // (the "+ Add" button) so it doesn't fall to <body> (#14).
-                  focusWithinCard(e.currentTarget.closest('.ss-decl'), '.ss-decl');
+                  focusWithinCard(e.currentTarget.closest('.ss-decl'));
                   dismissPrediction();
                 }}
                 title="Dismiss"

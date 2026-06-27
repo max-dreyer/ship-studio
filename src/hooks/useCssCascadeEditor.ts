@@ -602,16 +602,19 @@ export function useCssCascadeEditor({ iframeRef, projectPath, enabled, onToast }
             : r.supports
               ? condSig('supports', r.supports)
               : condSig('base', '');
-      const atLower = (atPrelude ?? '').trim().toLowerCase();
+      // Slice the TRIMMED prelude (`at`), not the raw `atPrelude` — a leading space would
+      // otherwise offset the slice and produce a garbage condition key (missed dedup).
+      const at = (atPrelude ?? '').trim();
+      const atLower = at.toLowerCase();
       const newSig = !atPrelude
         ? condSig('base', '')
         : atLower.startsWith('@media')
-          ? condSig('media', atPrelude.slice(atLower.indexOf('@media') + 6))
+          ? condSig('media', at.slice('@media'.length))
           : atLower.startsWith('@container')
-            ? condSig('container', atPrelude.slice(atLower.indexOf('@container') + 10))
+            ? condSig('container', at.slice('@container'.length))
             : atLower.startsWith('@supports')
-              ? condSig('supports', atPrelude.slice(atLower.indexOf('@supports') + 9))
-              : condSig('other', atPrelude);
+              ? condSig('supports', at.slice('@supports'.length))
+              : condSig('other', at);
       const alreadyShown = [...rowByKeyRef.current.values()].some(
         (r) => r.editable && r.selector === sel && rowCondSig(r) === newSig
       );

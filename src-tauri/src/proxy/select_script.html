@@ -110,6 +110,10 @@ function ssDecls(st){var d=[];for(var j=0;j<st.length;j++){var pn=st[j];d.push({
 /* Walk every author stylesheet and return the rules matching `el`, in cascade order with
    provenance, with each declaration flagged active (wins) or overridden. */
 function cascade(el){
+  /* `order.n` is the cascade position reported as each rule's sourceOrder. findRuleOwner()
+     re-derives the SAME numbering to pin a rule for preview/delete — if you change this
+     traversal, change that one too. The "previews the EXACT rule by source order" test
+     exercises both and fails on drift. */
   var matched=[],order={n:0},layerCount={n:0};
   function walk(rules,ctx){
     for(var i=0;i<rules.length;i++){var r=rules[i];order.n++;
