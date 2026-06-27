@@ -29,6 +29,12 @@ describe('modern value parsing', () => {
     ['grid-template', '"a b" 1fr / auto'],
     ['color', 'light-dark(white, black)'],
     ['width', 'min(100%, var(--max, 60ch))'],
+    // Wide-gamut + relative color: captured verbatim so an edit to a sibling never
+    // rewrites (and corrupts) these values.
+    ['color', 'oklch(0.7 0.15 200)'],
+    ['background', 'color(display-p3 1 0.5 0)'],
+    ['border-color', 'rgb(from var(--brand) r g b / 0.5)'],
+    ['color', 'hsl(from var(--c) h s calc(l * 1.2))'],
   ];
   for (const [prop, value] of valueCases) {
     it(`keeps ${prop}: ${value}`, () => {
