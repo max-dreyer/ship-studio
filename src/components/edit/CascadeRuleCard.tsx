@@ -293,8 +293,18 @@ function NestedSelectorInput({
       .map((p) => ({ value: p, label: p }));
     matches = [...curated, ...classItems].slice(0, 10);
   }
-  const showMenu =
-    focused && matches.length > 0 && !(matches.length === 1 && matches[0].value === value);
+  // Clicking a COMPLETE selector (the only match is the value itself, e.g. `&:focus-visible`)
+  // should still open a useful menu — like the top-level selector chip does — instead of
+  // suppressing it. Surface the full vocabulary so the user can switch from it.
+  if (focused && matches.length === 1 && matches[0].value === value) {
+    const allVocab: Suggestion[] = (vocab === 'keyframe' ? KEYFRAME_STEP_ITEMS : NEST_ITEMS).map(
+      (i) => ({ value: i.insert, label: i.insert, hint: i.hint })
+    );
+    const allClasses: Suggestion[] =
+      vocab === 'keyframe' ? [] : suggestions.map((s) => ({ value: `& ${s}`, label: `& ${s}` }));
+    matches = [...allVocab, ...allClasses].slice(0, 10);
+  }
+  const showMenu = focused && matches.length > 0;
 
   return (
     <div className="ss-card__chip-edit ss-card__selector-edit">
