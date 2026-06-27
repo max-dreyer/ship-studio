@@ -49,6 +49,10 @@ interface CommonHeader {
   /** The raw `@media` condition (e.g. `(max-width: 768px)`) — for editing the chip. */
   mediaText?: string | null;
   layer?: string | null;
+  /** The enclosing `@container` condition (e.g. `(min-width: 400px)`), for the chip. */
+  container?: string | null;
+  /** The enclosing `@supports` condition (e.g. `(display: grid)`), for the chip. */
+  supports?: string | null;
   /** Nesting depth (0 = top-level rule), for indentation. */
   depth?: number;
   /** This card is a keyframe step (a child of a `@keyframes` rule) — its selector is
@@ -509,8 +513,10 @@ function KeyframesNameChip({
 function Chips({
   mediaText,
   layer,
+  container,
+  supports,
   onRenameAtRule,
-}: Pick<CommonHeader, 'mediaText' | 'layer'> & {
+}: Pick<CommonHeader, 'mediaText' | 'layer' | 'container' | 'supports'> & {
   onRenameAtRule?: (newMedia: string) => void;
 }) {
   return (
@@ -519,6 +525,18 @@ function Chips({
         <span className="ss-card__chip ss-card__chip--layer">
           <LayersIcon size={10} />
           {layer}
+        </span>
+      )}
+      {/* `@container` / `@supports` are read-only context (we don't yet edit their
+          condition in place), shown in full so the card states its real scope. */}
+      {container && (
+        <span className="ss-card__chip ss-card__chip--at">
+          <span className="ss-card__media-at">@container</span> {container}
+        </span>
+      )}
+      {supports && (
+        <span className="ss-card__chip ss-card__chip--at">
+          <span className="ss-card__media-at">@supports</span> {supports}
         </span>
       )}
       {mediaText &&
@@ -572,11 +590,18 @@ export function CascadeRuleCard(props: Props) {
 
   const headerContent = (
     <>
-      {/* Devtools-style context line: the rule's enclosing `@media (…)` / `@layer`, shown
-          in full above the selector — the literal CSS, never abbreviated or pushed off. */}
-      {(props.mediaText || props.layer) && (
+      {/* Devtools-style context line: the rule's enclosing `@media (…)` / `@layer` /
+          `@container` / `@supports`, shown in full above the selector — the literal CSS,
+          never abbreviated or pushed off. */}
+      {(props.mediaText || props.layer || props.container || props.supports) && (
         <div className={`ss-card__context${inactive ? ' is-inactive' : ''}`}>
-          <Chips mediaText={props.mediaText} layer={props.layer} onRenameAtRule={onRenameAtRule} />
+          <Chips
+            mediaText={props.mediaText}
+            layer={props.layer}
+            container={props.container}
+            supports={props.supports}
+            onRenameAtRule={onRenameAtRule}
+          />
           {inactive && (
             <span
               className="ss-card__context-note"

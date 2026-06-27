@@ -284,6 +284,7 @@ interface CascadeRule {
   specificity: [number, number, number];
   sourceOrder: number;
   origin: string;
+  layered?: boolean;
 }
 /** Resolve with the next `ss:cascade` the script posts to the parent. */
 function nextCascade(): Promise<{ rules: CascadeRule[] }> {
@@ -354,6 +355,44 @@ it('ranks a higher-specificity selector above a later equal-class rule', async (
   const win = rules.find((r) => r.declarations.some((d) => d.prop === 'background' && d.active))!;
   expect(win.selector).toBe('#hero .btn');
   expect(win.specificity).toEqual([1, 1, 0]);
+  send({ type: 'ss:deactivate' });
+});
+
+it('unlayered normal declarations win over layered ones (cascade layers)', async () => {
+  // The layered rule comes LATER in source, so only cascade-layer awareness — not source
+  // order — makes the unlayered `.b` win. (jsdom omits the layer NAME but the `layered`
+  // flag is tracked by rule type, which is what cascade precedence actually depends on.)
+  document.body.innerHTML =
+    '<style>.b{color:blue}@layer base{.b{color:red}}</style><div class="b">x</div>';
+  send({ type: 'ss:activate', cascade: true });
+  await flushMessages();
+  const got = nextCascade();
+  document.querySelector('.b')!.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+  const { rules } = await got;
+  const unlayered = rules.find((r) => r.selector === '.b' && !r.layered)!;
+  const layered = rules.find((r) => r.selector === '.b' && r.layered)!;
+  expect(unlayered).toBeTruthy();
+  expect(layered).toBeTruthy();
+  expect(unlayered.declarations.find((d) => d.prop === 'color')!.active).toBe(true);
+  expect(layered.declarations.find((d) => d.prop === 'color')!.active).toBe(false);
+  send({ type: 'ss:deactivate' });
+});
+
+it('an !important layered declaration wins over an unlayered one (layer order inverts)', async () => {
+  // With `!important`, cascade-layer order reverses: the layered rule wins even though the
+  // unlayered one would win for normal declarations.
+  document.body.innerHTML =
+    '<style>.c{color:blue!important}@layer base{.c{color:red!important}}</style>' +
+    '<div class="c">x</div>';
+  send({ type: 'ss:activate', cascade: true });
+  await flushMessages();
+  const got = nextCascade();
+  document.querySelector('.c')!.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+  const { rules } = await got;
+  const unlayered = rules.find((r) => r.selector === '.c' && !r.layered)!;
+  const layered = rules.find((r) => r.selector === '.c' && r.layered)!;
+  expect(layered.declarations.find((d) => d.prop === 'color')!.active).toBe(true);
+  expect(unlayered.declarations.find((d) => d.prop === 'color')!.active).toBe(false);
   send({ type: 'ss:deactivate' });
 });
 

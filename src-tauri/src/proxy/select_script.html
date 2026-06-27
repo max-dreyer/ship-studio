@@ -85,29 +85,42 @@ function cascade(el){
   function walk(rules,ctx){
     for(var i=0;i<rules.length;i++){var r=rules[i];order.n++;
       if(r.type===1){ /* style rule */
+        /* Pseudo-element rules (`.card::before`) intentionally don't match here: their
+           declarations target a separate generated box, so listing them in the element's
+           cascade would make the active/overridden logic falsely flag conflicts against
+           the element's own properties. el.matches() throws on them anyway → skipped. */
         var parts=ssSplitSel(r.selectorText||'');
         for(var pi=0;pi<parts.length;pi++){var norm=ssNormSel(parts[pi]);if(!norm)continue;var ok=false;try{ok=el.matches(norm);}catch(e){try{ok=el.matches(parts[pi]);}catch(e2){}}if(!ok)continue;var decls=ssDecls(r.style);if(!decls.length)continue;
-          matched.push({selector:norm,declarations:decls,specificity:ssSpec(norm),sourceOrder:order.n,mediaText:ctx.media,mediaMinPx:ctx.minPx,inactiveMedia:ctx.inactive,layer:ctx.layer,container:ctx.container,supports:ctx.supports,href:ssHref(r),origin:'author'});}
+          matched.push({selector:norm,declarations:decls,specificity:ssSpec(norm),sourceOrder:order.n,mediaText:ctx.media,mediaMinPx:ctx.minPx,inactiveMedia:ctx.inactive,layer:ctx.layer,layered:ctx.layered,container:ctx.container,supports:ctx.supports,href:ssHref(r),origin:'author'});}
       }else if(r.type===4){ /* @media */
         var cond=r.conditionText||(r.media&&r.media.mediaText)||'';var bad=false;try{bad=!window.matchMedia(cond).matches;}catch(e){}
-        if(r.cssRules)walk(r.cssRules,{media:cond,minPx:ssMinPx(cond),inactive:ctx.inactive||bad,layer:ctx.layer,container:ctx.container,supports:ctx.supports});
+        if(r.cssRules)walk(r.cssRules,{media:cond,minPx:ssMinPx(cond),inactive:ctx.inactive||bad,layer:ctx.layer,layered:ctx.layered,container:ctx.container,supports:ctx.supports});
       }else if(r.type===3&&r.styleSheet){ /* @import — descend the same-origin sheet (cross-origin throws) */
         try{walk(r.styleSheet.cssRules,ctx);}catch(e){}
       }else if(r.cssRules){ /* @layer / @container / @supports / nesting — descend, tracking the condition so same-selector rules in different contexts stay distinguishable */
         var cn=r.constructor&&r.constructor.name;
         var lname=cn==='CSSLayerBlockRule'?(r.name||ctx.layer):ctx.layer;
+        /* Whether we're inside ANY cascade layer (named or anonymous). Drives cascade
+           precedence below; tracked by constructor (works even where the layer NAME
+           isn't exposed, e.g. jsdom) rather than the name. */
+        var layered=ctx.layered||cn==='CSSLayerBlockRule';
         var cont=cn==='CSSContainerRule'?(r.conditionText||r.containerQuery||ctx.container):ctx.container;
         var sup=cn==='CSSSupportsRule'?(r.conditionText||ctx.supports):ctx.supports;
-        try{walk(r.cssRules,{media:ctx.media,minPx:ctx.minPx,inactive:ctx.inactive,layer:lname,container:cont,supports:sup});}catch(e){}
+        try{walk(r.cssRules,{media:ctx.media,minPx:ctx.minPx,inactive:ctx.inactive,layer:lname,layered:layered,container:cont,supports:sup});}catch(e){}
       }
     }
   }
-  var sheets=document.styleSheets;for(var si=0;si<sheets.length;si++){try{var rr=sheets[si].cssRules;if(rr)walk(rr,{media:null,minPx:null,inactive:false,layer:null,container:null,supports:null});}catch(e){}}
+  var sheets=document.styleSheets;for(var si=0;si<sheets.length;si++){try{var rr=sheets[si].cssRules;if(rr)walk(rr,{media:null,minPx:null,inactive:false,layer:null,layered:false,container:null,supports:null});}catch(e){}}
   /* Inline style="" — highest priority, read-only in v1. */
-  if(el.getAttribute&&el.getAttribute('style')){var idecls=ssDecls(el.style);if(idecls.length)matched.push({selector:null,declarations:idecls,specificity:[1,0,0],sourceOrder:1e9,mediaText:null,mediaMinPx:null,inactiveMedia:false,layer:null,href:null,origin:'inline'});}
+  if(el.getAttribute&&el.getAttribute('style')){var idecls=ssDecls(el.style);if(idecls.length)matched.push({selector:null,declarations:idecls,specificity:[1,0,0],sourceOrder:1e9,mediaText:null,mediaMinPx:null,inactiveMedia:false,layer:null,layered:false,href:null,origin:'inline'});}
   /* Per-property winner among currently-active rules: priority = [important, inline,
-     id, class, type, sourceOrder], compared lexicographically (higher wins). */
-  function prio(m,d){return[d.important?1:0,m.origin==='inline'?1:0,m.specificity[0],m.specificity[1],m.specificity[2],m.sourceOrder];}
+     layerTier, id, class, type, sourceOrder], compared lexicographically (higher wins).
+     layerTier encodes cascade-layer precedence: for NORMAL declarations unlayered wins
+     over layered (1 vs 0); for `!important` the layer order inverts so layered wins (0 vs
+     1). Two different layers aren't ordered relative to each other here — they tie on this
+     term and fall through to specificity / source order (a known approximation; the common
+     unlayered-vs-layered case is correct). */
+  function prio(m,d){var lt=d.important?(m.layered?1:0):(m.layered?0:1);return[d.important?1:0,m.origin==='inline'?1:0,lt,m.specificity[0],m.specificity[1],m.specificity[2],m.sourceOrder];}
   function gt(x,y){for(var i=0;i<x.length;i++){if(x[i]!==y[i])return x[i]>y[i];}return false;}
   var best={};
   for(var mi=0;mi<matched.length;mi++){var m=matched[mi];if(m.inactiveMedia)continue;for(var di=0;di<m.declarations.length;di++){var d=m.declarations[di],p=prio(m,d);if(!best[d.prop]||gt(p,best[d.prop].p))best[d.prop]={mi:mi,di:di,p:p};}}

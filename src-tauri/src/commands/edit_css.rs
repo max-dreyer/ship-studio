@@ -436,26 +436,81 @@ fn media_matches(media: &Option<String>, bp: Option<u32>) -> bool {
 /// parts exactly? Strictness is intentional — descendant/compound selectors
 /// don't match, so we never edit a rule that also styles other elements
 /// implicitly.
+/// Split a grouped selector on its TOP-LEVEL commas only — commas inside
+/// `:is(.a, .b)` / `:not(…)` / `[attr="a,b"]` are protected by paren / bracket /
+/// string depth. Mirrors the iframe walker's `ssSplitSel` so the two stay in
+/// agreement; a naive `split(',')` would shred a functional pseudo-class into
+/// non-matching fragments (`.x:is(.a` + ` .b)`), the root of several "read-only on
+/// modern CSS" misses.
+fn split_selector_group(sel: &str) -> Vec<&str> {
+    let bytes = sel.as_bytes();
+    let mut parts: Vec<&str> = Vec::new();
+    let mut depth = 0i32;
+    let mut quote = 0u8;
+    let mut start = 0usize;
+    let mut i = 0usize;
+    while i < bytes.len() {
+        let c = bytes[i];
+        if quote != 0 {
+            if c == b'\\' {
+                i += 2;
+                continue;
+            }
+            if c == quote {
+                quote = 0;
+            }
+            i += 1;
+            continue;
+        }
+        match c {
+            b'"' | b'\'' => quote = c,
+            b'(' | b'[' => depth += 1,
+            b')' | b']' => {
+                if depth > 0 {
+                    depth -= 1;
+                }
+            }
+            b',' if depth == 0 => {
+                parts.push(&sel[start..i]);
+                start = i + 1;
+            }
+            _ => {}
+        }
+        i += 1;
+    }
+    parts.push(&sel[start..]);
+    parts
+}
+
 fn selector_has_part(selector: &str, target: &str) -> bool {
-    selector.split(',').any(|p| p.trim() == target)
+    split_selector_group(selector)
+        .iter()
+        .any(|p| p.trim() == target)
 }
 
 /// Normalize a selector for cross-source comparison: collapse runs of whitespace
-/// to one space, then drop the spaces around descendant combinators so an authored
-/// `.a>.b` matches the browser-serialized `.a > .b` (and vice-versa).
+/// to one space, drop the spaces around descendant combinators so an authored
+/// `.a>.b` matches the browser-serialized `.a > .b`, and canonicalize the spacing
+/// around commas *inside* functional pseudo-classes so `:is(.a,.b)` (source) matches
+/// `:is(.a, .b)` (browser-serialized). Comparison-only — never written back to source,
+/// so flattening whitespace inside an attribute string is harmless (both sides flatten).
 fn norm_selector(s: &str) -> String {
     let collapsed = s.split_whitespace().collect::<Vec<_>>().join(" ");
     collapsed
         .replace(" > ", ">")
         .replace(" + ", "+")
         .replace(" ~ ", "~")
+        .replace(", ", ",")
+        .replace(" ,", ",")
 }
 
 /// Like [`selector_has_part`] but whitespace/combinator-insensitive — used to match
 /// a browser-reported compound selector against an authored rule's selector group.
 fn rule_selector_matches(rule_selector: &str, target: &str) -> bool {
     let t = norm_selector(target);
-    rule_selector.split(',').any(|p| norm_selector(p) == t)
+    split_selector_group(rule_selector)
+        .iter()
+        .any(|p| norm_selector(p) == t)
 }
 
 /// Whether a rule's `@media` prelude equals the browser-reported condition text
@@ -1176,6 +1231,11 @@ fn locate_declarations(css: &str, inner_start: usize, inner_end: usize) -> Vec<D
         });
     };
 
+    // Brace depth tracks nested rules / at-rules inside this block (CSS nesting,
+    // `&:hover { … }`, a nested `@media { … }`). Their preludes are not declarations
+    // and their inner declarations belong to *them*, not to this block — so we never
+    // flush a segment while inside one, and resume scanning after its closing brace.
+    let mut brace_depth = 0i32;
     while i < inner_end {
         let c = bytes[i];
         if c == b'/' && i + 1 < inner_end && bytes[i + 1] == b'*' {
@@ -1200,7 +1260,18 @@ fn locate_declarations(css: &str, inner_start: usize, inner_end: usize) -> Vec<D
         match c {
             b'(' => depth += 1,
             b')' => depth -= 1,
-            b';' if depth == 0 => {
+            b'{' => brace_depth += 1,
+            b'}' => {
+                brace_depth -= 1;
+                if brace_depth <= 0 {
+                    // Closed a nested block — the next top-level declaration (if any)
+                    // starts here. Drop any half-scanned prelude and re-sync paren depth.
+                    brace_depth = 0;
+                    seg_start = i + 1;
+                    depth = 0;
+                }
+            }
+            b';' if brace_depth == 0 && depth == 0 => {
                 flush(seg_start, i, true, &mut out);
                 seg_start = i + 1;
             }
@@ -1208,7 +1279,11 @@ fn locate_declarations(css: &str, inner_start: usize, inner_end: usize) -> Vec<D
         }
         i += 1;
     }
-    flush(seg_start, inner_end, false, &mut out);
+    // Only flush a trailing segment when we're back at the top level — a body that
+    // ends inside a nested block has no dangling top-level declaration to emit.
+    if brace_depth == 0 {
+        flush(seg_start, inner_end, false, &mut out);
+    }
     out
 }
 
@@ -1308,8 +1383,8 @@ fn set_declaration_in_block(
                 out.push_str(&ins);
                 out.push_str(&css[insert_at..]);
                 out
-            } else {
-                // Empty block — lay out a fresh multi-line body.
+            } else if css[inner_start..inner_end].trim().is_empty() {
+                // Truly empty block — lay out a fresh multi-line body.
                 let rule_indent = indent_of_line(css, inner_start);
                 let decl_indent = format!("{rule_indent}  ");
                 let body = format!("\n{decl_indent}{property}: {v};\n{rule_indent}");
@@ -1317,6 +1392,18 @@ fn set_declaration_in_block(
                 out.push_str(&css[..inner_start]);
                 out.push_str(&body);
                 out.push_str(&css[inner_end..]);
+                out
+            } else {
+                // No top-level declarations, but the block isn't empty — it holds
+                // nested rules / at-rules. Insert the new declaration at the top,
+                // ahead of (and without disturbing) that nested content.
+                let rule_indent = indent_of_line(css, inner_start);
+                let decl_indent = format!("{rule_indent}  ");
+                let ins = format!("\n{decl_indent}{property}: {v};");
+                let mut out = String::with_capacity(css.len() + ins.len());
+                out.push_str(&css[..inner_start]);
+                out.push_str(&ins);
+                out.push_str(&css[inner_start..]);
                 out
             }
         }
@@ -2441,6 +2528,53 @@ mod tests {
         assert!(!selector_has_part(&rules[0].selector, ".c"));
     }
 
+    #[test]
+    fn comma_split_is_paren_and_bracket_aware() {
+        // Top-level commas split; commas inside :is()/[attr] / strings do not.
+        let parts = split_selector_group(".x:is(.a, .b), [data-k=\"a,b\"] .c");
+        assert_eq!(parts.len(), 2);
+        assert_eq!(parts[0].trim(), ".x:is(.a, .b)");
+        assert_eq!(parts[1].trim(), "[data-k=\"a,b\"] .c");
+    }
+
+    #[test]
+    fn functional_pseudo_class_matches_across_comma_spacing() {
+        // Source `:is(.a,.b)` must locate against the browser's `:is(.a, .b)`.
+        let css = ".card:is(.a,.b) { color: red; }";
+        let rules = index_rules(css);
+        assert!(rule_selector_matches(
+            &rules[0].selector,
+            ".card:is(.a, .b)"
+        ));
+        assert!(rule_selector_matches(&rules[0].selector, ".card:is(.a,.b)"));
+        // …and the inverse: source spaced, browser tight.
+        let css2 = ".card:not(.a, .b) { color: red; }";
+        let rules2 = index_rules(css2);
+        assert!(rule_selector_matches(
+            &rules2[0].selector,
+            ".card:not(.a,.b)"
+        ));
+    }
+
+    #[test]
+    fn grouped_selector_with_is_locates_the_whole_compound() {
+        // A naive split(',') would shred `.x:is(.a, .b)` and fail to locate either.
+        let css = ".x:is(.a, .b) { color: red; }\n";
+        let sheets = vec![SheetIndex::parse("s.css".into(), css.to_string())];
+        let q = MatchedRuleQuery {
+            selector: ".x:is(.a, .b)".into(),
+            media_text: None,
+            href: None,
+            layer: None,
+            container: None,
+            supports: None,
+        };
+        assert!(matches!(
+            locate_rule(&sheets, &q),
+            RuleLocation::Resolved { .. }
+        ));
+    }
+
     // ── Declarations ──
 
     #[test]
@@ -2465,6 +2599,97 @@ mod tests {
         assert_eq!(decls.len(), 2);
         assert_eq!(decls[0].property, "background");
         assert_eq!(decls[0].value, "url(\"a;b.png\")");
+    }
+
+    // ── Nested rules / at-rules (brace-aware declaration scan) ──
+
+    #[test]
+    fn declarations_in_skips_a_nested_style_rule() {
+        // CSS nesting: `&:hover { … }` is its own rule, not a flat declaration of `.card`.
+        let css = ".card {\n  color: red;\n  font-size: 14px;\n  &:hover { color: blue; }\n}";
+        let rules = index_rules(css);
+        let decls = declarations_in(css, &rules[0]);
+        assert_eq!(decls.len(), 2);
+        assert_eq!(decls[0].property, "color");
+        assert_eq!(decls[0].value, "red");
+        assert_eq!(decls[1].property, "font-size");
+        assert_eq!(decls[1].value, "14px");
+    }
+
+    #[test]
+    fn declarations_in_resumes_after_a_nested_at_rule() {
+        // A declaration *after* a nested `@media` must still be seen.
+        let css =
+            ".card {\n  color: red;\n  @media (min-width: 600px) {\n    color: blue;\n  }\n  margin: 0;\n}";
+        let rules = index_rules(css);
+        let decls = declarations_in(css, &rules[0]);
+        assert_eq!(decls.len(), 2);
+        assert_eq!(decls[0].property, "color");
+        assert_eq!(decls[1].property, "margin");
+        assert_eq!(decls[1].value, "0");
+    }
+
+    #[test]
+    fn declarations_in_handles_multi_level_nesting() {
+        let css = ".a {\n  color: red;\n  & .b {\n    & .c { color: blue; }\n  }\n  margin: 0;\n}";
+        let rules = index_rules(css);
+        let decls = declarations_in(css, &rules[0]);
+        assert_eq!(decls.len(), 2);
+        assert_eq!(decls[0].property, "color");
+        assert_eq!(decls[1].property, "margin");
+    }
+
+    #[test]
+    fn append_lands_before_a_nested_rule_not_inside_it() {
+        // Regression: a brace-blind scan would insert the new declaration *inside*
+        // `&:hover`, corrupting the source. It must land at the parent's top level.
+        let css = ".card {\n  color: red;\n  &:hover { color: blue; }\n}";
+        let rules = index_rules(css);
+        let out = set_declaration_in_block(
+            css,
+            rules[0].block_inner_start,
+            rules[0].block_inner_end,
+            "margin",
+            Some("0"),
+        );
+        assert_eq!(
+            out,
+            ".card {\n  color: red;\n  margin: 0;\n  &:hover { color: blue; }\n}"
+        );
+    }
+
+    #[test]
+    fn append_into_block_with_only_a_nested_rule_preserves_it() {
+        // Regression: the "empty block" path replaced the whole body — wiping the
+        // nested rule. A block with nested content must keep it and gain the decl on top.
+        let css = ".card {\n  &:hover { color: blue; }\n}";
+        let rules = index_rules(css);
+        let out = set_declaration_in_block(
+            css,
+            rules[0].block_inner_start,
+            rules[0].block_inner_end,
+            "margin",
+            Some("0"),
+        );
+        assert_eq!(out, ".card {\n  margin: 0;\n  &:hover { color: blue; }\n}");
+    }
+
+    #[test]
+    fn update_top_level_decl_leaves_a_nested_rule_untouched() {
+        // The nested `color: blue` must not be the one matched/edited.
+        let css = ".card {\n  color: red;\n  &:hover { color: blue; }\n}";
+        let rules = index_rules(css);
+        let out = set_declaration_in_block(
+            css,
+            rules[0].block_inner_start,
+            rules[0].block_inner_end,
+            "color",
+            Some("green"),
+        );
+        assert_eq!(
+            out,
+            ".card {\n  color: green;\n  &:hover { color: blue; }\n}"
+        );
     }
 
     // ── Surgical writes ──

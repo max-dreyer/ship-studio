@@ -326,6 +326,8 @@ export function CssCascadePanel({
                             line={row.line}
                             mediaText={row.mediaText}
                             layer={row.layer}
+                            container={row.container}
+                            supports={row.supports}
                             inactive={row.inactiveMedia}
                             overridden={
                               row.inactiveMedia ? new Map() : (overridden[key] ?? new Map())
@@ -360,6 +362,8 @@ export function CssCascadePanel({
                           line={row.line}
                           mediaText={row.mediaText}
                           layer={row.layer}
+                          container={row.container}
+                          supports={row.supports}
                           inactive={row.inactiveMedia}
                           overridden={
                             row.inactiveMedia ? new Map() : (overridden[key] ?? new Map())

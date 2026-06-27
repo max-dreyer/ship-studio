@@ -89,6 +89,21 @@ describe('mergeCascade', () => {
     expect(rows[2].readonlyReason).toMatch(/multiple/);
   });
 
+  it('carries the @container / @supports context onto the row for the chips', () => {
+    const matched = [
+      rule({ selector: '.card', container: '(min-width: 400px)', supports: '(display: grid)' }),
+    ];
+    const loc: RuleLocation = {
+      status: 'resolved',
+      file: 'a.css',
+      line: 1,
+      inner_text: '\n  color: red;\n',
+    };
+    const [row] = mergeCascade(matched, new Map([[0, loc]]));
+    expect(row.container).toBe('(min-width: 400px)');
+    expect(row.supports).toBe('(display: grid)');
+  });
+
   it('treats a missing location entry as read-only (locate failed)', () => {
     const [row] = mergeCascade([rule({ selector: '.x' })], new Map());
     expect(row.editable).toBe(false);

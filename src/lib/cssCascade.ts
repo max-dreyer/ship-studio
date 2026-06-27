@@ -81,6 +81,10 @@ export interface CascadeRow {
   mediaMinPx: number | null;
   inactiveMedia: boolean;
   layer: string | null;
+  /** The enclosing `@container` condition, if any (shown as a context chip). */
+  container?: string | null;
+  /** The enclosing `@supports` condition, if any (shown as a context chip). */
+  supports?: string | null;
   origin: 'author' | 'inline';
   /** Whether this rule maps to a single editable source rule. */
   editable: boolean;
@@ -315,6 +319,8 @@ export function mergeCascade(
       mediaMinPx: m.mediaMinPx,
       inactiveMedia: m.inactiveMedia,
       layer: m.layer,
+      container: m.container ?? null,
+      supports: m.supports ?? null,
       origin: m.origin,
       editable: false,
     };
