@@ -269,6 +269,11 @@ function NestedSelectorInput({
   const [focused, setFocused] = useState(false);
   const [active, setActive] = useState(0);
   const [anchorEl, setAnchorEl] = useState<HTMLElement | null>(null);
+  // `dirty` = the user has typed since focusing (vs. just clicked in to browse).
+  // `navigated` = the user moved the highlight with the arrow keys. Together they keep the
+  // browse-menu from hijacking Enter and overwriting a typed custom selector.
+  const [dirty, setDirty] = useState(false);
+  const [navigated, setNavigated] = useState(false);
   const listId = useId();
 
   const typed = value.trim();
@@ -293,10 +298,13 @@ function NestedSelectorInput({
       .map((p) => ({ value: p, label: p }));
     matches = [...curated, ...classItems].slice(0, 10);
   }
-  // Clicking a COMPLETE selector (the only match is the value itself, e.g. `&:focus-visible`)
-  // should still open a useful menu — like the top-level selector chip does — instead of
-  // suppressing it. Surface the full vocabulary so the user can switch from it.
-  if (focused && matches.length === 1 && matches[0].value === value) {
+  // Browsing (clicked in, not yet typed): always open a useful menu — like the top-level
+  // selector chip. When the current value matches nothing (a custom selector like `& > b`)
+  // or only itself (a complete vocab item like `&:focus-visible`), fall back to the full
+  // vocabulary so the user can browse/switch. Once they type, this turns off and the menu
+  // filters on what's typed (so it never gets in the way of authoring a custom selector).
+  const onlySelfMatch = matches.length === 1 && matches[0].value === value;
+  if (focused && !dirty && (matches.length === 0 || onlySelfMatch)) {
     const allVocab: Suggestion[] = (vocab === 'keyframe' ? KEYFRAME_STEP_ITEMS : NEST_ITEMS).map(
       (i) => ({ value: i.insert, label: i.insert, hint: i.hint })
     );
@@ -326,25 +334,39 @@ function NestedSelectorInput({
           setAnchorEl(e.currentTarget);
           setFocused(true);
           setActive(0);
+          setDirty(false);
+          setNavigated(false);
         }}
         onChange={(e) => {
           onChange(e.target.value);
           setActive(0);
+          setDirty(true);
+          setNavigated(false);
         }}
         onKeyDown={(e) => {
+          if (e.key === 'Escape') {
+            setFocused(false);
+            return;
+          }
+          if (e.key === 'Enter') {
+            e.preventDefault();
+            // Apply the highlighted suggestion only if the user typed (so the menu reflects
+            // their text) or explicitly navigated it — never when merely browsing on a
+            // click, which would clobber the existing selector. Otherwise just commit.
+            if (showMenu && (dirty || navigated) && matches[active])
+              onChange(matches[active].value);
+            setFocused(false);
+            return;
+          }
           if (!showMenu) return;
           if (e.key === 'ArrowDown') {
             e.preventDefault();
+            setNavigated(true);
             setActive((a) => Math.min(a + 1, matches.length - 1));
           } else if (e.key === 'ArrowUp') {
             e.preventDefault();
+            setNavigated(true);
             setActive((a) => Math.max(a - 1, 0));
-          } else if (e.key === 'Enter') {
-            e.preventDefault();
-            if (matches[active]) onChange(matches[active].value);
-            setFocused(false);
-          } else if (e.key === 'Escape') {
-            setFocused(false);
           }
         }}
         onBlur={() => setFocused(false)}
