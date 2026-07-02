@@ -744,13 +744,15 @@ export const Preview = forwardRef<PreviewHandle, PreviewProps>(function Preview(
     };
   }, []);
 
-  // Force refresh the preview iframe with cache busting
+  // Force refresh the preview iframe via an about:blank round-trip (the URL
+  // carries no cache-buster, so re-setting the same src wouldn't be a reliable
+  // reload; the proxy serves HTML with no-store, so the round-trip refetches).
   // Uses currentPage (tracked via proxy) so it refreshes the actual visible page,
   // not the stale iframe src attribute (which doesn't update on client-side navigation).
   const refresh = useCallback(() => {
     if (iframeRef.current && conn.serverReady) {
       conn.setIframePath(conn.currentPage);
-      const refreshUrl = `${conn.baseUrl}${conn.currentPage === '/' ? '' : conn.currentPage}?_cb=${Date.now()}&shipstudio=1`;
+      const refreshUrl = `${conn.baseUrl}${conn.currentPage === '/' ? '' : conn.currentPage}`;
       iframeRef.current.src = 'about:blank';
       setTimeout(() => {
         if (iframeRef.current) {
@@ -760,6 +762,16 @@ export const Preview = forwardRef<PreviewHandle, PreviewProps>(function Preview(
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps -- specific conn properties are listed; conn object changes on every render
   }, [conn.serverReady, conn.baseUrl, conn.currentPage, conn.setIframePath]);
+
+  // Imperative reload requests from the connection hook (toolbar refresh on the
+  // current page, static-project file changes). Token 0 is the "no reload
+  // requested" reset on project/port switches — never fire on it.
+  const prevReloadTokenRef = useRef(0);
+  useEffect(() => {
+    if (conn.reloadToken === prevReloadTokenRef.current) return;
+    prevReloadTokenRef.current = conn.reloadToken;
+    if (conn.reloadToken !== 0) refresh();
+  }, [conn.reloadToken, refresh]);
 
   // Expose methods to parent
   useImperativeHandle(

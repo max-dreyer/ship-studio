@@ -79,15 +79,20 @@ export function usePreviewConnection({
   const [showPageDropdown, setShowPageDropdown] = useState(false);
   const [pageSearch, setPageSearch] = useState('');
   const [proxyPort, setProxyPort] = useState<number | null>(null);
-  const [cacheBuster, setCacheBuster] = useState(() => Date.now());
+  // Bumped to request an imperative iframe reload (Preview watches it). The
+  // iframe URL used to carry a `?_cb=<ts>&shipstudio=1` cache-buster instead,
+  // but those params leaked into the previewed app — its router, SSR search
+  // params, and analytics all saw junk Chrome never sends. Freshness is now the
+  // proxy's job (it serves injected HTML with Cache-Control: no-store).
+  const [reloadToken, setReloadToken] = useState(0);
 
   const devServerUrl = `http://localhost:${port}`;
   const baseUrl = proxyPort ? `http://localhost:${proxyPort}` : devServerUrl;
-  const currentUrl = `${baseUrl}${iframePath === '/' ? '' : iframePath}?_cb=${cacheBuster}&shipstudio=1`;
-  // URL safe to hand to the user's default browser: real dev server,
-  // current iframe path, no proxy and no Ship Studio query params. The
-  // iframe needs the proxy URL (for navigation tracking + cache busting)
-  // but external browsers should land on the dev server directly.
+  const currentUrl = `${baseUrl}${iframePath === '/' ? '' : iframePath}`;
+  // URL safe to hand to the user's default browser: real dev server and
+  // current iframe path, no proxy. The iframe needs the proxy URL (for
+  // navigation tracking and script injection) but external browsers should
+  // land on the dev server directly.
   const externalUrl = `${devServerUrl}${iframePath === '/' ? '' : iframePath}`;
 
   const wasRestartingRef = useRef(false);
@@ -120,7 +125,7 @@ export function usePreviewConnection({
     setPages([]);
     setShowPageDropdown(false);
     setPageSearch('');
-    setCacheBuster(Date.now());
+    setReloadToken(0);
 
     const timer = setTimeout(() => setRetryCount(0), 1500);
     return () => clearTimeout(timer);
@@ -307,7 +312,7 @@ export function usePreviewConnection({
 
     void listen<{ windowLabel: string }>('static-file-changed', () => {
       logger.debug('[Preview] File change detected, reloading preview');
-      setCacheBuster(Date.now());
+      setReloadToken((t) => t + 1);
     }).then((fn) => {
       unlisten = fn;
     });
@@ -459,23 +464,35 @@ export function usePreviewConnection({
   // Handlers
   const handleRefresh = useCallback(() => {
     void trackEvent('preview_refreshed', { trigger: 'user' });
-    setIframePath(currentPage);
-    setCacheBuster(Date.now());
-  }, [currentPage]);
+    if (iframePath === currentPage) {
+      // Same URL — a src diff won't reload; request an imperative reload.
+      setReloadToken((t) => t + 1);
+    } else {
+      // Path changed — the src change itself performs a fresh load.
+      setIframePath(currentPage);
+    }
+  }, [currentPage, iframePath]);
 
-  const handlePageSelect = useCallback((route: string) => {
-    void trackEvent('preview_page_selected', {
-      // Strip dynamic-looking segments (numeric ids, uuids) so the cardinality
-      // doesn't explode while still keeping the route shape useful.
-      route_pattern: route.replace(/\/(\d+|[0-9a-f-]{8,})/g, '/:id').slice(0, 200),
-      depth: route.split('/').filter(Boolean).length,
-    });
-    setCurrentPage(route);
-    setIframePath(route);
-    setShowPageDropdown(false);
-    setPageSearch('');
-    setCacheBuster(Date.now());
-  }, []);
+  const handlePageSelect = useCallback(
+    (route: string) => {
+      void trackEvent('preview_page_selected', {
+        // Strip dynamic-looking segments (numeric ids, uuids) so the cardinality
+        // doesn't explode while still keeping the route shape useful.
+        route_pattern: route.replace(/\/(\d+|[0-9a-f-]{8,})/g, '/:id').slice(0, 200),
+        depth: route.split('/').filter(Boolean).length,
+      });
+      setCurrentPage(route);
+      setShowPageDropdown(false);
+      setPageSearch('');
+      if (iframePath === route) {
+        // Re-selecting the visible page acts as a refresh.
+        setReloadToken((t) => t + 1);
+      } else {
+        setIframePath(route);
+      }
+    },
+    [iframePath]
+  );
 
   const handleRetry = useCallback(() => {
     setHasError(false);
@@ -523,6 +540,7 @@ export function usePreviewConnection({
     baseUrl,
     currentUrl,
     externalUrl,
+    reloadToken,
 
     // Page navigation
     currentPage,
