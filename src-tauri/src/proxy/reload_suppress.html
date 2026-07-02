@@ -36,10 +36,44 @@
       return drop;
     }
 
+    // ---- HMR watchdog -------------------------------------------------
+    // A dead HMR socket is the silent killer: the page keeps rendering but
+    // stops receiving updates, and the user "fixes" it by restarting the dev
+    // server. Track HMR sockets (Vite's `vite-hmr` subprotocol, Next.js's
+    // `_next/webpack-hmr` path); if every one closes and no replacement is
+    // OPEN within 5s, tell the parent so it can health-check the server and
+    // reload the preview. Navigations tear this timer down with the document,
+    // so ordinary page loads never fire it.
+    var hmrLive = 0;
+    var hmrDownTimer = null;
+    function trackHmr(ws) {
+      ws.addEventListener('open', function () {
+        hmrLive++;
+        if (hmrDownTimer) {
+          clearTimeout(hmrDownTimer);
+          hmrDownTimer = null;
+        }
+      });
+      ws.addEventListener('close', function () {
+        hmrLive = Math.max(0, hmrLive - 1);
+        if (hmrLive > 0) return;
+        if (hmrDownTimer) clearTimeout(hmrDownTimer);
+        hmrDownTimer = setTimeout(function () {
+          hmrDownTimer = null;
+          if (hmrLive === 0) {
+            try {
+              window.parent.postMessage({ type: 'shipstudio:hmr-down' }, '*');
+            } catch (e) {}
+          }
+        }, 5000);
+      });
+    }
+
     function Wrapped(url, protocols) {
       var ws = arguments.length > 1 ? new Native(url, protocols) : new Native(url);
       var isVite =
         protocols === 'vite-hmr' || (protocols && ('' + protocols).indexOf('vite-hmr') >= 0);
+      if (isVite || ('' + url).indexOf('_next/webpack-hmr') >= 0) trackHmr(ws);
       if (!isVite) return ws;
 
       var nativeAdd = ws.addEventListener.bind(ws);

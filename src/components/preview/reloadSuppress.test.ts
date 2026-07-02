@@ -10,7 +10,7 @@
  * working removeEventListener, non-stacking onmessage, non-Vite sockets ignored.
  */
 
-import { beforeAll, beforeEach, expect, it } from 'vitest';
+import { afterEach, beforeAll, beforeEach, expect, it, vi } from 'vitest';
 // Import the exact script Rust injects (via `include_str!`) as a raw string so
 // both consumers share one source of truth.
 import scriptHtml from '../../../src-tauri/src/proxy/reload_suppress.html?raw';
@@ -64,7 +64,7 @@ type TestWindow = Window & { __ssSuppressUntil?: number; WebSocket: unknown };
 const win = window as unknown as TestWindow;
 
 /** Construct a socket through the (possibly wrapped) global WebSocket. */
-function connect(protocols?: string) {
+function connect(protocols?: string, url = 'ws://localhost:5173') {
   const Ctor = win.WebSocket as new (
     url: string,
     protocols?: string
@@ -73,10 +73,7 @@ function connect(protocols?: string) {
     removeEventListener: (type: string, handler: Listener) => void;
     onmessage: Listener | null;
   };
-  const ws =
-    protocols !== undefined
-      ? new Ctor('ws://localhost:5173', protocols)
-      : new Ctor('ws://localhost:5173');
+  const ws = protocols !== undefined ? new Ctor(url, protocols) : new Ctor(url);
   return { ws, native: FakeWebSocket.last! };
 }
 
@@ -172,4 +169,67 @@ it('leaves non-Vite sockets completely alone', () => {
   win.__ssSuppressUntil = Date.now() + 5000;
   native.dispatch('message', { data: FULL_RELOAD });
   expect(seen).toEqual([FULL_RELOAD]);
+});
+
+// ---- HMR watchdog ----------------------------------------------------------
+
+/** Capture messages the script posts to the parent (window.parent === window in jsdom). */
+function capturePosts() {
+  const posted: unknown[] = [];
+  const spy = vi.spyOn(window, 'postMessage').mockImplementation(((msg: unknown) => {
+    posted.push(msg);
+  }) as typeof window.postMessage);
+  return { posted, spy };
+}
+
+afterEach(() => {
+  vi.restoreAllMocks();
+  vi.useRealTimers();
+});
+
+it('posts hmr-down when the HMR socket closes and stays closed', () => {
+  vi.useFakeTimers();
+  const { posted } = capturePosts();
+  const { native } = connect('vite-hmr');
+  native.dispatch('open', {});
+  native.dispatch('close', {});
+  vi.advanceTimersByTime(4999);
+  expect(posted).toEqual([]);
+  vi.advanceTimersByTime(1);
+  expect(posted).toContainEqual({ type: 'shipstudio:hmr-down' });
+});
+
+it('stays quiet when a replacement HMR socket reconnects in time', () => {
+  vi.useFakeTimers();
+  const { posted } = capturePosts();
+  const { native } = connect('vite-hmr');
+  native.dispatch('open', {});
+  native.dispatch('close', {});
+  vi.advanceTimersByTime(2000);
+  const { native: reconnected } = connect('vite-hmr');
+  reconnected.dispatch('open', {});
+  vi.advanceTimersByTime(10000);
+  expect(posted).toEqual([]);
+  // Keep watchdog state clean for later tests.
+  reconnected.dispatch('close', {});
+  vi.advanceTimersByTime(10000);
+});
+
+it('watches Next.js webpack-hmr sockets without filtering their messages', () => {
+  vi.useFakeTimers();
+  const { posted } = capturePosts();
+  const { ws, native } = connect(undefined, 'ws://localhost:3000/_next/webpack-hmr');
+
+  // No message filtering on non-Vite sockets, even during a suppress window.
+  const seen: unknown[] = [];
+  ws.addEventListener('message', (ev) => seen.push((ev as { data: string }).data));
+  win.__ssSuppressUntil = Date.now() + 5000;
+  native.dispatch('message', { data: FULL_RELOAD });
+  expect(seen).toEqual([FULL_RELOAD]);
+
+  // But the watchdog still covers them.
+  native.dispatch('open', {});
+  native.dispatch('close', {});
+  vi.advanceTimersByTime(5000);
+  expect(posted).toContainEqual({ type: 'shipstudio:hmr-down' });
 });

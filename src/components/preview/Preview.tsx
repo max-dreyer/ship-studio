@@ -556,13 +556,14 @@ export const Preview = forwardRef<PreviewHandle, PreviewProps>(function Preview(
   const activeBreakpoint =
     (pinnedBreakpoint && breakpoints.find((b) => b.name === pinnedBreakpoint.name)) ||
     derivedBreakpoint;
-  // The selected breakpoint can exceed what the pane can show (the frame caps its
-  // visible width at the viewport). When so, edits still apply at that breakpoint
-  // but won't be visible here — the panel shows a note.
+  // The selected edit breakpoint can exceed the width the canvas actually
+  // renders at (e.g. a pinned wide layer while the canvas is narrower); edits
+  // then apply but aren't visible, so the panel shows a note. A preset wider
+  // than the pane does NOT trigger this: it renders at its true CSS width and
+  // is only scaled down visually (previewScale), so its media queries hold.
+  const renderedWidth = resize.customWidth ?? resize.viewportWidth;
   const breakpointTooWide =
-    activeBreakpoint.minPx > 0 &&
-    resize.viewportWidth > 0 &&
-    resize.viewportWidth < activeBreakpoint.minPx;
+    activeBreakpoint.minPx > 0 && renderedWidth > 0 && renderedWidth < activeBreakpoint.minPx;
 
   // Visual editor (Next.js, Vite/React, Astro). Inert until the user toggles edit mode.
   const editor = useVisualEditor({
@@ -1102,36 +1103,44 @@ export const Preview = forwardRef<PreviewHandle, PreviewProps>(function Preview(
 
         {previewPlugins}
 
-        {iframeSize && iframeSize.w > 0 && iframeSize.h > 0 && (
-          <button
-            type="button"
-            className="preview-dimensions"
-            title={onSendToClaude ? 'Click to send to agent' : undefined}
-            disabled={!onSendToClaude}
-            aria-label={`Preview dimensions ${iframeSize.w} by ${iframeSize.h}${
-              onSendToClaude ? ', click to send to agent' : ''
-            }`}
-            onClick={() => {
-              if (!onSendToClaude) return;
-              onSendToClaude(
-                `The preview viewport is currently ${iframeSize.w} × ${iframeSize.h} (width × height in CSS pixels).`
-              );
-            }}
-          >
-            {iframeSize.w} × {iframeSize.h}
-          </button>
-        )}
+        {iframeSize &&
+          iframeSize.w > 0 &&
+          iframeSize.h > 0 &&
+          (() => {
+            // The wrapper reports its VISUAL box; when the frame is scaled to
+            // fit, the page actually lays out at the true (unscaled) size —
+            // that's the honest number to show and to tell the agent.
+            const w = Math.round(iframeSize.w / resize.previewScale);
+            const h = Math.round(iframeSize.h / resize.previewScale);
+            const scaleNote =
+              resize.previewScale < 1
+                ? ` (scaled to ${Math.round(resize.previewScale * 100)}%)`
+                : '';
+            return (
+              <button
+                type="button"
+                className="preview-dimensions"
+                title={onSendToClaude ? 'Click to send to agent' : undefined}
+                disabled={!onSendToClaude}
+                aria-label={`Preview dimensions ${w} by ${h}${scaleNote}${
+                  onSendToClaude ? ', click to send to agent' : ''
+                }`}
+                onClick={() => {
+                  if (!onSendToClaude) return;
+                  onSendToClaude(
+                    `The preview viewport is currently ${w} × ${h} (width × height in CSS pixels)${scaleNote}.`
+                  );
+                }}
+              >
+                {w} × {h}
+              </button>
+            );
+          })()}
 
         <div className="preview-breakpoints" data-education-id="breakpoints">
           {(Object.keys(BREAKPOINTS) as Breakpoint[]).map((bp) => {
-            // Always show 'full' - it adapts to any size
-            // Hide other breakpoints if they won't fit in the viewport
-            if (bp !== 'full') {
-              const bpWidth = parseInt(BREAKPOINTS[bp].width, 10);
-              if (resize.viewportWidth > 0 && bpWidth > resize.viewportWidth) {
-                return null;
-              }
-            }
+            // Every preset is always available — one wider than the pane
+            // renders at true size and scales down to fit (previewScale).
             return (
               <button
                 key={bp}
@@ -1167,10 +1176,15 @@ export const Preview = forwardRef<PreviewHandle, PreviewProps>(function Preview(
               : ''
           }`}
           style={{
+            // A width wider than the pane keeps its true size in the iframe
+            // and shrinks visually via previewScale — the grid (and with it
+            // the wrapper, handles, crop overlay and drag math) stays at the
+            // VISUAL size so every parent-side measurement remains in screen
+            // space.
             width:
               resize.customWidth === null
                 ? 'calc(100% - 4px)'
-                : `${resize.customWidth + RESIZE_HANDLE_PX}px`,
+                : `${Math.round(resize.customWidth * resize.previewScale) + RESIZE_HANDLE_PX}px`,
             maxWidth: 'calc(100% - 4px)',
             // While Inspect is open the bottom resize handle is hidden, so
             // we ignore (but preserve) the user's customHeight to avoid an
@@ -1190,6 +1204,21 @@ export const Preview = forwardRef<PreviewHandle, PreviewProps>(function Preview(
               src={conn.serverReady ? conn.currentUrl : 'about:blank'}
               className="preview-iframe"
               title="Preview"
+              // Scale-to-fit (Chrome-DevTools style): lay the page out at the
+              // true breakpoint width and shrink the rendering to the wrapper.
+              // Height is inflated by 1/scale so the scaled result fills the
+              // wrapper exactly. In-iframe overlays (visual editor) live in
+              // the scaled coordinate space and need no mapping.
+              style={
+                resize.previewScale < 1 && resize.customWidth !== null
+                  ? {
+                      width: `${resize.customWidth}px`,
+                      height: `${100 / resize.previewScale}%`,
+                      transform: `scale(${resize.previewScale})`,
+                      transformOrigin: 'top left',
+                    }
+                  : undefined
+              }
             />
             {/* Branch switching overlay */}
             {isBranchSwitching && (
@@ -1514,7 +1543,7 @@ const InspectPanel = forwardRef<HTMLDivElement, InspectPanelProps>(function Insp
           />
         </div>
         <div className={`preview-logs-slot ${activeTab === 'browser' ? 'is-active' : ''}`}>
-          <BrowserTools onSendToAgent={onSendToAgent} />
+          <BrowserTools onSendToAgent={onSendToAgent} active={!hidden && activeTab === 'browser'} />
         </div>
         <div className={`preview-logs-slot ${activeTab === 'health' ? 'is-active' : ''}`}>
           <HealthTabPanel
