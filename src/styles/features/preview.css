@@ -1214,3 +1214,39 @@
   font-size: var(--font-size-sm);
   color: var(--text-muted);
 }
+
+/* ── Chromium preview engine (ChromeMirror) ─────────────────────────────── */
+
+.chrome-mirror {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+}
+
+.chrome-mirror__canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+  outline: none;
+}
+
+.chrome-mirror__overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--spacing-md);
+  background: var(--bg-secondary);
+  color: var(--text-secondary);
+  font-size: var(--font-size-sm);
+}
+
+.chrome-mirror__error {
+  max-width: 340px;
+  text-align: center;
+  color: var(--text-secondary);
+  overflow-wrap: break-word;
+}

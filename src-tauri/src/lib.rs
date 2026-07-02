@@ -12,6 +12,7 @@
 
 pub mod agent;
 pub mod cache;
+pub mod chrome_preview;
 pub mod commands;
 pub mod errors;
 pub mod external_command;
@@ -276,8 +277,9 @@ pub fn run() {
                 let label = window.label().to_string();
                 tracing::info!("Window {} destroyed, cleaning up", label);
 
-                // Stop preview proxy and static server for this window
+                // Stop preview proxy, Chromium preview, and static server for this window
                 proxy::stop_preview_proxy(&label);
+                chrome_preview::stop_chrome_preview(&label, None);
                 static_server::stop_static_server(&label);
 
                 // Kill PTY processes (dev server, etc.) owned by this window
@@ -312,6 +314,7 @@ pub fn run() {
                     cleanup_agent_processes();
                     commands::setup::cleanup_auth_processes_sync();
                     proxy::stop_all_proxies();
+                    chrome_preview::stop_all_chrome_previews();
                     static_server::stop_all_static_servers();
                     // Mobile previews are torn down per-window above
                     // (teardown_mobile_previews_for_window_sync), so there's no
@@ -573,6 +576,8 @@ pub fn run() {
             // Preview Proxy
             commands::proxy::start_preview_proxy,
             commands::proxy::stop_preview_proxy,
+            commands::chrome_preview::start_chrome_preview,
+            commands::chrome_preview::stop_chrome_preview,
             // Static File Server
             commands::static_server::start_static_server,
             commands::static_server::stop_static_server,

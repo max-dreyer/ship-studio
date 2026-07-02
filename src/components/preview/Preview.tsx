@@ -37,6 +37,7 @@ import { DevServerStatus } from '../terminal/DevServerStatus';
 import { stripAnsi } from '../../lib/ansi';
 import { trackEvent } from '../../lib/analytics';
 import { BrowserTools } from './BrowserTools';
+import { ChromeMirror } from './ChromeMirror';
 import { HealthTabPanel, type HealthTabPanelRef } from '../code/HealthTabPanel';
 import { BrowserDropdown } from './BrowserDropdown';
 import { useVisualEditor } from '../../hooks/useVisualEditor';
@@ -707,6 +708,36 @@ export const Preview = forwardRef<PreviewHandle, PreviewProps>(function Preview(
   const [treeCodeView, setTreeCodeView] = useState(false);
   const elementTree = useElementTree({ iframeRef, enabled: showTree });
 
+  // ── Preview engine: the native WebKit iframe (default, zero-latency) or a
+  // mirrored headless Chromium (ChromeMirror — true Blink rendering, what the
+  // user's Chrome shows). Edit mode always runs on the native iframe: the
+  // visual editor's overlay + postMessage protocol lives inside it.
+  const [engine, setEngine] = useState<'native' | 'chrome'>('native');
+  const chromeEngineActive = engine === 'chrome' && !activeEditMode && conn.serverReady;
+  const toggleEngine = useCallback(() => {
+    setEngine((prev) => {
+      const next = prev === 'chrome' ? 'native' : 'chrome';
+      void trackEvent('preview_engine_changed', { engine: next });
+      return next;
+    });
+  }, []);
+  useCommands(
+    () => [
+      {
+        id: 'preview.engine',
+        title:
+          engine === 'chrome'
+            ? 'Preview: switch to native engine (WebKit)'
+            : 'Preview: switch to Chrome engine',
+        category: 'action' as const,
+        when: 'project' as const,
+        keywords: ['chrome', 'chromium', 'engine', 'webkit', 'safari', 'blink', 'browser'],
+        run: () => toggleEngine(),
+      },
+    ],
+    [engine, toggleEngine]
+  );
+
   const [iframeSize, setIframeSize] = useState<{ w: number; h: number } | null>(null);
   const iframeSizeObserverRef = useRef<ResizeObserver | null>(null);
 
@@ -1154,6 +1185,38 @@ export const Preview = forwardRef<PreviewHandle, PreviewProps>(function Preview(
           })}
         </div>
 
+        {conn.serverReady && (
+          <button
+            type="button"
+            className={`toolbar-icon-btn${engine === 'chrome' ? ' active' : ''}`}
+            aria-pressed={engine === 'chrome'}
+            onClick={toggleEngine}
+            title={
+              engine === 'chrome'
+                ? activeEditMode
+                  ? 'Chrome engine selected (edit mode uses the native engine) — click for native'
+                  : 'Rendering with Chrome — click for the native engine'
+                : 'Rendering with the native engine (WebKit) — click for Chrome'
+            }
+          >
+            {/* Simplified Chrome mark: outer ring, hub, three spokes */}
+            <svg
+              width="15"
+              height="15"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+            >
+              <circle cx="12" cy="12" r="10" />
+              <circle cx="12" cy="12" r="4" />
+              <line x1="12" y1="8" x2="21.2" y2="8" />
+              <line x1="8.5" y1="14" x2="3.9" y2="6" />
+              <line x1="15.5" y1="14" x2="10.9" y2="22" />
+            </svg>
+          </button>
+        )}
+
         {conn.serverReady && conn.externalUrl && <BrowserDropdown url={conn.externalUrl} />}
       </div>
       <div
@@ -1198,28 +1261,40 @@ export const Preview = forwardRef<PreviewHandle, PreviewProps>(function Preview(
           }}
         >
           <div ref={setIframeWrapperEl} className="preview-iframe-wrapper">
-            <iframe
-              key={projectPath}
-              ref={iframeRef}
-              src={conn.serverReady ? conn.currentUrl : 'about:blank'}
-              className="preview-iframe"
-              title="Preview"
-              // Scale-to-fit (Chrome-DevTools style): lay the page out at the
-              // true breakpoint width and shrink the rendering to the wrapper.
-              // Height is inflated by 1/scale so the scaled result fills the
-              // wrapper exactly. In-iframe overlays (visual editor) live in
-              // the scaled coordinate space and need no mapping.
-              style={
-                resize.previewScale < 1 && resize.customWidth !== null
-                  ? {
-                      width: `${resize.customWidth}px`,
-                      height: `${100 / resize.previewScale}%`,
-                      transform: `scale(${resize.previewScale})`,
-                      transformOrigin: 'top left',
-                    }
-                  : undefined
-              }
-            />
+            {chromeEngineActive ? (
+              // Chromium engine: a mirrored headless Chrome. It receives the
+              // same proxy URL (so script injection applies) and handles the
+              // breakpoint width/scale itself via device metrics.
+              <ChromeMirror
+                url={conn.currentUrl}
+                cssWidth={resize.customWidth}
+                scale={resize.previewScale}
+                reloadToken={conn.reloadToken}
+              />
+            ) : (
+              <iframe
+                key={projectPath}
+                ref={iframeRef}
+                src={conn.serverReady ? conn.currentUrl : 'about:blank'}
+                className="preview-iframe"
+                title="Preview"
+                // Scale-to-fit (Chrome-DevTools style): lay the page out at the
+                // true breakpoint width and shrink the rendering to the wrapper.
+                // Height is inflated by 1/scale so the scaled result fills the
+                // wrapper exactly. In-iframe overlays (visual editor) live in
+                // the scaled coordinate space and need no mapping.
+                style={
+                  resize.previewScale < 1 && resize.customWidth !== null
+                    ? {
+                        width: `${resize.customWidth}px`,
+                        height: `${100 / resize.previewScale}%`,
+                        transform: `scale(${resize.previewScale})`,
+                        transformOrigin: 'top left',
+                      }
+                    : undefined
+                }
+              />
+            )}
             {/* Branch switching overlay */}
             {isBranchSwitching && (
               <div className="preview-branch-switching-overlay">
