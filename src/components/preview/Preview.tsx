@@ -63,6 +63,7 @@ import { CompactIcon, ExpandIcon, PanelLeftIcon, ResetIcon, UndoIcon, RedoIcon }
 import { Button } from '../primitives/Button';
 import { Spinner } from '../primitives/Spinner';
 import { pathLocale, switchPathLocale } from '../../lib/i18n';
+import { dispatchPreviewLoad } from '../../lib/previewTransport';
 import { useCommands } from '../../commands/useCommands';
 import { logger } from '../../lib/logger';
 import type { ProjectType } from '../../lib/static-server';
@@ -719,9 +720,10 @@ export const Preview = forwardRef<PreviewHandle, PreviewProps>(function Preview(
   // mirrored headless Chromium (ChromeMirror — true Blink rendering, what the
   // user's Chrome shows). Chosen per project in Project Settings (the `engine`
   // prop); persistence and analytics live with the setting handler in App.
-  // Edit mode always runs on the native iframe: the visual editor's overlay +
-  // postMessage protocol lives inside it.
-  const chromeEngineActive = engine === 'chrome' && !activeEditMode && conn.serverReady;
+  // Edit mode works on both engines: every `ss:*` editor message flows through
+  // the preview transport (`lib/previewTransport.ts`), which routes to the
+  // iframe's contentWindow natively and over the CDP bridge on Chrome.
+  const chromeEngineActive = engine === 'chrome' && conn.serverReady;
   const openModal = useOpenModal();
   useCommands(
     () => [
@@ -1255,6 +1257,10 @@ export const Preview = forwardRef<PreviewHandle, PreviewProps>(function Preview(
                 src={conn.serverReady ? conn.currentUrl : 'about:blank'}
                 className="preview-iframe"
                 title="Preview"
+                // Feed the transport's load bus: edit-mode hooks re-arm the
+                // in-page script on every document load (HMR full reloads,
+                // manual refreshes, engine switches back from Chrome).
+                onLoad={() => dispatchPreviewLoad()}
                 // Scale-to-fit (Chrome-DevTools style): lay the page out at the
                 // true breakpoint width and shrink the rendering to the wrapper.
                 // Height is inflated by 1/scale so the scaled result fills the

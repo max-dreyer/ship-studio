@@ -35,6 +35,11 @@ import {
   applyClassnameEditMulti,
   type ElementSignature,
 } from '../lib/edit';
+import {
+  postToPreview,
+  subscribePreviewLoad,
+  subscribePreviewMessages,
+} from '../lib/previewTransport';
 import { logger } from '../lib/logger';
 import { trackEvent } from '../lib/analytics';
 import { asCommandError, formatCommandError } from '../lib/errors';
@@ -96,23 +101,19 @@ export function useCssEditor({ iframeRef, projectPath, enabled, onToast }: Param
   const pseudoRef = useRef<string | null>(null);
   const selectedSigRef = useRef<ElementSignature | null>(null);
 
-  const post = useCallback(
-    (msg: unknown) => iframeRef.current?.contentWindow?.postMessage(msg, '*'),
-    [iframeRef]
-  );
+  const post = useCallback((msg: unknown) => postToPreview(iframeRef.current, msg), [iframeRef]);
 
-  // Activate the in-iframe selection layer while editing; re-arm across HMR
-  // reloads (each reload resets the script to inert).
+  // Activate the in-page selection layer while editing; re-arm across HMR
+  // reloads (each reload resets the script to inert). The load signal comes
+  // from the transport (native iframe `load` or the Chrome engine's page load).
   useEffect(() => {
-    const iframe = iframeRef.current;
     if (editMode) {
       post({ type: 'ss:activate' });
       const reactivate = () => post({ type: 'ss:activate' });
-      iframe?.addEventListener('load', reactivate);
-      return () => iframe?.removeEventListener('load', reactivate);
+      return subscribePreviewLoad(reactivate);
     }
     post({ type: 'ss:deactivate' });
-  }, [editMode, post, iframeRef]);
+  }, [editMode, post]);
 
   // Load the project's stylesheets when edit mode opens (the create-rule target).
   useEffect(() => {
@@ -132,10 +133,10 @@ export function useCssEditor({ iframeRef, projectPath, enabled, onToast }: Param
   // Resolve clicked elements to their CSS rule.
   useEffect(() => {
     if (!editMode) return;
-    const handler = (e: MessageEvent) => {
-      // SECURITY: only trust messages from the actual preview iframe.
-      if (e.source !== iframeRef.current?.contentWindow) return;
-      const d = e.data as { type?: string; signature?: ElementSignature; count?: number } | null;
+    // Delivered by the transport: native iframe messages (source-guarded) or
+    // chrome-bridge relays.
+    const handler = (data: unknown) => {
+      const d = data as { type?: string; signature?: ElementSignature; count?: number } | null;
       if (!d || d.type !== 'ss:select' || !d.signature) return;
 
       const sig = d.signature;
@@ -180,8 +181,7 @@ export function useCssEditor({ iframeRef, projectPath, enabled, onToast }: Param
         }
       })();
     };
-    window.addEventListener('message', handler);
-    return () => window.removeEventListener('message', handler);
+    return subscribePreviewMessages(iframeRef, handler);
   }, [editMode, projectPath, post, iframeRef]);
 
   /** The active resolved rule, or null when the selection isn't an editable rule. */

@@ -25,6 +25,7 @@ import {
 } from '../lib/edit';
 import { resolveElementHtml, applyElementHtml } from '../lib/edit-html';
 import { setAttribute as setAttrInHtml } from '../lib/htmlAttrs';
+import { postToPreview } from '../lib/previewTransport';
 import { logger } from '../lib/logger';
 import { trackEvent } from '../lib/analytics';
 import { asCommandError, formatCommandError } from '../lib/errors';
@@ -101,10 +102,7 @@ export function useElementSettings({
   const htmlRef = useRef<string | null>(null);
   const tag = signature?.tagName ?? '';
 
-  const post = useCallback(
-    (msg: unknown) => iframeRef.current?.contentWindow?.postMessage(msg, '*'),
-    [iframeRef]
-  );
+  const post = useCallback((msg: unknown) => postToPreview(iframeRef.current, msg), [iframeRef]);
 
   // Seed classes from the signature; resolve the element's markup for attributes.
   useEffect(() => {

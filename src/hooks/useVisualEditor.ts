@@ -73,6 +73,11 @@ import {
   classifyApplyTokens,
   type CustomClass,
 } from '../lib/customClasses';
+import {
+  postToPreview,
+  subscribePreviewLoad,
+  subscribePreviewMessages,
+} from '../lib/previewTransport';
 import { logger } from '../lib/logger';
 import { trackEvent } from '../lib/analytics';
 import { asCommandError, formatCommandError } from '../lib/errors';
@@ -248,10 +253,7 @@ export function useVisualEditor({
   // The project's custom classes (refreshed on edit-mode entry and after writes).
   const [customClasses, setCustomClasses] = useState<CustomClass[]>([]);
 
-  const post = useCallback(
-    (msg: unknown) => iframeRef.current?.contentWindow?.postMessage(msg, '*'),
-    [iframeRef]
-  );
+  const post = useCallback((msg: unknown) => postToPreview(iframeRef.current, msg), [iframeRef]);
 
   // Route a live-preview mutation by edit target: an element edit sets the
   // selected element's class attribute; a class edit injects decls scoped to the
@@ -287,28 +289,28 @@ export function useVisualEditor({
     [post, setEditTarget, setLiveClass]
   );
 
-  // Activate/deactivate the in-iframe selection layer (external-system sync), and
+  // Activate/deactivate the in-page selection layer (external-system sync), and
   // keep it active across HMR reloads (each reload resets the script to inert).
+  // The load signal comes from the transport: the native iframe's `load` event
+  // or the Chrome engine's page-load notification.
   useEffect(() => {
-    const iframe = iframeRef.current;
     if (editMode) {
       post({ type: 'ss:activate' });
       const reactivate = () => post({ type: 'ss:activate' });
-      iframe?.addEventListener('load', reactivate);
-      return () => iframe?.removeEventListener('load', reactivate);
+      return subscribePreviewLoad(reactivate);
     }
     post({ type: 'ss:deactivate' });
-  }, [editMode, post, iframeRef]);
+  }, [editMode, post]);
 
-  // Resolve clicked elements + handle inline text-edit commits from the iframe.
+  // Resolve clicked elements + handle inline text-edit commits from the preview.
   useEffect(() => {
     if (!editMode) return;
-    const handler = (e: MessageEvent) => {
-      // SECURITY: only trust messages from the actual preview iframe. The iframe
-      // hosts untrusted project content; a forged `ss:textCommit` from another
-      // frame would otherwise write to the user's source files.
-      if (e.source !== iframeRef.current?.contentWindow) return;
-      const d = e.data as {
+    // Delivered by the transport: native iframe messages (source-guarded — the
+    // iframe hosts untrusted project content; a forged `ss:textCommit` from
+    // another frame would otherwise write to the user's source files) or
+    // chrome-bridge relays.
+    const handler = (data: unknown) => {
+      const d = data as {
         type?: string;
         signature?: ElementSignature;
         count?: number;
@@ -388,8 +390,7 @@ export function useVisualEditor({
         })();
       }
     };
-    window.addEventListener('message', handler);
-    return () => window.removeEventListener('message', handler);
+    return subscribePreviewMessages(iframeRef, handler);
   }, [
     editMode,
     projectPath,

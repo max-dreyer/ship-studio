@@ -20,6 +20,11 @@ import {
   stopChromePreview,
   type ChromeMirrorHandle,
 } from '../../lib/chromeMirror';
+import {
+  dispatchChromePreviewMessage,
+  dispatchPreviewLoad,
+  registerChromePreviewTransport,
+} from '../../lib/previewTransport';
 import { asCommandError, formatCommandError } from '../../lib/errors';
 import { logger } from '../../lib/logger';
 import { Button } from '../primitives/Button';
@@ -42,6 +47,12 @@ interface ChromeMirrorProps {
 type MirrorStatus = 'starting' | 'live' | 'error';
 
 const BUTTON_NAMES = ['left', 'middle', 'right'] as const;
+
+/** Cmd combos the in-page inline text editor consumes: Cmd+Enter commits,
+ *  Cmd+Z / Cmd+Shift+Z / Cmd+Y undo/redo, Cmd+B/I/U format (contentEditable
+ *  natives). Only these are forwarded, and only WHILE the page is
+ *  text-editing — everything else stays with the app (palette, app undo). */
+const isTextEditingMetaKey = (key: string) => key === 'Enter' || /^[zybiu]$/i.test(key);
 
 export function ChromeMirror({ url, cssWidth, scale, reloadToken = 0 }: ChromeMirrorProps) {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -69,6 +80,27 @@ export function ChromeMirror({ url, cssWidth, scale, reloadToken = 0 }: ChromeMi
   const setStatusTracked = useCallback((next: MirrorStatus) => {
     statusRef.current = next;
     setStatus(next);
+  }, []);
+
+  // Whether the mirrored page is inline-text-editing (contentEditable). Tracked
+  // from the editor messages passing through so the key handler knows when to
+  // forward Cmd combos (commit/undo/bold…) instead of leaving them to the app.
+  const pageTextEditingRef = useRef(false);
+  const handleEditorMessage = useCallback((payload: Record<string, unknown>) => {
+    const t = payload.type;
+    if (t === 'ss:textBegin') pageTextEditingRef.current = true;
+    else if (t === 'ss:textCommit' || t === 'ss:textCancel' || t === 'ss:textBlocked') {
+      pageTextEditingRef.current = false;
+    }
+    dispatchChromePreviewMessage(payload);
+  }, []);
+
+  // The active transport registration's unregister fn (null when none). Kept in
+  // a ref so both the cleanup and the onDead path can release it exactly once.
+  const unregisterTransportRef = useRef<(() => void) | null>(null);
+  const releaseTransport = useCallback(() => {
+    unregisterTransportRef.current?.();
+    unregisterTransportRef.current = null;
   }, []);
 
   const computeViewport = useCallback(() => {
@@ -150,12 +182,23 @@ export function ChromeMirror({ url, cssWidth, scale, reloadToken = 0 }: ChromeMi
         }
         handleRef.current = connectChromeMirror(port, {
           onFrame: handleFrame,
+          onEditor: handleEditorMessage,
+          onPageLoad: () => dispatchPreviewLoad(),
           onDead: (reason) => {
             logger.warn('[ChromeMirror] Chromium died', { reason });
+            releaseTransport();
             setErrorMessage(reason);
             setStatusTracked('error');
           },
         });
+        // Editor messages route through the mirror while it's alive.
+        unregisterTransportRef.current = registerChromePreviewTransport({
+          send: (payload) => handleRef.current?.send({ type: 'editor', payload }),
+        });
+        // The page may have finished loading before the bridge connected (the
+        // target is created on the URL at launch), and an engine switch can
+        // happen mid-edit — announce a load so edit-mode state re-arms.
+        dispatchPreviewLoad();
       } catch (err) {
         if (cancelled) return;
         // Tauri rejections are structured CommandError objects — String()
@@ -169,11 +212,19 @@ export function ChromeMirror({ url, cssWidth, scale, reloadToken = 0 }: ChromeMi
 
     return () => {
       cancelled = true;
+      releaseTransport();
       handleRef.current?.close();
       handleRef.current = null;
       if (ownedPort !== null) void stopChromePreview(ownedPort);
     };
-  }, [restartNonce, computeViewport, handleFrame, setStatusTracked]);
+  }, [
+    restartNonce,
+    computeViewport,
+    handleFrame,
+    setStatusTracked,
+    handleEditorMessage,
+    releaseTransport,
+  ]);
 
   // Navigate in place on URL changes (page selector, proxy port arriving).
   const lastUrlRef = useRef(url);
@@ -274,8 +325,15 @@ export function ChromeMirror({ url, cssWidth, scale, reloadToken = 0 }: ChromeMi
   );
 
   const onKey = useCallback((kind: 'down' | 'up', e: React.KeyboardEvent) => {
-    // Leave app-level shortcuts (Cmd+K palette etc.) to the app.
-    if (e.metaKey && e.key !== 'Meta') return;
+    // Leave app-level shortcuts (Cmd+K palette etc.) to the app — unless the
+    // mirrored page is inline-text-editing and the combo belongs to it.
+    if (
+      e.metaKey &&
+      e.key !== 'Meta' &&
+      !(pageTextEditingRef.current && isTextEditingMetaKey(e.key))
+    ) {
+      return;
+    }
     e.preventDefault();
     e.stopPropagation();
     handleRef.current?.send({

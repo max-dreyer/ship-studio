@@ -36,6 +36,7 @@ import {
   type ElementSignature,
   type TextResolution,
 } from '../lib/edit';
+import { postToPreview, subscribePreviewMessages } from '../lib/previewTransport';
 import { logger } from '../lib/logger';
 import { trackEvent } from '../lib/analytics';
 import { asCommandError, formatCommandError } from '../lib/errors';
@@ -74,10 +75,7 @@ export function useTextEditing({ iframeRef, projectPath, enabled, onToast }: Par
   // fast click-through can't let an older resolve post the wrong ss:textInfo.
   const selectTokenRef = useRef(0);
 
-  const post = useCallback(
-    (msg: unknown) => iframeRef.current?.contentWindow?.postMessage(msg, '*'),
-    [iframeRef]
-  );
+  const post = useCallback((msg: unknown) => postToPreview(iframeRef.current, msg), [iframeRef]);
 
   // Drop any stale selection state when edit mode closes, so a target from a prior
   // session can't bleed into the next one.
@@ -90,12 +88,12 @@ export function useTextEditing({ iframeRef, projectPath, enabled, onToast }: Par
 
   useEffect(() => {
     if (!enabled) return;
-    const handler = (e: MessageEvent) => {
-      // SECURITY: only trust messages from the actual preview iframe. The iframe
-      // hosts untrusted project content; a forged `ss:textCommit` from another
-      // frame would otherwise write to the user's source files.
-      if (e.source !== iframeRef.current?.contentWindow) return;
-      const d = e.data as {
+    // Delivered by the transport: native iframe messages (source-guarded — the
+    // iframe hosts untrusted project content; a forged `ss:textCommit` from
+    // another frame would otherwise write to the user's source files) or
+    // chrome-bridge relays.
+    const handler = (data: unknown) => {
+      const d = data as {
         type?: string;
         signature?: ElementSignature;
         leafText?: boolean;
@@ -183,8 +181,7 @@ export function useTextEditing({ iframeRef, projectPath, enabled, onToast }: Par
         post({ type: 'ss:textInfo', editable: false });
       }
     };
-    window.addEventListener('message', handler);
-    return () => window.removeEventListener('message', handler);
+    return subscribePreviewMessages(iframeRef, handler);
   }, [enabled, projectPath, onToast, post, iframeRef, setTextTarget]);
 
   return {

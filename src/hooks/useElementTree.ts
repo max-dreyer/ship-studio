@@ -14,6 +14,11 @@
  */
 
 import { useCallback, useEffect, useState, type RefObject } from 'react';
+import {
+  postToPreview,
+  subscribePreviewLoad,
+  subscribePreviewMessages,
+} from '../lib/previewTransport';
 
 /** One element in the snapshot, mapped from the compact wire format. */
 export interface ElementTreeNode {
@@ -55,21 +60,17 @@ export function useElementTree({ iframeRef, enabled }: UseElementTreeParams) {
   const [truncated, setTruncated] = useState(false);
   const [selectedId, setSelectedId] = useState<number | null>(null);
 
-  const post = useCallback(
-    (msg: unknown) => iframeRef.current?.contentWindow?.postMessage(msg, '*'),
-    [iframeRef]
-  );
+  const post = useCallback((msg: unknown) => postToPreview(iframeRef.current, msg), [iframeRef]);
 
   useEffect(() => {
     if (!enabled) return;
 
     post({ type: 'ss:requestTree' });
 
-    const onMessage = (e: MessageEvent) => {
-      // SECURITY: only trust messages from the actual preview iframe (untrusted
-      // project content runs inside it).
-      if (e.source !== iframeRef.current?.contentWindow) return;
-      const d = e.data as
+    // Delivered by the transport: native iframe messages (source-guarded —
+    // untrusted project content runs inside the preview) or chrome-bridge relays.
+    const onMessage = (data: unknown) => {
+      const d = data as
         | { type?: string; tree?: WireNode; truncated?: boolean; nodeId?: number }
         | undefined;
       if (!d || typeof d.type !== 'string') return;
@@ -82,19 +83,17 @@ export function useElementTree({ iframeRef, enabled }: UseElementTreeParams) {
         setSelectedId(typeof d.nodeId === 'number' ? d.nodeId : null);
       }
     };
-    window.addEventListener('message', onMessage);
+    const offMessages = subscribePreviewMessages(iframeRef, onMessage);
 
     // A full page reload re-initializes the injected script (treeOn resets),
-    // so re-request on iframe load to keep the navigator alive across HMR
-    // full-reloads and manual refreshes.
-    const iframe = iframeRef.current;
-    const onLoad = () => post({ type: 'ss:requestTree' });
-    iframe?.addEventListener('load', onLoad);
+    // so re-request on preview load to keep the navigator alive across HMR
+    // full-reloads and manual refreshes (either engine).
+    const offLoad = subscribePreviewLoad(() => post({ type: 'ss:requestTree' }));
 
     return () => {
       post({ type: 'ss:treeOff' });
-      window.removeEventListener('message', onMessage);
-      iframe?.removeEventListener('load', onLoad);
+      offMessages();
+      offLoad();
     };
   }, [enabled, post, iframeRef]);
 

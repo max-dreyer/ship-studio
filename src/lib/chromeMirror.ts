@@ -50,6 +50,12 @@ export function cdpModifiers(e: {
 
 export type ChromeMirrorMessage =
   | {
+      /** Host→page editor message: the backend re-posts `payload` inside the
+       *  mirrored page via `window.postMessage` (visual-editor protocol). */
+      type: 'editor';
+      payload: Record<string, unknown>;
+    }
+  | {
       type: 'mouse';
       kind: 'move' | 'down' | 'up' | 'wheel';
       x: number;
@@ -83,13 +89,20 @@ export interface ChromeMirrorHandle {
 
 /**
  * Connect to the bridge. Frames arrive as ArrayBuffers (JPEG); a `status`
- * text message with `state: 'dead'` means Chromium is gone.
+ * text message with `state: 'dead'` means Chromium is gone. Editor messages
+ * (`{type:'editor', payload}` — page→app `ss:*` protocol) and page-load
+ * notifications (`{type:'pageLoad'}`) arrive on the same text channel,
+ * reliable and ordered (unlike frames, which are latest-wins).
  */
 export function connectChromeMirror(
   port: number,
   callbacks: {
     onFrame: (frame: ArrayBuffer) => void;
     onDead: (reason: string) => void;
+    /** A page→app editor message relayed from the mirrored page. */
+    onEditor?: (payload: Record<string, unknown>) => void;
+    /** The mirrored page finished loading a (new) document. */
+    onPageLoad?: () => void;
     onClose?: () => void;
   }
 ): ChromeMirrorHandle {
@@ -103,9 +116,18 @@ export function connectChromeMirror(
     }
     if (typeof event.data === 'string') {
       try {
-        const msg = JSON.parse(event.data) as { type?: string; state?: string; reason?: string };
+        const msg = JSON.parse(event.data) as {
+          type?: string;
+          state?: string;
+          reason?: string;
+          payload?: unknown;
+        };
         if (msg.type === 'status' && msg.state === 'dead') {
           callbacks.onDead(msg.reason ?? 'Chromium exited');
+        } else if (msg.type === 'editor' && msg.payload && typeof msg.payload === 'object') {
+          callbacks.onEditor?.(msg.payload as Record<string, unknown>);
+        } else if (msg.type === 'pageLoad') {
+          callbacks.onPageLoad?.();
         }
       } catch {
         // Ignore malformed control messages.

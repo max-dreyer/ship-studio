@@ -27,12 +27,51 @@ use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::sync::{Arc, LazyLock, Mutex};
 use tokio::net::TcpListener;
-use tokio::sync::watch;
+use tokio::sync::{broadcast, watch};
 use tokio::task::JoinHandle;
 
 /// JPEG quality for screencast frames. 80 is visually clean for UI work while
 /// keeping 2x-retina frames small enough for 60fps over a local socket.
 const SCREENCAST_QUALITY: u32 = 80;
+
+/// CDP binding name the in-page editor relay calls with page→app messages.
+const EDITOR_RELAY_BINDING: &str = "__ssEditorRelay";
+
+/// In-page relay for visual-editor messages (Chrome engine only).
+///
+/// The proxy-injected select script (`src-tauri/src/proxy/select_script.html`)
+/// posts its `ss:*` protocol to `window.parent` — in the mirrored Chromium the
+/// page IS the top-level window (`parent === window`), so those messages land
+/// on the page's own window instead of the app. This listener forwards them
+/// into the CDP binding so `pump_events` can relay them over the bridge.
+///
+/// Filter: only messages whose `type` starts with `ss:` AND that carry no
+/// `source` field are forwarded — host→page messages are tagged with the host
+/// channel (`source: 'shipstudio-inspect-host'`, added by the app's preview
+/// transport), which is what prevents them echoing back as page→app traffic.
+///
+/// Idempotent: injected both via `Page.addScriptToEvaluateOnNewDocument` (all
+/// future documents) and a one-shot `Runtime.evaluate` (the already-loaded
+/// document), which can overlap on the first document.
+const EDITOR_RELAY_SCRIPT: &str = r#"(function(){
+  if (window.__ssEditorRelayInit) return;
+  window.__ssEditorRelayInit = true;
+  window.addEventListener('message', function(e){
+    var d = e.data;
+    if (!d || typeof d.type !== 'string' || d.type.indexOf('ss:') !== 0 || d.source !== undefined) return;
+    if (typeof window.__ssEditorRelay === 'function') {
+      try { window.__ssEditorRelay(JSON.stringify(d)); } catch (err) {}
+    }
+  });
+})();"#;
+
+/// Capacity of the editor-message fan-out. Editor traffic must be RELIABLE and
+/// ORDERED (unlike frames, which are latest-wins on a `watch` channel): a
+/// dropped `ss:select` or `ss:textCommit` is a lost edit. A `broadcast`
+/// channel preserves order and delivers to every bridge client; the capacity
+/// is far beyond interactive message rates, and a pathologically lagged
+/// receiver drops oldest-first (the protocol re-syncs on the next selection).
+const EDITOR_CHANNEL_CAPACITY: usize = 256;
 
 /// Current logical viewport of the mirrored page.
 #[derive(Clone, Copy)]
@@ -118,6 +157,39 @@ pub async fn start_chrome_preview(
         .to_string();
 
     cdp.call("Page.enable", Some(&session), json!({})).await?;
+    // Editor relay: enable Runtime events (bindingCalled), register the
+    // binding, and inject the relay into every future document AND the
+    // already-loaded one (addScriptToEvaluateOnNewDocument is future-only).
+    cdp.call("Runtime.enable", Some(&session), json!({}))
+        .await?;
+    cdp.call(
+        "Runtime.addBinding",
+        Some(&session),
+        json!({ "name": EDITOR_RELAY_BINDING }),
+    )
+    .await?;
+    cdp.call(
+        "Page.addScriptToEvaluateOnNewDocument",
+        Some(&session),
+        json!({ "source": EDITOR_RELAY_SCRIPT }),
+    )
+    .await?;
+    cdp.call(
+        "Runtime.evaluate",
+        Some(&session),
+        json!({ "expression": EDITOR_RELAY_SCRIPT }),
+    )
+    .await?;
+    // Keep the page believing it's focused while real focus stays on the app
+    // window — inline text editing (contentEditable focus/blur, carets)
+    // depends on it. Best-effort: older Chromium builds may not support it.
+    let _ = cdp
+        .call(
+            "Emulation.setFocusEmulationEnabled",
+            Some(&session),
+            json!({ "enabled": true }),
+        )
+        .await;
     // The headless window id, for resizing the raster surface later
     // (best-effort: emulation still applies if the call is unsupported).
     let window_id = cdp
@@ -135,6 +207,9 @@ pub async fn start_chrome_preview(
     // Latest-wins channels: frames and a fatal-status line.
     let frame_tx = Arc::new(watch::channel::<Option<Bytes>>(None).0);
     let status_tx = Arc::new(watch::channel::<Option<String>>(None).0);
+    // Reliable + ordered fan-out for editor messages and page-load beacons
+    // (see EDITOR_CHANNEL_CAPACITY for the choice of channel type).
+    let editor_tx = broadcast::channel::<Value>(EDITOR_CHANNEL_CAPACITY).0;
     let viewport_state = Arc::new(tokio::sync::Mutex::new(viewport));
 
     let pump = tokio::spawn(pump_events(
@@ -143,6 +218,7 @@ pub async fn start_chrome_preview(
         events,
         frame_tx.clone(),
         status_tx.clone(),
+        editor_tx.clone(),
     ));
 
     let listener = TcpListener::bind("127.0.0.1:0")
@@ -159,6 +235,7 @@ pub async fn start_chrome_preview(
         window_id,
         frame_tx,
         status_tx,
+        editor_tx,
         viewport_state,
     ));
 
@@ -263,6 +340,7 @@ async fn start_screencast(cdp: &cdp::Cdp, session: &str, vp: Viewport) -> Result
 }
 
 /// Route CDP events: decode + publish screencast frames (acking immediately),
+/// relay editor messages from the in-page binding, announce page loads, and
 /// surface target death as a status message.
 async fn pump_events(
     cdp: cdp::Cdp,
@@ -270,6 +348,7 @@ async fn pump_events(
     mut events: tokio::sync::mpsc::UnboundedReceiver<Value>,
     frame_tx: Arc<watch::Sender<Option<Bytes>>>,
     status_tx: Arc<watch::Sender<Option<String>>>,
+    editor_tx: broadcast::Sender<Value>,
 ) {
     use base64::Engine;
     while let Some(event) = events.recv().await {
@@ -291,6 +370,25 @@ async fn pump_events(
                     }
                 }
             }
+            Some("Runtime.bindingCalled") => {
+                // A page→app editor message forwarded by the in-page relay
+                // (already filtered there to source-less `ss:*` messages).
+                let params = &event["params"];
+                if params["name"].as_str() == Some(EDITOR_RELAY_BINDING) {
+                    if let Some(payload) = params["payload"].as_str() {
+                        if let Ok(value) = serde_json::from_str::<Value>(payload) {
+                            let _ = editor_tx.send(json!({ "type": "editor", "payload": value }));
+                        }
+                    }
+                }
+            }
+            Some("Page.loadEventFired") => {
+                // Edit-mode state (activation, tree subscription) lives in the
+                // injected select script and resets with every new document —
+                // tell the app so it can re-arm, mirroring the native iframe's
+                // 'load' event.
+                let _ = editor_tx.send(json!({ "type": "pageLoad" }));
+            }
             Some("Inspector.detached") | Some("Target.targetCrashed") => {
                 let _ = status_tx.send(Some("Chromium page crashed".to_string()));
             }
@@ -303,6 +401,7 @@ async fn pump_events(
 
 /// Accept app connections on the bridge and serve them: screencast frames go
 /// down as binary, input/control comes up as JSON text.
+#[allow(clippy::too_many_arguments)]
 async fn serve_bridge(
     listener: TcpListener,
     cdp: cdp::Cdp,
@@ -310,6 +409,7 @@ async fn serve_bridge(
     window_id: Option<u64>,
     frame_tx: Arc<watch::Sender<Option<Bytes>>>,
     status_tx: Arc<watch::Sender<Option<String>>>,
+    editor_tx: broadcast::Sender<Value>,
     viewport: Arc<tokio::sync::Mutex<Viewport>>,
 ) {
     loop {
@@ -323,6 +423,7 @@ async fn serve_bridge(
             window_id,
             frame_tx.clone(),
             status_tx.clone(),
+            editor_tx.clone(),
             viewport.clone(),
         ));
     }
@@ -348,6 +449,7 @@ fn is_app_origin(origin: &str) -> bool {
     false
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn serve_client(
     stream: tokio::net::TcpStream,
     cdp: cdp::Cdp,
@@ -355,6 +457,7 @@ async fn serve_client(
     window_id: Option<u64>,
     frame_tx: Arc<watch::Sender<Option<Bytes>>>,
     status_tx: Arc<watch::Sender<Option<String>>>,
+    editor_tx: broadcast::Sender<Value>,
     viewport: Arc<tokio::sync::Mutex<Viewport>>,
 ) {
     use tokio_tungstenite::tungstenite::handshake::server::{ErrorResponse, Request, Response};
@@ -378,9 +481,11 @@ async fn serve_client(
     };
     let (mut sink, mut source) = futures_util::StreamExt::split(ws);
 
-    // Downstream: frames + status, latest-wins.
+    // Downstream: frames + status (latest-wins), editor messages (reliable,
+    // ordered — a broadcast receiver per client).
     let mut frames = frame_tx.subscribe();
     let mut statuses = status_tx.subscribe();
+    let mut editor_rx = editor_tx.subscribe();
     let writer = tokio::spawn(async move {
         use futures_util::SinkExt;
         // A late joiner (remount, engine re-toggle) gets the current frame
@@ -415,6 +520,22 @@ async fn serve_client(
                         return;
                     }
                 }
+                editor = editor_rx.recv() => {
+                    match editor {
+                        Ok(value) => {
+                            if sink.send(Message::Text(value.to_string())).await.is_err() {
+                                return;
+                            }
+                        }
+                        // Fell more than a full buffer behind — resume with
+                        // what's left (the editor protocol re-syncs on the
+                        // next selection).
+                        Err(broadcast::error::RecvError::Lagged(_)) => {}
+                        // Pump ended: Chromium is gone and the status branch
+                        // is about to say so; stop instead of spinning.
+                        Err(broadcast::error::RecvError::Closed) => return,
+                    }
+                }
             }
         }
     });
@@ -428,6 +549,19 @@ async fn serve_client(
         match value["type"].as_str() {
             Some("mouse") | Some("key") | Some("insertText") => {
                 dispatch_input(&cdp, &session, &value);
+            }
+            Some("editor") => {
+                // App→page editor message: re-post it inside the mirrored page
+                // so the select script receives it exactly like the iframe
+                // case (`e.source === window` passes its guard). Fire-and-
+                // forget like input — editor previews are latency-sensitive.
+                if value["payload"].is_object() {
+                    cdp.fire(
+                        "Runtime.evaluate",
+                        Some(&session),
+                        json!({ "expression": editor_post_expression(&value["payload"]) }),
+                    );
+                }
             }
             Some("navigate") => {
                 if let Some(url) = value["url"].as_str() {
@@ -466,6 +600,17 @@ async fn serve_client(
         }
     }
     writer.abort();
+}
+
+/// Build the JS expression that delivers an app→page editor message inside the
+/// mirrored page. The payload is serialized to JSON, then embedded as a JSON
+/// **string literal** (serde_json does the escaping) and revived with
+/// `JSON.parse` — no part of the payload is ever interpolated as code, so a
+/// malicious value like `"});alert(1);//` stays an inert string.
+fn editor_post_expression(payload: &Value) -> String {
+    let literal =
+        serde_json::to_string(&payload.to_string()).unwrap_or_else(|_| "\"null\"".to_string());
+    format!("window.postMessage(JSON.parse({literal}), '*');")
 }
 
 /// Map a bridge input message onto CDP input dispatch. Fire-and-forget: input
@@ -536,7 +681,51 @@ fn dispatch_input(cdp: &cdp::Cdp, session: &str, value: &Value) {
 
 #[cfg(test)]
 mod tests {
-    use super::is_app_origin;
+    use super::{editor_post_expression, is_app_origin};
+    use serde_json::json;
+
+    /// Pull the embedded JSON string literal back out of the generated
+    /// expression and decode it — what `JSON.parse` would see in the page.
+    fn roundtrip(payload: &serde_json::Value) -> serde_json::Value {
+        let expr = editor_post_expression(payload);
+        let prefix = "window.postMessage(JSON.parse(";
+        let suffix = "), '*');";
+        assert!(expr.starts_with(prefix), "unexpected expression: {expr}");
+        assert!(expr.ends_with(suffix), "unexpected expression: {expr}");
+        let literal = &expr[prefix.len()..expr.len() - suffix.len()];
+        // The literal must itself be a valid JSON string (serde escaping)…
+        let inner: String = serde_json::from_str(literal).expect("literal must be a JSON string");
+        // …that decodes to the original payload.
+        serde_json::from_str(&inner).expect("inner JSON must parse")
+    }
+
+    #[test]
+    fn editor_expression_roundtrips_plain_payloads() {
+        let payload = json!({ "type": "ss:activate", "cascade": true });
+        assert_eq!(roundtrip(&payload), payload);
+    }
+
+    #[test]
+    fn editor_expression_escapes_hostile_strings() {
+        // Quotes, backslashes, script-breaking sequences, newlines, unicode —
+        // none of it may escape the string literal into code.
+        let payload = json!({
+            "type": "ss:mutate",
+            "className": "\"});alert(1);//",
+            "text": "line1\nline2\t\"quoted\" \\backslash\\ </script> \u{2028}\u{2029} émoji 🎨",
+        });
+        let expr = editor_post_expression(&payload);
+        // The only unescaped double quotes are the literal's own delimiters.
+        let unescaped_quotes = expr
+            .char_indices()
+            .filter(|&(i, c)| c == '"' && (i == 0 || expr.as_bytes()[i - 1] != b'\\'))
+            .count();
+        assert_eq!(
+            unescaped_quotes, 2,
+            "payload escaped the string literal: {expr}"
+        );
+        assert_eq!(roundtrip(&payload), payload);
+    }
 
     #[test]
     fn bridge_accepts_only_app_origins() {
@@ -645,6 +834,42 @@ mod tests {
         ))
         .await
         .unwrap();
+
+        // Editor round-trip: an upstream editor message is Runtime.evaluate'd
+        // as a window.postMessage inside the page; the payload below carries
+        // NO `source` and an `ss:` type, so the injected relay forwards it
+        // straight back through the binding → pump → bridge. One message
+        // exercises the whole path in both directions. (The real app tags
+        // host messages with `source`, which is exactly what stops this echo
+        // in production.)
+        ws.send(Message::Text(
+            r#"{"type":"editor","payload":{"type":"ss:probe","nonce":42}}"#.into(),
+        ))
+        .await
+        .unwrap();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        let mut echoed = false;
+        while std::time::Instant::now() < deadline {
+            let Ok(Some(Ok(msg))) =
+                tokio::time::timeout(std::time::Duration::from_secs(5), ws.next()).await
+            else {
+                break;
+            };
+            if let Message::Text(text) = msg {
+                let value: serde_json::Value = serde_json::from_str(&text).unwrap();
+                if value["type"] == "editor"
+                    && value["payload"]["type"] == "ss:probe"
+                    && value["payload"]["nonce"] == 42
+                {
+                    echoed = true;
+                    break;
+                }
+            }
+        }
+        assert!(
+            echoed,
+            "editor message must round-trip app → page → relay → app"
+        );
 
         // A non-app origin must be rejected in release semantics; in debug
         // builds localhost is allowed, so probe with an unrelated origin.

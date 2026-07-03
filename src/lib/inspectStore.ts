@@ -10,6 +10,8 @@
  * `message` listener at module init.
  */
 
+import { postToPreviews } from './previewTransport';
+
 export type ConsoleLevel = 'log' | 'info' | 'warn' | 'error' | 'debug';
 
 export interface ConsoleEntry {
@@ -165,17 +167,10 @@ if (typeof window !== 'undefined') {
   window.addEventListener('message', handleMessage);
 }
 
-/** Broadcast a host command to any preview iframes. */
+/** Broadcast a host command to any preview surfaces (iframes, or the chrome
+ *  transport when the Chrome engine is active — see `previewTransport.ts`). */
 const broadcastToPreviews = (type: string) => {
-  if (typeof document === 'undefined') return;
-  const iframes = document.querySelectorAll('iframe');
-  iframes.forEach((iframe) => {
-    try {
-      iframe.contentWindow?.postMessage({ source: HOST_CHANNEL, type }, '*');
-    } catch {
-      // ignore — cross-origin frames may not allow postMessage in some setups
-    }
-  });
+  postToPreviews({ source: HOST_CHANNEL, type });
 };
 
 /**

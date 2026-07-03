@@ -12,6 +12,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { getCssVariables, type CssVariableDef } from '../lib/cssCascade';
 import { setCssDeclaration, createCssClass, listStylesheets } from '../lib/edit-css';
+import { postToPreview } from '../lib/previewTransport';
 import { logger } from '../lib/logger';
 import { trackEvent } from '../lib/analytics';
 import { asCommandError, formatCommandError } from '../lib/errors';
@@ -39,10 +40,7 @@ export function useCssVariables({ iframeRef, projectPath, enabled, onToast }: Pa
   const [loading, setLoading] = useState(false);
   const saveTimers = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
 
-  const post = useCallback(
-    (msg: unknown) => iframeRef.current?.contentWindow?.postMessage(msg, '*'),
-    [iframeRef]
-  );
+  const post = useCallback((msg: unknown) => postToPreview(iframeRef.current, msg), [iframeRef]);
 
   const reload = useCallback(async () => {
     setLoading(true);

@@ -35,6 +35,11 @@ import {
 } from '../lib/cssCascade';
 import { parseRuleBody, serializeRuleBody, overriddenProps, type RuleBody } from '../lib/cssBody';
 import { keyframesName, parseRulePrelude } from '../lib/cssStructures';
+import {
+  postToPreview,
+  subscribePreviewLoad,
+  subscribePreviewMessages,
+} from '../lib/previewTransport';
 import { logger } from '../lib/logger';
 import { trackEvent } from '../lib/analytics';
 import { asCommandError, formatCommandError } from '../lib/errors';
@@ -146,10 +151,7 @@ export function useCssCascadeEditor({ iframeRef, projectPath, enabled, onToast }
   const rowByKeyRef = useRef(rowByKey);
   rowByKeyRef.current = rowByKey;
 
-  const post = useCallback(
-    (msg: unknown) => iframeRef.current?.contentWindow?.postMessage(msg, '*'),
-    [iframeRef]
-  );
+  const post = useCallback((msg: unknown) => postToPreview(iframeRef.current, msg), [iframeRef]);
 
   const clearTimers = useCallback(() => {
     Object.values(previewTimers.current).forEach(clearTimeout);
@@ -158,9 +160,10 @@ export function useCssCascadeEditor({ iframeRef, projectPath, enabled, onToast }
     saveTimers.current = {};
   }, []);
 
-  // Activate the in-iframe selection layer in CASCADE mode while editing; re-arm on HMR.
+  // Activate the in-page selection layer in CASCADE mode while editing; re-arm on
+  // HMR (the load signal comes from the transport — native iframe `load` or the
+  // Chrome engine's page-load notification).
   useEffect(() => {
-    const iframe = iframeRef.current;
     if (editMode) {
       post({ type: 'ss:activate', cascade: true });
       // After an HMR reload, re-arm the layer AND replay the last selection so the
@@ -170,11 +173,10 @@ export function useCssCascadeEditor({ iframeRef, projectPath, enabled, onToast }
         const sig = lastSignatureRef.current;
         if (sig) setTimeout(() => post({ type: 'ss:reselect', signature: sig }), 60);
       };
-      iframe?.addEventListener('load', reactivate);
-      return () => iframe?.removeEventListener('load', reactivate);
+      return subscribePreviewLoad(reactivate);
     }
     post({ type: 'ss:deactivate' });
-  }, [editMode, post, iframeRef]);
+  }, [editMode, post]);
 
   useEffect(() => () => clearTimers(), [clearTimers]);
 
@@ -199,9 +201,10 @@ export function useCssCascadeEditor({ iframeRef, projectPath, enabled, onToast }
   // Receive the clicked element's signature + its cascade; build the card models.
   useEffect(() => {
     if (!editMode) return;
-    const handler = (e: MessageEvent) => {
-      if (e.source !== iframeRef.current?.contentWindow) return;
-      const d = e.data as {
+    // Delivered by the transport: native iframe messages (source-guarded) or
+    // chrome-bridge relays.
+    const handler = (data: unknown) => {
+      const d = data as {
         type?: string;
         signature?: ElementSignature;
         count?: number;
@@ -381,8 +384,7 @@ export function useCssCascadeEditor({ iframeRef, projectPath, enabled, onToast }
         })();
       }
     };
-    window.addEventListener('message', handler);
-    return () => window.removeEventListener('message', handler);
+    return subscribePreviewMessages(iframeRef, handler);
   }, [editMode, projectPath, post, iframeRef, onToast, clearTimers]);
 
   /** Live-preview a rule's current body in place (in-iframe CSSOM). */
