@@ -20,6 +20,7 @@ import {
   stopChromePreview,
   type ChromeMirrorHandle,
 } from '../../lib/chromeMirror';
+import { asCommandError, formatCommandError } from '../../lib/errors';
 import { logger } from '../../lib/logger';
 import { Button } from '../primitives/Button';
 import { Spinner } from '../primitives/Spinner';
@@ -157,7 +158,9 @@ export function ChromeMirror({ url, cssWidth, scale, reloadToken = 0 }: ChromeMi
         });
       } catch (err) {
         if (cancelled) return;
-        const message = err instanceof Error ? err.message : String(err);
+        // Tauri rejections are structured CommandError objects — String()
+        // on them prints "[object Object]".
+        const message = formatCommandError(asCommandError(err));
         logger.error('[ChromeMirror] Failed to start Chrome preview', { error: message });
         setErrorMessage(message);
         setStatusTracked('error');

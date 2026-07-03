@@ -68,13 +68,27 @@ pub async fn start_chrome_preview(
     height: u32,
     device_scale_factor: f64,
 ) -> Result<u16, String> {
+    // Serialize starts: two concurrent launches for the same window (React
+    // dev double-mount, rapid engine toggles) share a profile dir and race —
+    // one fails to start while the other gets registered and then killed by
+    // the loser's cleanup. Later callers wait, then supersede cleanly via the
+    // stop below.
+    static START_GATE: LazyLock<tokio::sync::Mutex<()>> =
+        LazyLock::new(|| tokio::sync::Mutex::new(()));
+    let _gate = START_GATE.lock().await;
+
     stop_chrome_preview(&window_label, None);
 
+    let viewport = Viewport {
+        width,
+        height,
+        device_scale_factor,
+    };
     let binary = launcher::find_chromium_binary().ok_or(
         "No Chromium-family browser found. Install Google Chrome (or Chromium/Edge) to use the Chrome preview engine.",
     )?;
     tracing::info!("[ChromePreview] Launching {:?}", binary);
-    let launched = launcher::launch(&binary, &window_label).await?;
+    let launched = launcher::launch(&binary, &window_label, viewport).await?;
     let child = launched.child;
 
     let (cdp, events) = cdp::Cdp::connect(&launched.ws_url).await?;
@@ -104,12 +118,18 @@ pub async fn start_chrome_preview(
         .to_string();
 
     cdp.call("Page.enable", Some(&session), json!({})).await?;
-    let viewport = Viewport {
-        width,
-        height,
-        device_scale_factor,
-    };
-    apply_viewport(&cdp, &session, viewport).await?;
+    // The headless window id, for resizing the raster surface later
+    // (best-effort: emulation still applies if the call is unsupported).
+    let window_id = cdp
+        .call(
+            "Browser.getWindowForTarget",
+            None,
+            json!({ "targetId": target_id }),
+        )
+        .await
+        .ok()
+        .and_then(|v| v["windowId"].as_u64());
+    apply_viewport(&cdp, &session, window_id, viewport).await?;
     start_screencast(&cdp, &session, viewport).await?;
 
     // Latest-wins channels: frames and a fatal-status line.
@@ -136,6 +156,7 @@ pub async fn start_chrome_preview(
         listener,
         cdp,
         session,
+        window_id,
         frame_tx,
         status_tx,
         viewport_state,
@@ -188,7 +209,25 @@ pub fn stop_all_chrome_previews() {
     }
 }
 
-async fn apply_viewport(cdp: &cdp::Cdp, session: &str, vp: Viewport) -> Result<(), String> {
+async fn apply_viewport(
+    cdp: &cdp::Cdp,
+    session: &str,
+    window_id: Option<u64>,
+    vp: Viewport,
+) -> Result<(), String> {
+    // Resize the headless window itself: the screencast captures the
+    // compositor surface at window size × launch scale factor, so bounds must
+    // track the viewport or frames get rescaled (blurry). Best-effort — the
+    // emulation override below still handles layout if this is unsupported.
+    if let Some(id) = window_id {
+        let _ = cdp
+            .call(
+                "Browser.setWindowBounds",
+                None,
+                json!({ "windowId": id, "bounds": { "width": vp.width, "height": vp.height } }),
+            )
+            .await;
+    }
     cdp.call(
         "Emulation.setDeviceMetricsOverride",
         Some(session),
@@ -268,6 +307,7 @@ async fn serve_bridge(
     listener: TcpListener,
     cdp: cdp::Cdp,
     session: String,
+    window_id: Option<u64>,
     frame_tx: Arc<watch::Sender<Option<Bytes>>>,
     status_tx: Arc<watch::Sender<Option<String>>>,
     viewport: Arc<tokio::sync::Mutex<Viewport>>,
@@ -280,6 +320,7 @@ async fn serve_bridge(
             stream,
             cdp.clone(),
             session.clone(),
+            window_id,
             frame_tx.clone(),
             status_tx.clone(),
             viewport.clone(),
@@ -311,6 +352,7 @@ async fn serve_client(
     stream: tokio::net::TcpStream,
     cdp: cdp::Cdp,
     session: String,
+    window_id: Option<u64>,
     frame_tx: Arc<watch::Sender<Option<Bytes>>>,
     status_tx: Arc<watch::Sender<Option<String>>>,
     viewport: Arc<tokio::sync::Mutex<Viewport>>,
@@ -408,7 +450,10 @@ async fn serve_client(
                     device_scale_factor: dsf,
                 };
                 *viewport.lock().await = next;
-                if apply_viewport(&cdp, &session, next).await.is_ok() {
+                if apply_viewport(&cdp, &session, window_id, next)
+                    .await
+                    .is_ok()
+                {
                     // Screencast caps are fixed at start time — restart it so
                     // the raster follows the new size.
                     let _ = cdp

@@ -61,7 +61,18 @@ fn playwright_cached_chromium() -> Option<PathBuf> {
 
 /// Launch Chromium headless with remote debugging on an ephemeral port and an
 /// isolated profile, and wait for it to announce its DevTools endpoint.
-pub async fn launch(binary: &PathBuf, window_label: &str) -> Result<LaunchedChromium, String> {
+///
+/// `viewport` sizes the headless window and pins its raster scale: the
+/// screencast captures the compositor surface at window-size × the launch
+/// device-scale-factor, so without these flags every frame comes back at
+/// Chromium's default 800×600 @ 1x and gets stretched blurry across the
+/// canvas. `Emulation.setDeviceMetricsOverride` alone does not change the
+/// headless raster surface.
+pub async fn launch(
+    binary: &PathBuf,
+    window_label: &str,
+    viewport: super::Viewport,
+) -> Result<LaunchedChromium, String> {
     let profile_dir = dirs::home_dir()
         .ok_or("Could not determine home directory")?
         .join(".ship-studio")
@@ -93,6 +104,14 @@ pub async fn launch(binary: &PathBuf, window_label: &str) -> Result<LaunchedChro
         // Chrome binary without one would just signal their running Chrome
         // and exit, leaving nothing to attach to.
         .arg(format!("--user-data-dir={}", profile_dir.display()))
+        .arg(format!(
+            "--window-size={},{}",
+            viewport.width, viewport.height
+        ))
+        .arg(format!(
+            "--force-device-scale-factor={:.4}",
+            viewport.device_scale_factor
+        ))
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::piped())
         .kill_on_drop(true)
