@@ -26,6 +26,8 @@ import {
   setCustomDevCommand,
   getAutoAcceptMode,
   setAutoAcceptMode,
+  getPreviewEngine,
+  setPreviewEngine,
   getHideMainBranchWarning,
   setHideMainBranchWarning,
 } from './project';
@@ -420,6 +422,69 @@ describe('lib/project', () => {
     it('propagates errors from invoke', async () => {
       vi.mocked(core.invoke).mockRejectedValue(new Error('write failed'));
       await expect(setAutoAcceptMode('/abs/project', true)).rejects.toThrow('write failed');
+    });
+  });
+
+  // ============ getPreviewEngine / setPreviewEngine ============
+
+  describe('getPreviewEngine', () => {
+    it('invokes "get_preview_engine" with projectPath and returns the engine', async () => {
+      vi.mocked(core.invoke).mockResolvedValue('chrome');
+
+      const result = await getPreviewEngine('/abs/project');
+
+      expect(core.invoke).toHaveBeenCalledWith('get_preview_engine', {
+        projectPath: '/abs/project',
+      });
+      expect(result).toBe('chrome');
+    });
+
+    it('returns native by default', async () => {
+      vi.mocked(core.invoke).mockResolvedValue('native');
+      const result = await getPreviewEngine('/abs/project');
+      expect(result).toBe('native');
+    });
+
+    it('coerces unexpected backend values to native', async () => {
+      // The backend already normalizes unknown values, but the wrapper is the
+      // type boundary — anything that isn't 'chrome' must resolve to 'native'.
+      vi.mocked(core.invoke).mockResolvedValue('firefox');
+      const result = await getPreviewEngine('/abs/project');
+      expect(result).toBe('native');
+    });
+
+    it('propagates errors from invoke', async () => {
+      vi.mocked(core.invoke).mockRejectedValue(new Error('read failed'));
+      await expect(getPreviewEngine('/abs/project')).rejects.toThrow('read failed');
+    });
+  });
+
+  describe('setPreviewEngine', () => {
+    it('invokes "set_preview_engine" with projectPath + engine', async () => {
+      vi.mocked(core.invoke).mockResolvedValue(undefined);
+
+      await setPreviewEngine('/abs/project', 'chrome');
+
+      expect(core.invoke).toHaveBeenCalledWith('set_preview_engine', {
+        projectPath: '/abs/project',
+        engine: 'chrome',
+      });
+    });
+
+    it('passes through the native case', async () => {
+      vi.mocked(core.invoke).mockResolvedValue(undefined);
+
+      await setPreviewEngine('/abs/project', 'native');
+
+      expect(core.invoke).toHaveBeenCalledWith('set_preview_engine', {
+        projectPath: '/abs/project',
+        engine: 'native',
+      });
+    });
+
+    it('propagates errors from invoke', async () => {
+      vi.mocked(core.invoke).mockRejectedValue(new Error('write failed'));
+      await expect(setPreviewEngine('/abs/project', 'chrome')).rejects.toThrow('write failed');
     });
   });
 

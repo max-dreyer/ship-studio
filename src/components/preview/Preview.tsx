@@ -32,6 +32,7 @@ import {
   type Breakpoint,
 } from '../../hooks/usePreviewResize';
 import { useOptionalToast } from '../../contexts/ToastContext';
+import { useOpenModal } from '../../contexts/ModalContext';
 import { DevServerLogs } from '../terminal/DevServerLogs';
 import { DevServerStatus } from '../terminal/DevServerStatus';
 import { stripAnsi } from '../../lib/ansi';
@@ -65,6 +66,7 @@ import { pathLocale, switchPathLocale } from '../../lib/i18n';
 import { useCommands } from '../../commands/useCommands';
 import { logger } from '../../lib/logger';
 import type { ProjectType } from '../../lib/static-server';
+import type { PreviewEngine } from '../../lib/project';
 
 // SVG icons for breakpoints
 const BreakpointIcon = ({ type }: { type: Breakpoint }) => {
@@ -158,6 +160,10 @@ const BreakpointIcon = ({ type }: { type: Breakpoint }) => {
 interface PreviewProps {
   /** Dev server port (default: 3000) */
   port?: number;
+  /** Preview rendering engine — a per-project Project Settings choice.
+   *  'native' (default) renders in the WebKit iframe; 'chrome' mirrors a
+   *  headless Chromium. */
+  engine?: PreviewEngine;
   /** Absolute path to the project directory */
   projectPath: string;
   /** Callback fired when dev server becomes reachable */
@@ -259,6 +265,7 @@ const INSPECT_PANEL_KEY_STEP_LARGE_PX = 60;
 export const Preview = forwardRef<PreviewHandle, PreviewProps>(function Preview(
   {
     port = 3000,
+    engine = 'native',
     projectPath,
     onServerReady,
     onPageChange,
@@ -710,32 +717,34 @@ export const Preview = forwardRef<PreviewHandle, PreviewProps>(function Preview(
 
   // ── Preview engine: the native WebKit iframe (default, zero-latency) or a
   // mirrored headless Chromium (ChromeMirror — true Blink rendering, what the
-  // user's Chrome shows). Edit mode always runs on the native iframe: the
-  // visual editor's overlay + postMessage protocol lives inside it.
-  const [engine, setEngine] = useState<'native' | 'chrome'>('native');
+  // user's Chrome shows). Chosen per project in Project Settings (the `engine`
+  // prop); persistence and analytics live with the setting handler in App.
+  // Edit mode always runs on the native iframe: the visual editor's overlay +
+  // postMessage protocol lives inside it.
   const chromeEngineActive = engine === 'chrome' && !activeEditMode && conn.serverReady;
-  const toggleEngine = useCallback(() => {
-    setEngine((prev) => {
-      const next = prev === 'chrome' ? 'native' : 'chrome';
-      void trackEvent('preview_engine_changed', { engine: next });
-      return next;
-    });
-  }, []);
+  const openModal = useOpenModal();
   useCommands(
     () => [
       {
         id: 'preview.engine',
-        title:
-          engine === 'chrome'
-            ? 'Preview: switch to native engine (WebKit)'
-            : 'Preview: switch to Chrome engine',
+        title: 'Preview engine…',
         category: 'action' as const,
         when: 'project' as const,
-        keywords: ['chrome', 'chromium', 'engine', 'webkit', 'safari', 'blink', 'browser'],
-        run: () => toggleEngine(),
+        keywords: [
+          'chrome',
+          'chromium',
+          'engine',
+          'webkit',
+          'safari',
+          'blink',
+          'browser',
+          'native',
+          'settings',
+        ],
+        run: () => openModal('projectSettings'),
       },
     ],
-    [engine, toggleEngine]
+    [openModal]
   );
 
   const [iframeSize, setIframeSize] = useState<{ w: number; h: number } | null>(null);
@@ -1184,38 +1193,6 @@ export const Preview = forwardRef<PreviewHandle, PreviewProps>(function Preview(
             );
           })}
         </div>
-
-        {conn.serverReady && (
-          <button
-            type="button"
-            className={`toolbar-icon-btn${engine === 'chrome' ? ' active' : ''}`}
-            aria-pressed={engine === 'chrome'}
-            onClick={toggleEngine}
-            title={
-              engine === 'chrome'
-                ? activeEditMode
-                  ? 'Chrome engine selected (edit mode uses the native engine) — click for native'
-                  : 'Rendering with Chrome — click for the native engine'
-                : 'Rendering with the native engine (WebKit) — click for Chrome'
-            }
-          >
-            {/* Simplified Chrome mark: outer ring, hub, three spokes */}
-            <svg
-              width="15"
-              height="15"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2"
-            >
-              <circle cx="12" cy="12" r="10" />
-              <circle cx="12" cy="12" r="4" />
-              <line x1="12" y1="8" x2="21.2" y2="8" />
-              <line x1="8.5" y1="14" x2="3.9" y2="6" />
-              <line x1="15.5" y1="14" x2="10.9" y2="22" />
-            </svg>
-          </button>
-        )}
 
         {conn.serverReady && conn.externalUrl && <BrowserDropdown url={conn.externalUrl} />}
       </div>

@@ -29,6 +29,7 @@ import { ConflictResolutionModal } from '../branches/ConflictResolutionModal';
 import { OnboardingTerminal } from '../setup';
 import { SuccessIcon, InfoIcon, CloseIcon, DownloadIcon, ZapIcon } from '../icons';
 import type { Toast } from '../../hooks/useToasts';
+import type { PreviewEngine } from '../../lib/project';
 import type { NotificationSettings } from '../../lib/sounds';
 import type { AgentConfig } from '../../lib/agent';
 import type { BranchInfo } from '../../lib/branches';
@@ -140,6 +141,8 @@ export interface WorkspaceModalsProps {
   // Project settings — read state via useModal('projectSettings')
   devServerPort: number;
   onSavePort: (port: number) => void;
+  previewEngine: PreviewEngine;
+  onChangePreviewEngine: (engine: PreviewEngine) => void;
   isWebProject: boolean;
 
   // Shopify store modal — read state via useModal('shopifyStore')
@@ -210,6 +213,8 @@ export function WorkspaceModals({
   onSaveDevCommand,
   devServerPort,
   onSavePort,
+  previewEngine,
+  onChangePreviewEngine,
   isWebProject,
   isShopifyTheme,
   onShopifyStoreSaved,
@@ -466,6 +471,8 @@ export function WorkspaceModals({
         onSave={onSavePort}
         customDevCommand={customDevCommand}
         onSaveDevCommand={onSaveDevCommand}
+        previewEngine={previewEngine}
+        onChangePreviewEngine={onChangePreviewEngine}
         isWebProject={isWebProject}
         projectPath={projectPath}
       />

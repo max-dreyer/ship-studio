@@ -46,7 +46,13 @@ import { WorkspaceView } from './components/workspace/WorkspaceView';
 import { WorkspaceSidebar } from './components/workspace/WorkspaceSidebar';
 import { useProjectRail } from './hooks/useProjectRail';
 import { OnboardingScreen } from './components/setup';
-import { Project, setTerminalState } from './lib/project';
+import {
+  Project,
+  setTerminalState,
+  getPreviewEngine,
+  setPreviewEngine as persistPreviewEngine,
+  type PreviewEngine,
+} from './lib/project';
 import { markSetupComplete, getDefaultAgentId as fetchDefaultAgentId } from './lib/setup';
 import { initDefaultAgent } from './lib/agent';
 import { sessionRegistry } from './lib/sessionRegistry';
@@ -442,6 +448,53 @@ function AppContents({ initialProjectPath }: AppProps) {
     clearBranchState,
     checkPluginSuggestion,
   });
+
+  // Preview engine (native WebKit iframe vs mirrored Chromium) — a per-project
+  // setting persisted in .shipstudio/project.json and edited from Project
+  // Settings. Held here (like the port) so the modal and the live Preview stay
+  // in sync without a reopen.
+  const [previewEngine, setPreviewEngineState] = useState<PreviewEngine>('native');
+  useEffect(() => {
+    // Reset to the default while the saved value loads so a chrome setting
+    // from the previous project never bleeds into the next one.
+    setPreviewEngineState('native');
+    const projectPath = currentProject?.path;
+    if (!projectPath) return;
+    let cancelled = false;
+    getPreviewEngine(projectPath)
+      .then((engine) => {
+        if (!cancelled) setPreviewEngineState(engine);
+      })
+      .catch((err) => {
+        logger.warn('[PreviewEngine] Failed to load preview engine setting', {
+          error: String(err),
+        });
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [currentProject?.path]);
+
+  // Save preview-engine handler: persist, then update state so the live
+  // preview switches immediately (no dev-server restart needed).
+  const handleSavePreviewEngine = useCallback(
+    (engine: PreviewEngine) => {
+      if (!currentProject) return;
+      void (async () => {
+        try {
+          await persistPreviewEngine(currentProject.path, engine);
+          setPreviewEngineState(engine);
+          void trackEvent('preview_engine_changed', { engine });
+        } catch (err) {
+          logger.error('[PreviewEngine] Failed to save preview engine setting', {
+            error: String(err),
+          });
+          showToast('Failed to save preview engine setting', 'error');
+        }
+      })();
+    },
+    [currentProject, showToast]
+  );
 
   // Save port handler: persist, update state, close modal, restart dev server
   const handleSavePort = useCallback(
@@ -996,6 +1049,8 @@ function AppContents({ initialProjectPath }: AppProps) {
       handleAutoAcceptWarningAccept,
       handleSaveDevCommand,
       handleSavePort: handleSavePortCallback,
+      previewEngine,
+      handleSavePreviewEngine,
     }),
     [
       autoAcceptMode,
@@ -1016,6 +1071,8 @@ function AppContents({ initialProjectPath }: AppProps) {
       handleAutoAcceptWarningAccept,
       handleSaveDevCommand,
       handleSavePortCallback,
+      previewEngine,
+      handleSavePreviewEngine,
     ]
   );
 

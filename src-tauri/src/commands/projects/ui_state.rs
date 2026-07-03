@@ -2,7 +2,7 @@
 //!
 //! Per-project UI preferences stored in `.shipstudio/project.json`:
 //! last-opened timestamp, branch prefix preference, hide-main-branch-warning,
-//! auto-accept mode, and terminal tab state.
+//! auto-accept mode, preview engine, and terminal tab state.
 
 use crate::commands::accounts::DEFAULT_ACCOUNT_ID;
 use crate::errors::CommandError;
@@ -213,6 +213,98 @@ pub async fn set_auto_accept_mode(project_path: String, enabled: bool) -> Result
         .map_err(|e| format!("Failed to write project metadata: {e}"))?;
 
     Ok(())
+}
+
+/// The default preview engine: the native WebKit iframe.
+pub const PREVIEW_ENGINE_NATIVE: &str = "native";
+/// The opt-in preview engine: a mirrored headless Chromium.
+pub const PREVIEW_ENGINE_CHROME: &str = "chrome";
+
+/// Validates a preview engine value; only `"native"` and `"chrome"` exist.
+fn validate_preview_engine(engine: &str) -> Result<(), CommandError> {
+    if engine == PREVIEW_ENGINE_NATIVE || engine == PREVIEW_ENGINE_CHROME {
+        Ok(())
+    } else {
+        Err(CommandError::Validation {
+            field: "engine".to_string(),
+            reason: format!(
+                "Unknown preview engine \"{engine}\" — expected \"{PREVIEW_ENGINE_NATIVE}\" or \"{PREVIEW_ENGINE_CHROME}\""
+            ),
+        })
+    }
+}
+
+/// Reads the persisted preview engine for a project directory. Missing
+/// metadata, an unreadable file, or an unknown stored value all degrade to
+/// `"native"` — the setting must never break opening a project.
+fn read_preview_engine(project: &std::path::Path) -> String {
+    let metadata_path = project.join(".shipstudio").join("project.json");
+    if !metadata_path.exists() {
+        return PREVIEW_ENGINE_NATIVE.to_string();
+    }
+
+    let metadata = std::fs::read_to_string(&metadata_path)
+        .ok()
+        .and_then(|contents| serde_json::from_str::<ProjectMetadata>(&contents).ok())
+        .unwrap_or_default();
+
+    match metadata.preview_engine.as_deref() {
+        Some(PREVIEW_ENGINE_CHROME) => PREVIEW_ENGINE_CHROME.to_string(),
+        _ => PREVIEW_ENGINE_NATIVE.to_string(),
+    }
+}
+
+/// Persists the preview engine for a project directory. Native (the default)
+/// is stored as `None` so the field is omitted and the JSON stays clean.
+fn write_preview_engine(project: &std::path::Path, engine: &str) -> Result<(), CommandError> {
+    let shipstudio_dir = project.join(".shipstudio");
+    let metadata_path = shipstudio_dir.join("project.json");
+
+    let mut metadata = if metadata_path.exists() {
+        std::fs::read_to_string(&metadata_path)
+            .ok()
+            .and_then(|contents| serde_json::from_str::<ProjectMetadata>(&contents).ok())
+            .unwrap_or_default()
+    } else {
+        ProjectMetadata::default()
+    };
+
+    metadata.preview_engine = if engine == PREVIEW_ENGINE_CHROME {
+        Some(PREVIEW_ENGINE_CHROME.to_string())
+    } else {
+        None
+    };
+
+    if !shipstudio_dir.exists() {
+        std::fs::create_dir_all(&shipstudio_dir)
+            .map_err(|e| format!("Failed to create .shipstudio directory: {e}"))?;
+    }
+
+    let contents = serde_json::to_string_pretty(&metadata)
+        .map_err(|e| format!("Failed to serialize project metadata: {e}"))?;
+    std::fs::write(&metadata_path, contents)
+        .map_err(|e| format!("Failed to write project metadata: {e}"))?;
+
+    Ok(())
+}
+
+/// Gets the preview engine for a project: `"native"` (default) or `"chrome"`.
+/// Missing or unknown stored values return `"native"`.
+#[tauri::command]
+#[tracing::instrument(fields(project = %project_path))]
+pub async fn get_preview_engine(project_path: String) -> Result<String, CommandError> {
+    let project = validate_project_path(&project_path)?;
+    Ok(read_preview_engine(&project))
+}
+
+/// Sets the preview engine for a project. Only `"native"` and `"chrome"` are
+/// accepted; anything else fails with a `Validation` error.
+#[tauri::command]
+#[tracing::instrument(fields(project = %project_path, engine = %engine))]
+pub async fn set_preview_engine(project_path: String, engine: String) -> Result<(), CommandError> {
+    validate_preview_engine(&engine)?;
+    let project = validate_project_path(&project_path)?;
+    write_preview_engine(&project, &engine)
 }
 
 /// Gets the saved terminal tab state for a project
@@ -488,5 +580,88 @@ mod effective_account_tests {
             DEFAULT_ACCOUNT_ID
         );
         assert_eq!(effective_account_id_in(None, &accounts), DEFAULT_ACCOUNT_ID);
+    }
+}
+
+#[cfg(test)]
+mod preview_engine_tests {
+    use super::*;
+
+    #[test]
+    fn missing_metadata_defaults_to_native() {
+        let tmp = tempfile::tempdir().unwrap();
+        assert_eq!(read_preview_engine(tmp.path()), PREVIEW_ENGINE_NATIVE);
+    }
+
+    #[test]
+    fn chrome_round_trips() {
+        let tmp = tempfile::tempdir().unwrap();
+        write_preview_engine(tmp.path(), PREVIEW_ENGINE_CHROME).unwrap();
+        assert_eq!(read_preview_engine(tmp.path()), PREVIEW_ENGINE_CHROME);
+
+        // Switching back to native clears the field (stored as None) and reads
+        // as native again.
+        write_preview_engine(tmp.path(), PREVIEW_ENGINE_NATIVE).unwrap();
+        assert_eq!(read_preview_engine(tmp.path()), PREVIEW_ENGINE_NATIVE);
+        let json =
+            std::fs::read_to_string(tmp.path().join(".shipstudio").join("project.json")).unwrap();
+        assert!(
+            !json.contains("preview_engine"),
+            "native must be stored as an omitted field, got: {json}"
+        );
+    }
+
+    #[test]
+    fn unknown_stored_value_reads_as_native() {
+        let tmp = tempfile::tempdir().unwrap();
+        let shipstudio_dir = tmp.path().join(".shipstudio");
+        std::fs::create_dir_all(&shipstudio_dir).unwrap();
+        let mut metadata = ProjectMetadata::default();
+        metadata.preview_engine = Some("firefox".to_string());
+        std::fs::write(
+            shipstudio_dir.join("project.json"),
+            serde_json::to_string_pretty(&metadata).unwrap(),
+        )
+        .unwrap();
+
+        assert_eq!(read_preview_engine(tmp.path()), PREVIEW_ENGINE_NATIVE);
+    }
+
+    #[test]
+    fn write_preserves_sibling_metadata_fields() {
+        let tmp = tempfile::tempdir().unwrap();
+        let shipstudio_dir = tmp.path().join(".shipstudio");
+        std::fs::create_dir_all(&shipstudio_dir).unwrap();
+        let mut metadata = ProjectMetadata::default();
+        metadata.dev_server_port = Some(4321);
+        std::fs::write(
+            shipstudio_dir.join("project.json"),
+            serde_json::to_string_pretty(&metadata).unwrap(),
+        )
+        .unwrap();
+
+        write_preview_engine(tmp.path(), PREVIEW_ENGINE_CHROME).unwrap();
+
+        let contents = std::fs::read_to_string(shipstudio_dir.join("project.json")).unwrap();
+        let parsed: ProjectMetadata = serde_json::from_str(&contents).unwrap();
+        assert_eq!(parsed.dev_server_port, Some(4321));
+        assert_eq!(
+            parsed.preview_engine,
+            Some(PREVIEW_ENGINE_CHROME.to_string())
+        );
+    }
+
+    #[test]
+    fn validate_accepts_only_native_and_chrome() {
+        assert!(validate_preview_engine(PREVIEW_ENGINE_NATIVE).is_ok());
+        assert!(validate_preview_engine(PREVIEW_ENGINE_CHROME).is_ok());
+
+        for bad in ["firefox", "Chrome", "NATIVE", "", "webkit"] {
+            let err = validate_preview_engine(bad).expect_err("must reject unknown engine");
+            assert!(
+                matches!(err, CommandError::Validation { ref field, .. } if field == "engine"),
+                "expected Validation error for {bad:?}, got: {err:?}"
+            );
+        }
     }
 }

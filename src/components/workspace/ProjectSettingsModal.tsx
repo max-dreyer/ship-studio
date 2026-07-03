@@ -1,7 +1,7 @@
 /**
  * Modal for configuring project settings.
  *
- * Currently supports setting the dev server port.
+ * Currently supports setting the dev server port and the preview engine.
  * The parent component handles persistence via Tauri commands.
  */
 
@@ -10,7 +10,7 @@ import '../../styles/features/notifications.css';
 import { ModalFrame } from '../primitives/ModalFrame';
 import { Button } from '../primitives/Button';
 import { useModal } from '../../contexts/ModalContext';
-import { getForceStaticServe, setForceStaticServe } from '../../lib/project';
+import { getForceStaticServe, setForceStaticServe, type PreviewEngine } from '../../lib/project';
 import { logger } from '../../lib/logger';
 
 interface ProjectSettingsModalProps {
@@ -19,16 +19,42 @@ interface ProjectSettingsModalProps {
   /** Only shown for generic (non-web-framework) projects */
   customDevCommand?: string | null;
   onSaveDevCommand?: (command: string | null) => void;
+  /** Current preview engine — controlled by the parent (persisted per project). */
+  previewEngine?: PreviewEngine;
+  /** Persists the engine and updates the live preview immediately. */
+  onChangePreviewEngine?: (engine: PreviewEngine) => void;
   isWebProject?: boolean;
   /** Absolute project path — enables the "serve as static site" override. */
   projectPath?: string;
 }
+
+/** Option copy for the preview engine picker. */
+const PREVIEW_ENGINE_OPTIONS: Array<{
+  value: PreviewEngine;
+  label: string;
+  description: string;
+}> = [
+  {
+    value: 'native',
+    label: 'Native (WebKit) — recommended',
+    description: 'Smoothest and most responsive. Renders with the same engine as the app.',
+  },
+  {
+    value: 'chrome',
+    label: 'Chrome',
+    description:
+      'Renders your site with the same engine most visitors use. Slightly less smooth, but on ' +
+      'some projects and devices it’s more accurate — try it if your site looks different in Chrome.',
+  },
+];
 
 export function ProjectSettingsModal({
   currentPort,
   onSave,
   customDevCommand,
   onSaveDevCommand,
+  previewEngine,
+  onChangePreviewEngine,
   isWebProject,
   projectPath,
 }: ProjectSettingsModalProps) {
@@ -36,6 +62,9 @@ export function ProjectSettingsModal({
   const [port, setPort] = useState(currentPort);
   const [devCommand, setDevCommand] = useState(customDevCommand ?? '');
   const showDevCommand = !isWebProject && onSaveDevCommand;
+  // The preview engine only matters when a web preview exists. Selection
+  // persists immediately (no Save needed) and the live preview follows.
+  const showPreviewEngine = isWebProject && previewEngine !== undefined && onChangePreviewEngine;
   // The static-serve override is only meaningful for non-web (generic) projects
   // — a detected framework already serves itself.
   const showForceStatic = !isWebProject && !!projectPath;
@@ -183,6 +212,65 @@ export function ProjectSettingsModal({
                   If set, this command will start automatically and can be restarted from the
                   toolbar. Leave blank to manage the dev server yourself in the terminal.
                 </span>
+              </div>
+            </div>
+          )}
+          {showPreviewEngine && (
+            <div className="notification-setting-section">
+              <div
+                style={{ display: 'flex', flexDirection: 'column', gap: 'var(--spacing-sm)' }}
+                role="radiogroup"
+                aria-label="Preview engine"
+              >
+                <label style={{ fontSize: 13, fontWeight: 500, color: 'var(--text-primary)' }}>
+                  Preview Engine
+                </label>
+                {PREVIEW_ENGINE_OPTIONS.map((option) => (
+                  <label
+                    key={option.value}
+                    style={{
+                      display: 'flex',
+                      alignItems: 'flex-start',
+                      gap: 'var(--spacing-sm)',
+                      cursor: 'pointer',
+                    }}
+                  >
+                    <input
+                      type="radio"
+                      name="preview-engine"
+                      value={option.value}
+                      checked={previewEngine === option.value}
+                      onChange={() => onChangePreviewEngine(option.value)}
+                      style={{ marginTop: 2 }}
+                    />
+                    <span
+                      style={{
+                        display: 'flex',
+                        flexDirection: 'column',
+                        gap: 'var(--spacing-xs)',
+                      }}
+                    >
+                      <span
+                        style={{
+                          fontSize: 'var(--font-size-sm)',
+                          fontWeight: 500,
+                          color: 'var(--text-primary)',
+                        }}
+                      >
+                        {option.label}
+                      </span>
+                      <span
+                        style={{
+                          fontSize: 'var(--font-size-xs)',
+                          color: 'var(--text-muted)',
+                          lineHeight: 1.4,
+                        }}
+                      >
+                        {option.description}
+                      </span>
+                    </span>
+                  </label>
+                ))}
               </div>
             </div>
           )}

@@ -689,6 +689,28 @@ export async function setForceStaticServe(projectPath: string, force: boolean): 
   return invoke<void>('set_force_static_serve', { projectPath, force });
 }
 
+/** Rendering engine for the workspace preview. */
+export type PreviewEngine = 'native' | 'chrome';
+
+/**
+ * Get the preview engine for a project. Missing or unknown persisted values
+ * resolve to `'native'` (the default WebKit iframe).
+ * @param projectPath - Absolute path to the project directory
+ */
+export async function getPreviewEngine(projectPath: string): Promise<PreviewEngine> {
+  const engine = await invoke<string>('get_preview_engine', { projectPath });
+  return engine === 'chrome' ? 'chrome' : 'native';
+}
+
+/**
+ * Set the preview engine for a project.
+ * @param projectPath - Absolute path to the project directory
+ * @param engine - `'native'` (WebKit iframe) or `'chrome'` (mirrored Chromium)
+ */
+export async function setPreviewEngine(projectPath: string, engine: PreviewEngine): Promise<void> {
+  return invoke<void>('set_preview_engine', { projectPath, engine });
+}
+
 /** A runnable app discovered inside a monorepo at import time. */
 export interface WorkspaceInfo {
   /** Package name from the workspace's `package.json`. */

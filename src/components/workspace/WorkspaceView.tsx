@@ -61,7 +61,7 @@ import { TerminalSplitDividers } from './TerminalSplitDividers';
 import { PluginsDropdown } from '../plugins/PluginsDropdown';
 import { getAgentById } from '../../lib/agent';
 import type { AgentConfig } from '../../lib/agent';
-import type { Project } from '../../lib/project';
+import type { Project, PreviewEngine } from '../../lib/project';
 import { isMobileProjectType, type ProjectType } from '../../lib/static-server';
 import { ShopifySetup } from '../shopify/ShopifySetup';
 import { useShopifyTheme } from '../../hooks/useShopifyTheme';
@@ -288,6 +288,9 @@ interface LifecycleProps {
   handleAutoAcceptWarningAccept: () => void;
   handleSaveDevCommand: (command: string | null) => void;
   handleSavePort: (port: number) => void;
+  /** Preview rendering engine (per-project setting from Project Settings). */
+  previewEngine: PreviewEngine;
+  handleSavePreviewEngine: (engine: PreviewEngine) => void;
 }
 
 // ---------------------------------------------------------------------------
@@ -1411,6 +1414,7 @@ export const WorkspaceView = memo(function WorkspaceView({
                             key={`${currentProject.path}-${devServerPort}`}
                             ref={previewRef}
                             port={devServerPort}
+                            engine={lifecycle.previewEngine}
                             projectPath={currentProject.path}
                             isStaticProject={projectType === 'statichtml'}
                             projectType={projectType}
@@ -1585,6 +1589,8 @@ export const WorkspaceView = memo(function WorkspaceView({
           onSaveDevCommand={handleSaveDevCommand}
           devServerPort={devServerPort}
           onSavePort={lifecycle.handleSavePort}
+          previewEngine={lifecycle.previewEngine}
+          onChangePreviewEngine={lifecycle.handleSavePreviewEngine}
           isWebProject={isWebProject}
           isShopifyTheme={shopify.isShopifyTheme}
           onShopifyStoreSaved={shopify.connect}

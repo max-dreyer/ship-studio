@@ -205,6 +205,12 @@ pub struct ProjectMetadata {
     /// auto-detection.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub force_static_serve: Option<bool>,
+    /// Preview rendering engine for the workspace preview: `"native"` (WebKit
+    /// iframe, the default) or `"chrome"` (mirrored headless Chromium).
+    /// `None` (field omitted) means native, so the JSON stays clean for the
+    /// common case. Unknown values are treated as native on read.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub preview_engine: Option<String>,
     /// Saved terminal tab state for session restoration
     #[serde(skip_serializing_if = "Option::is_none")]
     pub terminal_state: Option<TerminalState>,
@@ -262,6 +268,7 @@ impl Default for ProjectMetadata {
             custom_dev_command: None,
             dev_server_port: None,
             force_static_serve: None,
+            preview_engine: None,
             terminal_state: None,
             custom_thumbnail: None,
             workspace_subpath: None,
@@ -874,6 +881,27 @@ mod metadata_tests {
         assert!(!legacy_json.contains("force_static_serve"));
         let parsed: ProjectMetadata = serde_json::from_str(&legacy_json).unwrap();
         assert_eq!(parsed.force_static_serve, None);
+    }
+
+    #[test]
+    fn preview_engine_is_omitted_when_unset_and_round_trips_when_set() {
+        // Native (the default) is stored as None so the JSON stays clean.
+        let meta = ProjectMetadata::default();
+        assert_eq!(meta.preview_engine, None);
+        let json = serde_json::to_string(&meta).unwrap();
+        assert!(
+            !json.contains("preview_engine"),
+            "None should not serialize the field (skip_serializing_if), got: {json}"
+        );
+
+        let meta = ProjectMetadata {
+            preview_engine: Some("chrome".to_string()),
+            ..Default::default()
+        };
+        let json = serde_json::to_string(&meta).unwrap();
+        assert!(json.contains("\"preview_engine\":\"chrome\""));
+        let parsed: ProjectMetadata = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed.preview_engine, Some("chrome".to_string()));
     }
 }
 
