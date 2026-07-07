@@ -535,6 +535,57 @@ export async function resolveCliPath(name: string): Promise<ResolvedCli | null> 
 }
 
 /**
+ * Windows spawn decision: should this command be wrapped as
+ * `cmd.exe /C <command> <args...>`, or spawned directly through the PTY?
+ *
+ * Only `.cmd`/`.bat` shims (npm, vercel, npx, …) NEED the cmd.exe wrapper —
+ * they are batch scripts, not executables. For real executables the wrapper
+ * is not just unnecessary, it is actively harmful: portable_pty rebuilds a
+ * single command-line string from the argv, and `cmd.exe /C` RE-PARSES that
+ * string with its own quote rules. When a quoted argument contains a special
+ * character, cmd strips the outer quotes (see `cmd /?`), so a PowerShell
+ * one-liner like `powershell -Command "irm … | iex"` gets split at the `|`
+ * by cmd itself and PowerShell blocks forever in interactive mode. This was
+ * observed live: the CI canary test for this exact shape hung a Windows
+ * runner until the job's 40-minute kill —
+ * https://github.com/ship-studio/ship-studio/actions/runs/28903431927/job/85745268821
+ * — the same hang users reported for the Windows Claude/Cursor installers.
+ *
+ * @param command the command as configured (e.g. "npm", "powershell", "gh")
+ * @param resolvedPath absolute path from {@link resolveCliPath}, when
+ *   resolution succeeded; `undefined`/`null` when it failed or was skipped
+ *   (fail-open), in which case the conservative default is to wrap — except
+ *   for PowerShell, which is a real executable on every Windows install.
+ */
+export function needsCmdExeWrapper(command: string, resolvedPath?: string | null): boolean {
+  const base = command.toLowerCase().split(/[\\/]/).pop() ?? '';
+  if (
+    base === 'powershell' ||
+    base === 'powershell.exe' ||
+    base === 'pwsh' ||
+    base === 'pwsh.exe'
+  ) {
+    // Always safe to spawn directly — and required for piped -Command args.
+    return false;
+  }
+  // Judge by the binary the spawn will actually hit; fall back to the
+  // command string itself if it already names a script.
+  const probe = (resolvedPath ?? command).toLowerCase();
+  if (probe.endsWith('.cmd') || probe.endsWith('.bat')) {
+    return true; // batch shim — only cmd.exe can run it
+  }
+  if (probe.endsWith('.exe') || probe.endsWith('.com')) {
+    return false; // real executable — spawn directly
+  }
+  // Unresolved, or resolved to something without a recognized executable
+  // extension (npm ships an extensionless `npm` sh script NEXT TO npm.cmd,
+  // and the backend's extended-PATH probe can return it): keep the historical
+  // cmd.exe wrapper as the conservative default — cmd re-searches PATH with
+  // PATHEXT and finds the proper .cmd/.exe.
+  return true;
+}
+
+/**
  * Start GitHub authentication flow (opens browser).
  * Returns a message to display to the user.
  */

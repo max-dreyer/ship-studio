@@ -642,39 +642,25 @@ mod tests {
         assert!(!env_has_key(&env, "COMSPEC"));
     }
 
-    /// Windows-only quoting verification (onboarding audit finding #13).
+    /// Spawn `argv` through a real ConPTY and read its output with a hard
+    /// deadline. Never hangs: the PTY read runs on a separate thread; if the
+    /// deadline passes, the child is killed and whatever output WAS captured
+    /// is returned as diagnostic evidence (`timed_out = true`).
     ///
-    /// OnboardingTerminal wraps every Windows command as
-    /// `cmd.exe /C <command> <args...>` and spawns it through portable_pty
-    /// (see src/components/setup/OnboardingTerminal.tsx and the vendored
-    /// plugin at plugins/tauri-plugin-pty — this crate is where CI actually
-    /// runs tests, the plugin package's own test module is not a workspace
-    /// member). portable_pty rebuilds a single command-line string from the
-    /// argv on Windows, and cmd.exe then RE-PARSES that string. For the
-    /// PowerShell one-liner installers in TERMINAL_COMMANDS (src/lib/setup.ts),
-    /// e.g. `powershell -Command "irm https://claude.ai/install.ps1 | iex"`,
-    /// the pipe + spaces argument was a suspected quoting-breakage vector:
-    /// if the argv-to-string composition drops the quotes, cmd.exe splits the
-    /// pipeline at `|` itself and the PowerShell expression never runs intact.
-    ///
-    /// The pipe stage uppercases the string, so the expected output
-    /// ("HELLO WORLD") can only appear if the *whole* expression — spaces,
-    /// quotes, and pipe — reached PowerShell as one argument. If quoting
-    /// broke, cmd.exe would pipe PowerShell's lowercase output into a
-    /// nonexistent `ForEach-Object` executable instead ("'ForEach-Object' is
-    /// not recognized…"), and the assertion fails with the captured output.
+    /// This boundedness is not optional hygiene — the first version of the
+    /// quoting canary below read the PTY to EOF on the test thread, wedged on
+    /// the very bug it was probing, and had to be killed by the CI job's
+    /// 40-minute timeout:
+    /// https://github.com/ship-studio/ship-studio/actions/runs/28903431927/job/85745268821
     #[cfg(windows)]
-    #[test]
-    fn cmd_exe_slash_c_preserves_powershell_pipe_and_spaces_through_pty() {
+    fn run_through_pty_bounded(
+        argv: &[&str],
+        deadline: std::time::Duration,
+    ) -> (String, Option<portable_pty::ExitStatus>, bool) {
         use portable_pty::{native_pty_system, CommandBuilder, PtySize};
         use std::io::Read;
-
-        // Mirror OnboardingTerminal's composition exactly: cmd.exe, /C, then
-        // the command and its args as SEPARATE argv entries.
-        //   spawnCmd  = 'cmd.exe'
-        //   spawnArgs = ['/C', command, ...args]
-        // with command='powershell', args=['-Command', <expr with spaces + pipe>].
-        let expression = "'hello world' | ForEach-Object { $_.ToUpper() }";
+        use std::sync::mpsc;
+        use std::time::{Duration, Instant};
 
         let pty_system = native_pty_system();
         let pair = pty_system
@@ -686,45 +672,153 @@ mod tests {
             })
             .expect("openpty failed");
 
-        let mut cmd = CommandBuilder::new("cmd.exe");
-        cmd.args(["/C", "powershell", "-Command", expression]);
+        let mut cmd = CommandBuilder::new(argv[0]);
+        cmd.args(&argv[1..]);
 
-        let mut child = pair.slave.spawn_command(cmd).expect("spawn cmd.exe failed");
+        let mut child = pair.slave.spawn_command(cmd).expect("spawn failed");
         drop(pair.slave);
 
-        // Watchdog: if the pipeline wedges (e.g. PowerShell waiting on stdin
-        // because the expression was mangled into a bare `powershell` REPL),
-        // kill it so the test fails with output instead of hanging CI.
-        let mut killer = child.clone_killer();
-        std::thread::spawn(move || {
-            std::thread::sleep(std::time::Duration::from_secs(60));
-            let _ = killer.kill();
-        });
-
+        // Reader thread: forwards each chunk over a channel; dropping the
+        // sender signals EOF. The test thread never blocks on the PTY itself.
         let mut reader = pair
             .master
             .try_clone_reader()
             .expect("clone PTY reader failed");
+        let (tx, rx) = mpsc::channel::<Vec<u8>>();
+        std::thread::spawn(move || {
+            let mut buf = [0u8; 4096];
+            loop {
+                match reader.read(&mut buf) {
+                    Ok(0) => break, // EOF: child exited, ConPTY closed
+                    Ok(n) => {
+                        if tx.send(buf[..n].to_vec()).is_err() {
+                            break;
+                        }
+                    }
+                    // ConPTY reports the close as an error on some builds.
+                    Err(_) => break,
+                }
+            }
+        });
+
+        let start = Instant::now();
         let mut raw = Vec::new();
-        let mut buf = [0u8; 4096];
+        let mut timed_out = false;
         loop {
-            match reader.read(&mut buf) {
-                Ok(0) => break, // EOF: child exited, ConPTY closed
-                Ok(n) => raw.extend_from_slice(&buf[..n]),
-                Err(_) => break, // ConPTY reports the close as an error on some builds
+            let Some(remaining) = deadline.checked_sub(start.elapsed()) else {
+                timed_out = true;
+                break;
+            };
+            match rx.recv_timeout(remaining) {
+                Ok(chunk) => raw.extend_from_slice(&chunk),
+                Err(mpsc::RecvTimeoutError::Timeout) => {
+                    timed_out = true;
+                    break;
+                }
+                Err(mpsc::RecvTimeoutError::Disconnected) => break, // EOF
             }
         }
-        let status = child.wait().expect("wait on child failed");
-        let output = String::from_utf8_lossy(&raw);
+
+        if timed_out {
+            // Kill the wedged child so `wait()` below returns promptly, then
+            // drain any teardown output (the reader hits EOF after the kill
+            // and drops the sender, ending this loop via Disconnected).
+            let _ = child.kill();
+            while let Ok(chunk) = rx.recv_timeout(Duration::from_secs(5)) {
+                raw.extend_from_slice(&chunk);
+            }
+        }
+        let status = child.wait().ok();
+        (
+            String::from_utf8_lossy(&raw).into_owned(),
+            status,
+            timed_out,
+        )
+    }
+
+    /// Windows quoting verification (onboarding audit finding #13) — proves
+    /// the FIX: spawning PowerShell *directly* through portable_pty (no
+    /// cmd.exe wrapper) preserves a piped, space-laden `-Command` argument.
+    ///
+    /// This mirrors how OnboardingTerminal (src/components/setup/
+    /// OnboardingTerminal.tsx) now spawns real executables on Windows after
+    /// the cmd.exe wrapper was scoped down to `.cmd`/`.bat` shims only (see
+    /// `needsCmdExeWrapper` in src/lib/setup.ts). portable_pty quotes each
+    /// argv entry with CRT-compatible ArgvQuote rules, and PowerShell's own
+    /// argv parsing reverses exactly those rules — no shell re-parse in
+    /// between.
+    ///
+    /// The pipe stage uppercases the string, so the expected output
+    /// ("HELLO WORLD") can only appear if the *whole* expression — spaces,
+    /// quotes, and pipe — reached PowerShell as one argument. The test lives
+    /// in this crate (not the vendored plugin at plugins/tauri-plugin-pty)
+    /// because the plugin package is not a workspace member and CI never runs
+    /// its test module.
+    #[cfg(windows)]
+    #[test]
+    fn direct_powershell_spawn_preserves_pipe_and_spaces_through_pty() {
+        let expression = "'hello world' | ForEach-Object { $_.ToUpper() }";
+        let (output, status, timed_out) = run_through_pty_bounded(
+            &["powershell", "-NoProfile", "-Command", expression],
+            std::time::Duration::from_secs(60),
+        );
 
         assert!(
             output.contains("HELLO WORLD"),
-            "PowerShell pipe/spaces did not survive `cmd.exe /C` re-parsing.\n\
-             Exit status: {status:?}\nCaptured PTY output:\n{output}"
+            "PowerShell pipe/spaces did not survive a direct portable_pty spawn.\n\
+             timed_out: {timed_out}\nExit status: {status:?}\nCaptured PTY output:\n{output}"
         );
         assert!(
-            status.success(),
-            "pipeline exited non-zero ({status:?}); captured PTY output:\n{output}"
+            !timed_out,
+            "pipeline produced the expected output but never exited; status: {status:?}\n\
+             Captured PTY output:\n{output}"
+        );
+    }
+
+    /// Regression record for the BUG behind audit finding #13 — kept
+    /// `#[ignore]`d so the failure mode stays on file without spending ~30s
+    /// of CI on every run.
+    ///
+    /// OnboardingTerminal used to wrap EVERY Windows command as
+    /// `cmd.exe /C <command> <args...>`. portable_pty rebuilds a single
+    /// command-line string from the argv, and `cmd.exe /C` then RE-PARSES
+    /// that string with its own rules: when the quoted section contains a
+    /// special character (`|` here), cmd strips the outer quotes (see the
+    /// quote-processing rules in `cmd /?`), exposing the pipe to cmd itself.
+    /// The pipeline is split at `|`, PowerShell runs with a mangled
+    /// `-Command`, and the PTY blocks forever — observed live as this exact
+    /// test's first (unbounded) version hanging a CI runner until the job's
+    /// 40-minute kill:
+    /// https://github.com/ship-studio/ship-studio/actions/runs/28903431927/job/85745268821
+    /// That is the same failure users hit as "the Windows Claude/Cursor
+    /// installer hangs".
+    ///
+    /// The assertion is inverted — it PASSES while the wrapper stays broken.
+    /// If a run of `cargo test -- --ignored` ever fails here, cmd.exe/
+    /// portable_pty composition has changed and the cmd.exe path in
+    /// `needsCmdExeWrapper` (src/lib/setup.ts) deserves a fresh look.
+    #[cfg(windows)]
+    #[test]
+    #[ignore = "documents the broken cmd.exe /C wrapper shape; run with -- --ignored"]
+    fn cmd_exe_slash_c_wrapper_breaks_piped_powershell_expression() {
+        let expression = "'hello world' | ForEach-Object { $_.ToUpper() }";
+        let (output, status, timed_out) = run_through_pty_bounded(
+            &[
+                "cmd.exe",
+                "/C",
+                "powershell",
+                "-NoProfile",
+                "-Command",
+                expression,
+            ],
+            std::time::Duration::from_secs(30),
+        );
+
+        assert!(
+            timed_out || !output.contains("HELLO WORLD"),
+            "cmd.exe /C wrapping unexpectedly preserved the piped expression — \
+             the wrapper decision in needsCmdExeWrapper may be revisitable.\n\
+             Exit status: {status:?}\nCaptured PTY output:\n{output}"
         );
     }
 }

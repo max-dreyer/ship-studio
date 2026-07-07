@@ -27,6 +27,7 @@ import {
   isWizardStepComplete,
   getStepItems,
   findFirstIncompleteStep,
+  needsCmdExeWrapper,
 } from './setup';
 import {
   FRESH_INSTALL_ITEMS,
@@ -484,6 +485,58 @@ describe('TERMINAL_COMMANDS', () => {
     expect(script).toContain('exit 1');
     expect(script).toContain('[ -n "$script" ]');
     expect(script).toContain('exec /bin/bash -c "$script"');
+  });
+});
+
+// ============ needsCmdExeWrapper (Windows spawn shape) ============
+
+describe('needsCmdExeWrapper', () => {
+  // Wrapping a real executable in `cmd.exe /C` makes cmd re-parse the
+  // portable_pty-composed command line; its quote rules strip the quotes
+  // around args containing special chars, so a piped PowerShell one-liner
+  // installer gets split at the `|` and hangs (audit #13; observed as a CI
+  // Windows runner hang — see needsCmdExeWrapper's doc comment for the link).
+
+  it('wraps .cmd shims (npm-style) — batch scripts need cmd.exe', () => {
+    expect(needsCmdExeWrapper('npm', 'C:\\Program Files\\nodejs\\npm.cmd')).toBe(true);
+    expect(needsCmdExeWrapper('vercel', 'C:\\Users\\x\\AppData\\Roaming\\npm\\vercel.cmd')).toBe(
+      true
+    );
+    expect(needsCmdExeWrapper('legacy', 'C:\\tools\\legacy.BAT')).toBe(true);
+  });
+
+  it('never wraps PowerShell, even unresolved — real exe on every Windows', () => {
+    expect(needsCmdExeWrapper('powershell')).toBe(false);
+    expect(needsCmdExeWrapper('powershell', null)).toBe(false);
+    expect(needsCmdExeWrapper('pwsh', undefined)).toBe(false);
+    expect(needsCmdExeWrapper('POWERSHELL.EXE')).toBe(false);
+  });
+
+  it('spawns resolved real executables directly', () => {
+    expect(needsCmdExeWrapper('gh', 'C:\\Program Files\\GitHub CLI\\gh.exe')).toBe(false);
+    expect(needsCmdExeWrapper('claude', 'C:\\Users\\x\\.local\\bin\\claude.exe')).toBe(false);
+    expect(needsCmdExeWrapper('codex', 'C:\\Users\\x\\AppData\\Local\\codex\\codex.exe')).toBe(
+      false
+    );
+  });
+
+  it('keeps the conservative cmd.exe wrapper for unresolved unknown commands', () => {
+    // Resolution failed open — the command may be an npm-style .cmd shim
+    // that only PATH search inside cmd.exe would find.
+    expect(needsCmdExeWrapper('some-tool', undefined)).toBe(true);
+    expect(needsCmdExeWrapper('npm', null)).toBe(true);
+  });
+
+  it('wraps when the resolved path has no recognized executable extension', () => {
+    // npm ships an extensionless `npm` sh script NEXT TO npm.cmd; the
+    // backend's extended-PATH probe can return it. Direct-spawning a shell
+    // script via CreateProcess would fail — let cmd.exe re-search PATHEXT.
+    expect(needsCmdExeWrapper('npm', 'C:\\Users\\x\\AppData\\Roaming\\npm\\npm')).toBe(true);
+  });
+
+  it('judges a pathful command by its own extension when unresolved', () => {
+    expect(needsCmdExeWrapper('C:\\x\\tool.cmd')).toBe(true);
+    expect(needsCmdExeWrapper('C:\\x\\pwsh.exe')).toBe(false);
   });
 });
 
