@@ -309,8 +309,14 @@ export function rulesToLocate(
  *  `[name]_[local]__[hash]` (Next.js — `Hero_title__x7f2a`), or any class ending in a
  *  `__`-joined hash of 4+ chars (Vite's `_title_x7f2a_1`-style is caught by locate
  *  failing anyway; this targets the double-underscore convention). */
-const CSS_MODULE_FULL_RE = /^\w+_\w+__[A-Za-z0-9_-]+$/;
-const CSS_MODULE_HASH_SUFFIX_RE = /__[A-Za-z0-9_-]{4,}$/;
+// The hash segment must actually look like a hash — at least one digit or
+// uppercase letter. Without that, BEM class names from third-party package
+// CSS (`.react-datepicker__header`, `.card__title`) match the `__suffix`
+// shape and get a wrong "edit the .module.css" explanation. Webpack/Next
+// hashes are mixed-case base62 (`x7f2a`, `Ab3Kx`), so this stays reliable;
+// a rare all-lowercase-alpha hash just falls back to the generic wording.
+const CSS_MODULE_FULL_RE = /^\w+_\w+__(?=[A-Za-z0-9_-]*[0-9A-Z])[A-Za-z0-9_-]+$/;
+const CSS_MODULE_HASH_SUFFIX_RE = /__(?=[A-Za-z0-9_-]*[0-9A-Z])[A-Za-z0-9_-]{4,}$/;
 
 /** True when any class in `selector` looks like a build-time-hashed CSS-Module class.
  *  Used only to pick a better read-only explanation — never to gate editing (the
@@ -330,7 +336,7 @@ export function looksLikeCssModuleSelector(selector: string): boolean {
 export function cssModuleFileHint(selector: string): string | null {
   const classes = selector.match(/\.([A-Za-z0-9_-]+)/g) ?? [];
   for (const c of classes) {
-    const m = /^([A-Za-z0-9-]+?)_\w+__[A-Za-z0-9_-]+$/.exec(c.slice(1));
+    const m = /^([A-Za-z0-9-]+?)_\w+__(?=[A-Za-z0-9_-]*[0-9A-Z])[A-Za-z0-9_-]+$/.exec(c.slice(1));
     if (m) return `${m[1]}.module.css`;
   }
   return null;

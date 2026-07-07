@@ -147,6 +147,17 @@ describe('looksLikeCssModuleSelector', () => {
     expect(looksLikeCssModuleSelector('h1')).toBe(false);
     expect(looksLikeCssModuleSelector('.snake_case_name')).toBe(false);
   });
+
+  it('rejects BEM classes from third-party package CSS — the suffix must look like a hash', () => {
+    // Real-world BEM with long, all-lowercase "elements": these live in
+    // package stylesheets (not_found in a Next.js project) and must NOT get
+    // the "edit the .module.css" explanation. A hash has a digit/uppercase.
+    expect(looksLikeCssModuleSelector('.react-datepicker__header')).toBe(false);
+    expect(looksLikeCssModuleSelector('.card__title')).toBe(false);
+    expect(looksLikeCssModuleSelector('.swiper__wrapper .swiper__slide')).toBe(false);
+    // Still recognizes genuine hashes alongside BEM-ish nesting.
+    expect(looksLikeCssModuleSelector('.card__title .Hero_title__x7f2a')).toBe(true);
+  });
 });
 
 describe('cssModuleFileHint', () => {
