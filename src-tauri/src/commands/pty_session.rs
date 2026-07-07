@@ -641,4 +641,90 @@ mod tests {
         assert!(env_has_key(&env, "systemroot"));
         assert!(!env_has_key(&env, "COMSPEC"));
     }
+
+    /// Windows-only quoting verification (onboarding audit finding #13).
+    ///
+    /// OnboardingTerminal wraps every Windows command as
+    /// `cmd.exe /C <command> <args...>` and spawns it through portable_pty
+    /// (see src/components/setup/OnboardingTerminal.tsx and the vendored
+    /// plugin at plugins/tauri-plugin-pty — this crate is where CI actually
+    /// runs tests, the plugin package's own test module is not a workspace
+    /// member). portable_pty rebuilds a single command-line string from the
+    /// argv on Windows, and cmd.exe then RE-PARSES that string. For the
+    /// PowerShell one-liner installers in TERMINAL_COMMANDS (src/lib/setup.ts),
+    /// e.g. `powershell -Command "irm https://claude.ai/install.ps1 | iex"`,
+    /// the pipe + spaces argument was a suspected quoting-breakage vector:
+    /// if the argv-to-string composition drops the quotes, cmd.exe splits the
+    /// pipeline at `|` itself and the PowerShell expression never runs intact.
+    ///
+    /// The pipe stage uppercases the string, so the expected output
+    /// ("HELLO WORLD") can only appear if the *whole* expression — spaces,
+    /// quotes, and pipe — reached PowerShell as one argument. If quoting
+    /// broke, cmd.exe would pipe PowerShell's lowercase output into a
+    /// nonexistent `ForEach-Object` executable instead ("'ForEach-Object' is
+    /// not recognized…"), and the assertion fails with the captured output.
+    #[cfg(windows)]
+    #[test]
+    fn cmd_exe_slash_c_preserves_powershell_pipe_and_spaces_through_pty() {
+        use portable_pty::{native_pty_system, CommandBuilder, PtySize};
+        use std::io::Read;
+
+        // Mirror OnboardingTerminal's composition exactly: cmd.exe, /C, then
+        // the command and its args as SEPARATE argv entries.
+        //   spawnCmd  = 'cmd.exe'
+        //   spawnArgs = ['/C', command, ...args]
+        // with command='powershell', args=['-Command', <expr with spaces + pipe>].
+        let expression = "'hello world' | ForEach-Object { $_.ToUpper() }";
+
+        let pty_system = native_pty_system();
+        let pair = pty_system
+            .openpty(PtySize {
+                rows: 24,
+                cols: 120,
+                pixel_width: 0,
+                pixel_height: 0,
+            })
+            .expect("openpty failed");
+
+        let mut cmd = CommandBuilder::new("cmd.exe");
+        cmd.args(["/C", "powershell", "-Command", expression]);
+
+        let mut child = pair.slave.spawn_command(cmd).expect("spawn cmd.exe failed");
+        drop(pair.slave);
+
+        // Watchdog: if the pipeline wedges (e.g. PowerShell waiting on stdin
+        // because the expression was mangled into a bare `powershell` REPL),
+        // kill it so the test fails with output instead of hanging CI.
+        let mut killer = child.clone_killer();
+        std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_secs(60));
+            let _ = killer.kill();
+        });
+
+        let mut reader = pair
+            .master
+            .try_clone_reader()
+            .expect("clone PTY reader failed");
+        let mut raw = Vec::new();
+        let mut buf = [0u8; 4096];
+        loop {
+            match reader.read(&mut buf) {
+                Ok(0) => break, // EOF: child exited, ConPTY closed
+                Ok(n) => raw.extend_from_slice(&buf[..n]),
+                Err(_) => break, // ConPTY reports the close as an error on some builds
+            }
+        }
+        let status = child.wait().expect("wait on child failed");
+        let output = String::from_utf8_lossy(&raw);
+
+        assert!(
+            output.contains("HELLO WORLD"),
+            "PowerShell pipe/spaces did not survive `cmd.exe /C` re-parsing.\n\
+             Exit status: {status:?}\nCaptured PTY output:\n{output}"
+        );
+        assert!(
+            status.success(),
+            "pipeline exited non-zero ({status:?}); captured PTY output:\n{output}"
+        );
+    }
 }

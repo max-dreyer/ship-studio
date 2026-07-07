@@ -691,8 +691,14 @@ export function getTerminalCommands(): Record<string, TerminalCommand> {
         args: ['-Command', 'irm https://claude.ai/install.ps1 | iex'],
       },
       claude_auth: {
+        // Dedicated sign-in flow (`claude auth login` — "Sign in to your
+        // Anthropic account"). The bare CLI used to be spawned here, which
+        // stranded non-technical users in the chat REPL when the CLI didn't
+        // auto-prompt for login (audit #7). The `claude auth` command family
+        // is the same one the backend already relies on for status checks
+        // (`claude auth status`, src-tauri/src/commands/accounts.rs).
         command: 'claude',
-        args: [],
+        args: ['auth', 'login'],
       },
       codex: {
         // --force clears EEXIST failures from stale/partial global installs,
@@ -701,8 +707,11 @@ export function getTerminalCommands(): Record<string, TerminalCommand> {
         args: ['install', '-g', '@openai/codex', '--force'],
       },
       codex_auth: {
+        // Dedicated login subcommand (`codex login` — "Manage login") instead
+        // of the bare CLI, which dropped users into the agent chat UI when it
+        // didn't auto-prompt for sign-in (audit #7). Exits when auth completes.
         command: 'codex',
-        args: [],
+        args: ['login'],
       },
       opencode: {
         // No clean PowerShell one-liner installer exists for Windows; install
@@ -785,8 +794,10 @@ export function getTerminalCommands(): Record<string, TerminalCommand> {
         args: ['-c', 'curl -fsSL https://claude.ai/install.sh | bash'],
       },
       claude_auth: {
+        // Dedicated sign-in flow (`claude auth login`) — see the Windows entry
+        // above for why the bare CLI is not spawned here (audit #7).
         command: 'claude',
-        args: [],
+        args: ['auth', 'login'],
       },
       codex: {
         // --force clears EEXIST failures from stale/partial global installs,
@@ -795,8 +806,10 @@ export function getTerminalCommands(): Record<string, TerminalCommand> {
         args: ['-c', 'npm install -g @openai/codex --force'],
       },
       codex_auth: {
+        // Dedicated login subcommand (`codex login`) — see the Windows entry
+        // above for why the bare CLI is not spawned here (audit #7).
         command: 'codex',
-        args: [],
+        args: ['login'],
       },
       opencode: {
         command: '/bin/bash',

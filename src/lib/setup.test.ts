@@ -446,6 +446,19 @@ describe('TERMINAL_COMMANDS', () => {
     expect(TERMINAL_COMMANDS.claude_auth.command).toBe('claude');
   });
 
+  it('agent Connect buttons run dedicated auth flows, never the bare agent CLI (audit #7)', () => {
+    // A bare `claude`/`codex` invocation relies on the CLI auto-prompting for
+    // login; when it doesn't, non-technical users land in a full agent chat
+    // REPL with no idea what to do. Every agent auth entry must use the CLI's
+    // documented sign-in invocation, which exits when auth completes.
+    expect(TERMINAL_COMMANDS.claude_auth.args).toEqual(['auth', 'login']);
+    expect(TERMINAL_COMMANDS.codex_auth.args).toEqual(['login']);
+    expect(TERMINAL_COMMANDS.opencode_auth.command).toBe('opencode');
+    expect(TERMINAL_COMMANDS.opencode_auth.args).toEqual(['auth', 'login']);
+    expect(TERMINAL_COMMANDS.cursor_auth.command).toBe('cursor-agent');
+    expect(TERMINAL_COMMANDS.cursor_auth.args).toEqual(['login']);
+  });
+
   it('has vercel entry', () => {
     expect(TERMINAL_COMMANDS.vercel).toBeDefined();
   });
