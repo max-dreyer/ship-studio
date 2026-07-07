@@ -351,8 +351,13 @@ export function OnboardingScreen({ onComplete }: OnboardingScreenProps) {
         const extractedError = extractTerminalError(outputTail);
         const alreadySignedIn = itemId.endsWith('_auth') ? detectAlreadyLoggedIn(outputTail) : null;
         const networkMessage = isNetworkError(outputTail) ? NETWORK_FAILURE_MESSAGE : null;
+        // Append guidance to the raw error, never replace it (standing rule:
+        // verbose context beats tidy summaries — the raw line is what makes a
+        // support screenshot diagnosable).
         let errorMessage =
-          networkMessage ?? extractedError ?? 'Command failed. Click to try again.';
+          networkMessage && extractedError
+            ? `${extractedError} — ${NETWORK_FAILURE_MESSAGE}`
+            : (networkMessage ?? extractedError ?? 'Command failed. Click to try again.');
         if (itemId === 'homebrew') {
           // Only claim an admin-privileges problem when the output actually
           // points at one, or when nothing better was extracted — a blanket

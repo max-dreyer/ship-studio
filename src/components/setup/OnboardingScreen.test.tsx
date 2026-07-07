@@ -1246,7 +1246,7 @@ describe('OnboardingScreen', () => {
       await waitFor(() => {
         expect(
           screen.getByText(
-            'This looks like a network problem — check your internet connection and try again.'
+            'curl: (6) Could not resolve host: claude.ai — This looks like a network problem — check your internet connection and try again.'
           )
         ).toBeInTheDocument();
       });
@@ -1352,12 +1352,13 @@ describe('OnboardingScreen', () => {
       await waitFor(() => {
         expect(
           screen.getByText(
-            'This looks like a network problem — check your internet connection and try again.'
+            'curl: (6) Could not resolve host: claude.ai — This looks like a network problem — check your internet connection and try again.'
           )
         ).toBeInTheDocument();
       });
-      // The raw curl line is replaced by the actionable guidance
-      expect(screen.queryByText(/Could not resolve host/)).not.toBeInTheDocument();
+      // The raw curl line is kept and the guidance appended — never replaced
+      // (standing rule: verbose context beats tidy summaries).
+      expect(screen.getByText(/Could not resolve host/)).toBeInTheDocument();
     });
 
     it('failed item can be retried by clicking Retry', async () => {
