@@ -492,10 +492,11 @@ describe('TERMINAL_COMMANDS', () => {
 
 describe('needsCmdExeWrapper', () => {
   // Wrapping a real executable in `cmd.exe /C` makes cmd re-parse the
-  // portable_pty-composed command line; its quote rules strip the quotes
-  // around args containing special chars, so a piped PowerShell one-liner
-  // installer gets split at the `|` and hangs (audit #13; observed as a CI
-  // Windows runner hang — see needsCmdExeWrapper's doc comment for the link).
+  // portable_pty-composed command line with its own quote rules — a second
+  // parse layer between us and the target (audit #13). Direct spawn removes
+  // that layer; both shapes are measured under a real ConPTY by the canary
+  // tests in src-tauri/src/commands/pty_session.rs — see needsCmdExeWrapper's
+  // doc comment for the evidence history.
 
   it('wraps .cmd shims (npm-style) — batch scripts need cmd.exe', () => {
     expect(needsCmdExeWrapper('npm', 'C:\\Program Files\\nodejs\\npm.cmd')).toBe(true);

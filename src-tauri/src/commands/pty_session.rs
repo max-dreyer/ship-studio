@@ -642,25 +642,43 @@ mod tests {
         assert!(!env_has_key(&env, "COMSPEC"));
     }
 
-    /// Spawn `argv` through a real ConPTY and read its output with a hard
-    /// deadline. Never hangs: the PTY read runs on a separate thread; if the
-    /// deadline passes, the child is killed and whatever output WAS captured
-    /// is returned as diagnostic evidence (`timed_out = true`).
+    /// Spawn `argv` through a real ConPTY, read its output with a hard
+    /// deadline, and emulate the one piece of terminal behavior ConPTY
+    /// requires: answering its Device Status Report query.
     ///
-    /// This boundedness is not optional hygiene — the first version of the
-    /// quoting canary below read the PTY to EOF on the test thread, wedged on
-    /// the very bug it was probing, and had to be killed by the CI job's
-    /// 40-minute timeout:
-    /// https://github.com/ship-studio/ship-studio/actions/runs/28903431927/job/85745268821
+    /// On session start (and possibly again later) ConPTY writes `ESC[6n`
+    /// (cursor position query) to the terminal side and BLOCKS pumping child
+    /// output until a cursor position report comes back. In the app, xterm.js
+    /// answers this automatically; a raw harness that never replies stalls
+    /// EVERY spawn shape on the handshake, regardless of quoting. Both
+    /// earlier versions of the canaries below hit exactly that:
+    ///  - unbounded first version: wedged a CI runner until the job's
+    ///    40-minute kill —
+    ///    https://github.com/ship-studio/ship-studio/actions/runs/28903431927/job/85745268821
+    ///  - bounded second version: the DIRECT (unwrapped) spawn also timed
+    ///    out, with `ESC[6n` as the only captured output —
+    ///    https://github.com/ship-studio/ship-studio/actions/runs/28905743965/job/85752341507
+    /// So this harness scans the accumulated output for `ESC[6n` (it can
+    /// arrive split across reads, and ConPTY may re-query) and writes
+    /// `ESC[1;1R` back to the PTY for each query seen.
+    ///
+    /// Boundedness: the PTY read runs on a separate thread; if the deadline
+    /// passes, the child is killed and whatever output WAS captured is
+    /// returned as diagnostic evidence (`timed_out = true`).
     #[cfg(windows)]
     fn run_through_pty_bounded(
         argv: &[&str],
         deadline: std::time::Duration,
     ) -> (String, Option<portable_pty::ExitStatus>, bool) {
         use portable_pty::{native_pty_system, CommandBuilder, PtySize};
-        use std::io::Read;
+        use std::io::{Read, Write};
         use std::sync::mpsc;
         use std::time::{Duration, Instant};
+
+        /// ConPTY's cursor-position query (DSR 6).
+        const DSR_QUERY: &[u8] = b"\x1b[6n";
+        /// Cursor position report: "cursor at row 1, col 1".
+        const DSR_REPLY: &[u8] = b"\x1b[1;1R";
 
         let pty_system = native_pty_system();
         let pair = pty_system
@@ -677,6 +695,10 @@ mod tests {
 
         let mut child = pair.slave.spawn_command(cmd).expect("spawn failed");
         drop(pair.slave);
+
+        // Writer for the terminal->child direction: used solely to answer
+        // ConPTY's DSR queries. Kept alive for the whole session.
+        let mut writer = pair.master.take_writer().expect("take PTY writer failed");
 
         // Reader thread: forwards each chunk over a channel; dropping the
         // sender signals EOF. The test thread never blocks on the PTY itself.
@@ -704,13 +726,29 @@ mod tests {
         let start = Instant::now();
         let mut raw = Vec::new();
         let mut timed_out = false;
+        let mut dsr_replies_sent = 0usize;
         loop {
             let Some(remaining) = deadline.checked_sub(start.elapsed()) else {
                 timed_out = true;
                 break;
             };
             match rx.recv_timeout(remaining) {
-                Ok(chunk) => raw.extend_from_slice(&chunk),
+                Ok(chunk) => {
+                    raw.extend_from_slice(&chunk);
+                    // Answer every DSR query seen so far. Scan the WHOLE
+                    // accumulated buffer (a query can arrive split across
+                    // reads) and track how many we've already answered
+                    // (ConPTY may re-query).
+                    let queries_seen = raw
+                        .windows(DSR_QUERY.len())
+                        .filter(|w| *w == DSR_QUERY)
+                        .count();
+                    while dsr_replies_sent < queries_seen {
+                        writer.write_all(DSR_REPLY).expect("DSR reply failed");
+                        writer.flush().expect("DSR reply flush failed");
+                        dsr_replies_sent += 1;
+                    }
+                }
                 Err(mpsc::RecvTimeoutError::Timeout) => {
                     timed_out = true;
                     break;
@@ -736,17 +774,15 @@ mod tests {
         )
     }
 
-    /// Windows quoting verification (onboarding audit finding #13) — proves
-    /// the FIX: spawning PowerShell *directly* through portable_pty (no
-    /// cmd.exe wrapper) preserves a piped, space-laden `-Command` argument.
-    ///
-    /// This mirrors how OnboardingTerminal (src/components/setup/
-    /// OnboardingTerminal.tsx) now spawns real executables on Windows after
-    /// the cmd.exe wrapper was scoped down to `.cmd`/`.bat` shims only (see
-    /// `needsCmdExeWrapper` in src/lib/setup.ts). portable_pty quotes each
-    /// argv entry with CRT-compatible ArgvQuote rules, and PowerShell's own
-    /// argv parsing reverses exactly those rules — no shell re-parse in
-    /// between.
+    /// Windows spawn-shape canary (onboarding audit finding #13), variant 1:
+    /// PowerShell spawned DIRECTLY through portable_pty (no cmd.exe wrapper)
+    /// with a piped, space-laden `-Command` argument. This mirrors how
+    /// OnboardingTerminal (src/components/setup/OnboardingTerminal.tsx) now
+    /// spawns real executables on Windows after the cmd.exe wrapper was
+    /// scoped down to `.cmd`/`.bat` shims (see `needsCmdExeWrapper` in
+    /// src/lib/setup.ts). portable_pty quotes each argv entry with
+    /// CRT-compatible ArgvQuote rules, and PowerShell's own argv parsing
+    /// reverses exactly those rules — no shell re-parse in between.
     ///
     /// The pipe stage uppercases the string, so the expected output
     /// ("HELLO WORLD") can only appear if the *whole* expression — spaces,
@@ -763,6 +799,12 @@ mod tests {
             std::time::Duration::from_secs(60),
         );
 
+        // Always print the evidence — CI runs this step with --nocapture so
+        // the captured PTY output is on record even when the test passes.
+        println!(
+            "[canary:direct] timed_out={timed_out} status={status:?} output:\n{}",
+            output.escape_debug()
+        );
         assert!(
             output.contains("HELLO WORLD"),
             "PowerShell pipe/spaces did not survive a direct portable_pty spawn.\n\
@@ -775,32 +817,28 @@ mod tests {
         );
     }
 
-    /// Regression record for the BUG behind audit finding #13 — kept
-    /// `#[ignore]`d so the failure mode stays on file without spending ~30s
-    /// of CI on every run.
+    /// Windows spawn-shape canary, variant 2: the same piped PowerShell
+    /// expression routed through `cmd.exe /C` — the shape OnboardingTerminal
+    /// used for EVERY Windows command before `needsCmdExeWrapper` scoped the
+    /// wrapper down to `.cmd`/`.bat` shims.
     ///
-    /// OnboardingTerminal used to wrap EVERY Windows command as
-    /// `cmd.exe /C <command> <args...>`. portable_pty rebuilds a single
-    /// command-line string from the argv, and `cmd.exe /C` then RE-PARSES
-    /// that string with its own rules: when the quoted section contains a
-    /// special character (`|` here), cmd strips the outer quotes (see the
-    /// quote-processing rules in `cmd /?`), exposing the pipe to cmd itself.
-    /// The pipeline is split at `|`, PowerShell runs with a mangled
-    /// `-Command`, and the PTY blocks forever — observed live as this exact
-    /// test's first (unbounded) version hanging a CI runner until the job's
-    /// 40-minute kill:
-    /// https://github.com/ship-studio/ship-studio/actions/runs/28903431927/job/85745268821
-    /// That is the same failure users hit as "the Windows Claude/Cursor
-    /// installer hangs".
+    /// This test answers audit finding #13's actual question: does cmd.exe's
+    /// re-parse of the portable_pty-composed command line mangle a quoted
+    /// argument containing `|` and spaces? (cmd's quote-processing rules —
+    /// see `cmd /?` — strip quotes in some special-character cases, which
+    /// would split the pipeline at the `|` and leave PowerShell interactive.)
     ///
-    /// The assertion is inverted — it PASSES while the wrapper stays broken.
-    /// If a run of `cargo test -- --ignored` ever fails here, cmd.exe/
-    /// portable_pty composition has changed and the cmd.exe path in
-    /// `needsCmdExeWrapper` (src/lib/setup.ts) deserves a fresh look.
+    /// History, for honesty: two earlier CI hangs were attributed to this
+    /// quote-stripping, but both were actually the harness failing to answer
+    /// ConPTY's DSR handshake (see `run_through_pty_bounded`) — the direct
+    /// (unwrapped) variant stalled identically. With the handshake answered,
+    /// this test measures quoting and nothing else. Whichever way it
+    /// resolves, the direct spawn in OnboardingTerminal stays preferable
+    /// (one fewer re-parse layer), but the outcome decides how loudly
+    /// `needsCmdExeWrapper` must warn about the wrapped path.
     #[cfg(windows)]
     #[test]
-    #[ignore = "documents the broken cmd.exe /C wrapper shape; run with -- --ignored"]
-    fn cmd_exe_slash_c_wrapper_breaks_piped_powershell_expression() {
+    fn cmd_exe_wrapped_powershell_spawn_preserves_pipe_and_spaces_through_pty() {
         let expression = "'hello world' | ForEach-Object { $_.ToUpper() }";
         let (output, status, timed_out) = run_through_pty_bounded(
             &[
@@ -811,14 +849,20 @@ mod tests {
                 "-Command",
                 expression,
             ],
-            std::time::Duration::from_secs(30),
+            std::time::Duration::from_secs(60),
         );
 
+        println!(
+            "[canary:cmd-wrapped] timed_out={timed_out} status={status:?} output:\n{}",
+            output.escape_debug()
+        );
         assert!(
-            timed_out || !output.contains("HELLO WORLD"),
-            "cmd.exe /C wrapping unexpectedly preserved the piped expression — \
-             the wrapper decision in needsCmdExeWrapper may be revisitable.\n\
-             Exit status: {status:?}\nCaptured PTY output:\n{output}"
+            output.contains("HELLO WORLD") && !timed_out,
+            "cmd.exe /C re-parse mangled the piped PowerShell expression — \
+             audit finding #13's quote-stripping hazard is real for the wrapped \
+             shape. Keep needsCmdExeWrapper routing real executables to direct \
+             spawn, and document this captured evidence.\n\
+             timed_out: {timed_out}\nExit status: {status:?}\nCaptured PTY output:\n{output}"
         );
     }
 }

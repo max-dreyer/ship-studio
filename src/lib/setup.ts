@@ -540,16 +540,20 @@ export async function resolveCliPath(name: string): Promise<ResolvedCli | null> 
  *
  * Only `.cmd`/`.bat` shims (npm, vercel, npx, …) NEED the cmd.exe wrapper —
  * they are batch scripts, not executables. For real executables the wrapper
- * is not just unnecessary, it is actively harmful: portable_pty rebuilds a
- * single command-line string from the argv, and `cmd.exe /C` RE-PARSES that
- * string with its own quote rules. When a quoted argument contains a special
- * character, cmd strips the outer quotes (see `cmd /?`), so a PowerShell
- * one-liner like `powershell -Command "irm … | iex"` gets split at the `|`
- * by cmd itself and PowerShell blocks forever in interactive mode. This was
- * observed live: the CI canary test for this exact shape hung a Windows
- * runner until the job's 40-minute kill —
- * https://github.com/ship-studio/ship-studio/actions/runs/28903431927/job/85745268821
- * — the same hang users reported for the Windows Claude/Cursor installers.
+ * adds a second parse layer with its own quote rules: portable_pty rebuilds
+ * a single command-line string from the argv, and `cmd.exe /C` RE-PARSES
+ * that string (see the quote-processing rules in `cmd /?`) before the target
+ * ever sees it. Spawning the resolved executable directly removes that layer
+ * entirely — the target's CRT parses exactly what portable_pty composed.
+ *
+ * Whether cmd's re-parse actually mangles a piped `-Command` argument is
+ * measured (not assumed) by the canary pair in
+ * src-tauri/src/commands/pty_session.rs — see the "PTY spawn-shape canaries"
+ * step of the windows-check CI job for the recorded verdict on both shapes.
+ * (Two earlier CI hangs initially blamed on quote-stripping turned out to be
+ * the test harness not answering ConPTY's DSR handshake; direct spawn is
+ * kept because it is strictly more deterministic, not because breakage of
+ * the wrapped shape was proven.)
  *
  * @param command the command as configured (e.g. "npm", "powershell", "gh")
  * @param resolvedPath absolute path from {@link resolveCliPath}, when

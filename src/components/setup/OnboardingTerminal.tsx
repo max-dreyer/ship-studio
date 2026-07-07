@@ -343,14 +343,15 @@ export function OnboardingTerminal({ command, args, cwd, onExit }: OnboardingTer
           // Windows spawn shape. Only .cmd/.bat shims (npm, vercel, npx)
           // go through `cmd.exe /C` — they are batch scripts and need it.
           // Real executables (powershell, gh, claude, codex, git) are
-          // spawned DIRECTLY: routing them through cmd.exe means cmd
-          // re-parses the portable_pty-composed command line, and its quote
-          // rules strip the quotes around any argument containing a special
-          // char — a piped PowerShell one-liner installer gets split at the
-          // `|` by cmd itself and PowerShell blocks forever in interactive
-          // mode. Observed live as a CI Windows runner hang (the exact
-          // installer-hang users reported):
-          // https://github.com/ship-studio/ship-studio/actions/runs/28903431927/job/85745268821
+          // spawned DIRECTLY: routing them through cmd.exe adds a second
+          // parse layer (cmd re-parses the portable_pty-composed command
+          // line with its own quote rules) between us and the target;
+          // direct spawn removes it, so arguments like a piped PowerShell
+          // installer one-liner reach the target exactly as composed. Both
+          // spawn shapes are exercised under a real ConPTY by the canary
+          // tests in src-tauri/src/commands/pty_session.rs (windows-check
+          // CI job, "PTY spawn-shape canaries" step) — see
+          // needsCmdExeWrapper's doc comment for the evidence history.
           if (needsCmdExeWrapper(command, resolved?.path)) {
             spawnCmd = 'cmd.exe';
             spawnArgs = ['/C', command, ...args];
