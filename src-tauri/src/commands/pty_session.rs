@@ -805,15 +805,15 @@ mod tests {
             "[canary:direct] timed_out={timed_out} status={status:?} output:\n{}",
             output.escape_debug()
         );
+        // Success = the marker made it through intact. `timed_out` is
+        // deliberately NOT asserted: ConPTY sessions linger after the child
+        // exits (observed on the runner — expected output present, child
+        // status Some(code 0), session still open at the deadline), so
+        // "didn't EOF by the deadline" says nothing about quoting.
         assert!(
             output.contains("HELLO WORLD"),
             "PowerShell pipe/spaces did not survive a direct portable_pty spawn.\n\
              timed_out: {timed_out}\nExit status: {status:?}\nCaptured PTY output:\n{output}"
-        );
-        assert!(
-            !timed_out,
-            "pipeline produced the expected output but never exited; status: {status:?}\n\
-             Captured PTY output:\n{output}"
         );
     }
 
@@ -832,10 +832,15 @@ mod tests {
     /// quote-stripping, but both were actually the harness failing to answer
     /// ConPTY's DSR handshake (see `run_through_pty_bounded`) — the direct
     /// (unwrapped) variant stalled identically. With the handshake answered,
-    /// this test measures quoting and nothing else. Whichever way it
-    /// resolves, the direct spawn in OnboardingTerminal stays preferable
-    /// (one fewer re-parse layer), but the outcome decides how loudly
-    /// `needsCmdExeWrapper` must warn about the wrapped path.
+    /// this test measures quoting and nothing else.
+    ///
+    /// VERDICT (verified on the Windows runner, job 85754711506): the piped
+    /// expression survives cmd.exe's re-parse INTACT — "HELLO WORLD" was
+    /// produced by both this wrapped shape and the direct one. Audit finding
+    /// #13's quote-stripping hazard is a false alarm. The direct spawn in
+    /// OnboardingTerminal is kept anyway as a defensive simplification (one
+    /// fewer re-parse layer, deterministic absolute-path spawn) — not as a
+    /// bug fix.
     #[cfg(windows)]
     #[test]
     fn cmd_exe_wrapped_powershell_spawn_preserves_pipe_and_spaces_through_pty() {
@@ -856,12 +861,14 @@ mod tests {
             "[canary:cmd-wrapped] timed_out={timed_out} status={status:?} output:\n{}",
             output.escape_debug()
         );
+        // Same success criterion as the direct variant: the marker arriving
+        // intact IS the answer to the quoting question. Session-lingering
+        // past the deadline is a ConPTY teardown quirk, not evidence of
+        // mangling (see the direct variant's comment).
         assert!(
-            output.contains("HELLO WORLD") && !timed_out,
+            output.contains("HELLO WORLD"),
             "cmd.exe /C re-parse mangled the piped PowerShell expression — \
-             audit finding #13's quote-stripping hazard is real for the wrapped \
-             shape. Keep needsCmdExeWrapper routing real executables to direct \
-             spawn, and document this captured evidence.\n\
+             the quoted argument did not reach PowerShell intact.\n\
              timed_out: {timed_out}\nExit status: {status:?}\nCaptured PTY output:\n{output}"
         );
     }

@@ -548,12 +548,12 @@ export async function resolveCliPath(name: string): Promise<ResolvedCli | null> 
  *
  * Whether cmd's re-parse actually mangles a piped `-Command` argument is
  * measured (not assumed) by the canary pair in
- * src-tauri/src/commands/pty_session.rs — see the "PTY spawn-shape canaries"
- * step of the windows-check CI job for the recorded verdict on both shapes.
- * (Two earlier CI hangs initially blamed on quote-stripping turned out to be
- * the test harness not answering ConPTY's DSR handshake; direct spawn is
- * kept because it is strictly more deterministic, not because breakage of
- * the wrapped shape was proven.)
+ * src-tauri/src/commands/pty_session.rs. RECORDED VERDICT (Windows runner,
+ * job 85754711506): the piped expression survives BOTH shapes intact — the
+ * quote-stripping hazard was a false alarm. (Two earlier CI hangs initially
+ * blamed on quote-stripping were the test harness not answering ConPTY's
+ * DSR handshake.) Direct spawn is kept as a defensive simplification —
+ * strictly more deterministic — not as a bug fix.
  *
  * @param command the command as configured (e.g. "npm", "powershell", "gh")
  * @param resolvedPath absolute path from {@link resolveCliPath}, when
