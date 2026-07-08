@@ -66,6 +66,7 @@ import { kbd } from '../../lib/shortcuts';
 import { useCommands } from '../../commands/useCommands';
 import { logger } from '../../lib/logger';
 import type { ProjectType } from '../../lib/static-server';
+import type { DevServerUnexpectedExit } from '../../hooks/useDevServer';
 import { isEditorFramework, resolveEditorMode } from '../../lib/editorGate';
 
 // SVG icons for breakpoints
@@ -210,6 +211,15 @@ interface PreviewProps {
    *  installed. Render an install CTA in the preview pane instead of the
    *  "Starting dev server..." spinner. */
   needsInstall?: { packageManager: string } | null;
+  /** Set when the managed dev-server process died without Ship Studio
+   *  stopping it (crash, or an external kill — e.g. an agent in the terminal
+   *  freeing the port). Switches the status card to a "Dev server stopped"
+   *  state whose primary action is a real process restart. */
+  devServerUnexpectedExit?: DevServerUnexpectedExit | null;
+  /** Restart the managed dev-server process (full kill-port → clear-cache →
+   *  respawn pipeline). Wired to the status card when the process is dead —
+   *  a poll-only Retry can never recover from that (issue #161). */
+  onRestartDevServer?: () => void;
   /** Action wired to the install CTA — kicks off the install flow + restart. */
   onRunInstall?: () => void;
   /** Jump to a source file:line in the Code tab (from the visual editor). */
@@ -285,6 +295,8 @@ export const Preview = forwardRef<PreviewHandle, PreviewProps>(function Preview(
     healthPanelRef,
     onHealthOutput,
     needsInstall,
+    devServerUnexpectedExit,
+    onRestartDevServer,
     onRunInstall,
     onOpenInCode,
     canUndo,
@@ -315,6 +327,13 @@ export const Preview = forwardRef<PreviewHandle, PreviewProps>(function Preview(
     onSendToClaude,
     onToast,
   });
+
+  // The managed dev-server process is known-dead (the exit watcher saw it die
+  // and no respawn has happened since). Static projects are excluded — they
+  // serve off the per-window static server, not a PTY-managed process — and a
+  // restart in flight means the death is already being handled.
+  const serverProcessGone =
+    !isStaticProject && !isDevServerRestarting && devServerUnexpectedExit != null;
 
   // Screenshot capture and crop selection (extracted to hook)
   const capture = usePreviewCapture({
@@ -558,13 +577,14 @@ export const Preview = forwardRef<PreviewHandle, PreviewProps>(function Preview(
   const activeBreakpoint =
     (pinnedBreakpoint && breakpoints.find((b) => b.name === pinnedBreakpoint.name)) ||
     derivedBreakpoint;
-  // The selected breakpoint can exceed what the pane can show (the frame caps its
-  // visible width at the viewport). When so, edits still apply at that breakpoint
-  // but won't be visible here — the panel shows a note.
+  // The selected edit breakpoint can exceed the width the canvas actually
+  // renders at (e.g. a pinned wide layer while the canvas is narrower); edits
+  // then apply but aren't visible, so the panel shows a note. A preset wider
+  // than the pane does NOT trigger this: it renders at its true CSS width and
+  // is only scaled down visually (previewScale), so its media queries hold.
+  const renderedWidth = resize.customWidth ?? resize.viewportWidth;
   const breakpointTooWide =
-    activeBreakpoint.minPx > 0 &&
-    resize.viewportWidth > 0 &&
-    resize.viewportWidth < activeBreakpoint.minPx;
+    activeBreakpoint.minPx > 0 && renderedWidth > 0 && renderedWidth < activeBreakpoint.minPx;
 
   // Visual editor (Next.js, Vite/React, Astro). Inert until the user toggles edit mode.
   const editor = useVisualEditor({
@@ -750,13 +770,15 @@ export const Preview = forwardRef<PreviewHandle, PreviewProps>(function Preview(
     };
   }, []);
 
-  // Force refresh the preview iframe with cache busting
+  // Force refresh the preview iframe via an about:blank round-trip (the URL
+  // carries no cache-buster, so re-setting the same src wouldn't be a reliable
+  // reload; the proxy serves HTML with no-store, so the round-trip refetches).
   // Uses currentPage (tracked via proxy) so it refreshes the actual visible page,
   // not the stale iframe src attribute (which doesn't update on client-side navigation).
   const refresh = useCallback(() => {
     if (iframeRef.current && conn.serverReady) {
       conn.setIframePath(conn.currentPage);
-      const refreshUrl = `${conn.baseUrl}${conn.currentPage === '/' ? '' : conn.currentPage}?_cb=${Date.now()}&shipstudio=1`;
+      const refreshUrl = `${conn.baseUrl}${conn.currentPage === '/' ? '' : conn.currentPage}`;
       iframeRef.current.src = 'about:blank';
       setTimeout(() => {
         if (iframeRef.current) {
@@ -766,6 +788,16 @@ export const Preview = forwardRef<PreviewHandle, PreviewProps>(function Preview(
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps -- specific conn properties are listed; conn object changes on every render
   }, [conn.serverReady, conn.baseUrl, conn.currentPage, conn.setIframePath]);
+
+  // Imperative reload requests from the connection hook (toolbar refresh on the
+  // current page, static-project file changes). Token 0 is the "no reload
+  // requested" reset on project/port switches — never fire on it.
+  const prevReloadTokenRef = useRef(0);
+  useEffect(() => {
+    if (conn.reloadToken === prevReloadTokenRef.current) return;
+    prevReloadTokenRef.current = conn.reloadToken;
+    if (conn.reloadToken !== 0) refresh();
+  }, [conn.reloadToken, refresh]);
 
   // Expose methods to parent
   useImperativeHandle(
@@ -821,6 +853,25 @@ export const Preview = forwardRef<PreviewHandle, PreviewProps>(function Preview(
           `My site preview isn't loading. Ship Studio is serving this project as static ` +
           `files on http://localhost:${port} but nothing shows up. Please check the project ` +
           `has an index.html at its root (and any files it references) so the preview renders.`;
+      } else if (serverProcessGone) {
+        // The process demonstrably died out from under us — usually an agent
+        // killed the port or crashed the build. Steer the agent AWAY from
+        // spawning its own dev server: a second unmanaged server fighting
+        // Ship Studio's is exactly what breaks multi-agent workflows (#161).
+        const exitCode = devServerUnexpectedExit?.exitCode;
+        prompt =
+          `Ship Studio runs and manages this project's dev server itself on port ${port}, ` +
+          `but the dev-server process just stopped unexpectedly` +
+          `${typeof exitCode === 'number' ? ` (exit code ${exitCode})` : ''}.\n\n` +
+          (logs
+            ? `Its last output was:\n\n\`\`\`\n${logs}\n\`\`\`\n\n`
+            : `It produced no output before stopping.\n\n`) +
+          `Please find and fix the underlying cause (a crash, a broken build, a corrupted ` +
+          `cache, something killing the process). IMPORTANT: do NOT start your own dev ` +
+          `server (no \`npm run dev\` or similar) and do NOT kill or free port ${port} — ` +
+          `Ship Studio owns the dev server and I will restart it from the preview once ` +
+          `the cause is fixed. If another process is already listening on port ${port}, ` +
+          `tell me instead of killing it.`;
       } else {
         prompt =
           `My dev server isn't coming up — Ship Studio is waiting on ` +
@@ -829,17 +880,27 @@ export const Preview = forwardRef<PreviewHandle, PreviewProps>(function Preview(
             ? `Recent dev-server output:\n\n\`\`\`\n${logs}\n\`\`\`\n\n`
             : `There's no dev-server output yet.\n\n`) +
           `Please work out why it won't start — a busy port, a crash, a missing ` +
-          `dependency, or a wrong or missing dev script — and fix it so it serves on ` +
-          `port ${port}.`;
+          `dependency, or a wrong or missing dev script — and fix the cause. ` +
+          `IMPORTANT: do NOT start a dev server yourself and do NOT kill or free ` +
+          `port ${port} — Ship Studio starts and manages the dev server on that port ` +
+          `itself, and a second unmanaged server will fight it.`;
       }
       onSendToClaude(prompt);
       void trackEvent('preview_fix_with_agent', {
         has_logs: !!logs,
         is_static: isStaticProject,
         reason,
+        process_gone: serverProcessGone,
       });
     };
-  }, [onSendToClaude, isStaticProject, devServerOutput, port]);
+  }, [
+    onSendToClaude,
+    isStaticProject,
+    devServerOutput,
+    port,
+    serverProcessGone,
+    devServerUnexpectedExit,
+  ]);
 
   if (needsInstall) {
     return (
@@ -874,7 +935,12 @@ export const Preview = forwardRef<PreviewHandle, PreviewProps>(function Preview(
   if (conn.isLoading || conn.isStopped || conn.hasError) {
     return (
       <DevServerStatus
-        phase={conn.isStopped ? 'stopped' : conn.hasError ? 'error' : 'loading'}
+        // A known-dead process escalates straight to the error card — polling
+        // a port nothing listens on can only end in the same place, minutes
+        // later, so don't make the user sit through the retry loop.
+        phase={
+          conn.isStopped ? 'stopped' : conn.hasError || serverProcessGone ? 'error' : 'loading'
+        }
         isStaticProject={isStaticProject}
         port={port}
         retryCount={conn.retryCount}
@@ -882,6 +948,9 @@ export const Preview = forwardRef<PreviewHandle, PreviewProps>(function Preview(
         devServerOutput={devServerOutput}
         onStop={conn.stopConnecting}
         onRetry={conn.handleRetry}
+        processExited={serverProcessGone}
+        exitCode={devServerUnexpectedExit?.exitCode ?? null}
+        onRestartServer={onRestartDevServer}
         onFixWithAgent={handleFixWithAgent && (() => handleFixWithAgent('server-down'))}
         onInput={onDevServerInput}
       />
@@ -1123,36 +1192,44 @@ export const Preview = forwardRef<PreviewHandle, PreviewProps>(function Preview(
 
         {previewPlugins}
 
-        {iframeSize && iframeSize.w > 0 && iframeSize.h > 0 && (
-          <button
-            type="button"
-            className="preview-dimensions"
-            title={onSendToClaude ? 'Click to send to agent' : undefined}
-            disabled={!onSendToClaude}
-            aria-label={`Preview dimensions ${iframeSize.w} by ${iframeSize.h}${
-              onSendToClaude ? ', click to send to agent' : ''
-            }`}
-            onClick={() => {
-              if (!onSendToClaude) return;
-              onSendToClaude(
-                `The preview viewport is currently ${iframeSize.w} × ${iframeSize.h} (width × height in CSS pixels).`
-              );
-            }}
-          >
-            {iframeSize.w} × {iframeSize.h}
-          </button>
-        )}
+        {iframeSize &&
+          iframeSize.w > 0 &&
+          iframeSize.h > 0 &&
+          (() => {
+            // The wrapper reports its VISUAL box; when the frame is scaled to
+            // fit, the page actually lays out at the true (unscaled) size —
+            // that's the honest number to show and to tell the agent.
+            const w = Math.round(iframeSize.w / resize.previewScale);
+            const h = Math.round(iframeSize.h / resize.previewScale);
+            const scaleNote =
+              resize.previewScale < 1
+                ? ` (scaled to ${Math.round(resize.previewScale * 100)}%)`
+                : '';
+            return (
+              <button
+                type="button"
+                className="preview-dimensions"
+                title={onSendToClaude ? 'Click to send to agent' : undefined}
+                disabled={!onSendToClaude}
+                aria-label={`Preview dimensions ${w} by ${h}${scaleNote}${
+                  onSendToClaude ? ', click to send to agent' : ''
+                }`}
+                onClick={() => {
+                  if (!onSendToClaude) return;
+                  onSendToClaude(
+                    `The preview viewport is currently ${w} × ${h} (width × height in CSS pixels)${scaleNote}.`
+                  );
+                }}
+              >
+                {w} × {h}
+              </button>
+            );
+          })()}
 
         <div className="preview-breakpoints" data-education-id="breakpoints">
           {(Object.keys(BREAKPOINTS) as Breakpoint[]).map((bp) => {
-            // Always show 'full' - it adapts to any size
-            // Hide other breakpoints if they won't fit in the viewport
-            if (bp !== 'full') {
-              const bpWidth = parseInt(BREAKPOINTS[bp].width, 10);
-              if (resize.viewportWidth > 0 && bpWidth > resize.viewportWidth) {
-                return null;
-              }
-            }
+            // Every preset is always available — one wider than the pane
+            // renders at true size and scales down to fit (previewScale).
             return (
               <button
                 key={bp}
@@ -1188,10 +1265,15 @@ export const Preview = forwardRef<PreviewHandle, PreviewProps>(function Preview(
               : ''
           }`}
           style={{
+            // A width wider than the pane keeps its true size in the iframe
+            // and shrinks visually via previewScale — the grid (and with it
+            // the wrapper, handles, crop overlay and drag math) stays at the
+            // VISUAL size so every parent-side measurement remains in screen
+            // space.
             width:
               resize.customWidth === null
                 ? 'calc(100% - 4px)'
-                : `${resize.customWidth + RESIZE_HANDLE_PX}px`,
+                : `${Math.round(resize.customWidth * resize.previewScale) + RESIZE_HANDLE_PX}px`,
             maxWidth: 'calc(100% - 4px)',
             // While Inspect is open the bottom resize handle is hidden, so
             // we ignore (but preserve) the user's customHeight to avoid an
@@ -1212,6 +1294,21 @@ export const Preview = forwardRef<PreviewHandle, PreviewProps>(function Preview(
               className="preview-iframe"
               title="Preview"
               onLoad={conn.handleIframeLoad}
+              // Scale-to-fit (Chrome-DevTools style): lay the page out at the
+              // true breakpoint width and shrink the rendering to the wrapper.
+              // Height is inflated by 1/scale so the scaled result fills the
+              // wrapper exactly. In-iframe overlays (visual editor) live in
+              // the scaled coordinate space and need no mapping.
+              style={
+                resize.previewScale < 1 && resize.customWidth !== null
+                  ? {
+                      width: `${resize.customWidth}px`,
+                      height: `${100 / resize.previewScale}%`,
+                      transform: `scale(${resize.previewScale})`,
+                      transformOrigin: 'top left',
+                    }
+                  : undefined
+              }
             />
             {/* Blank-iframe watchdog overlay: the server is healthy top-level but
                 the page never proved it rendered inside the embedded iframe —
@@ -1567,7 +1664,7 @@ const InspectPanel = forwardRef<HTMLDivElement, InspectPanelProps>(function Insp
           />
         </div>
         <div className={`preview-logs-slot ${activeTab === 'browser' ? 'is-active' : ''}`}>
-          <BrowserTools onSendToAgent={onSendToAgent} />
+          <BrowserTools onSendToAgent={onSendToAgent} active={!hidden && activeTab === 'browser'} />
         </div>
         <div className={`preview-logs-slot ${activeTab === 'health' ? 'is-active' : ''}`}>
           <HealthTabPanel
