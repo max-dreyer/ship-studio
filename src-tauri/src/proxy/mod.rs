@@ -28,6 +28,23 @@ use tokio::task::JoinHandle;
 /// Maximum response body size to buffer for HTML injection (50 MB).
 const MAX_BODY_SIZE: usize = 50 * 1024 * 1024;
 
+/// Timeout for establishing the upstream TCP connection. Localhost either
+/// accepts immediately or refuses outright; a hang here means a firewalled or
+/// wedged port and should fail fast instead of holding the request forever.
+const UPSTREAM_CONNECT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
+
+/// Timeout for the upstream response headers. Must be generous: dev servers
+/// compile routes on demand and hold the request open until the compile
+/// finishes — tens of seconds on a real dependency tree (the frontend's
+/// readiness probe rides the same wait). This is a backstop against a truly
+/// hung upstream, not a UX timeout.
+const UPSTREAM_RESPONSE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(300);
+
+/// Timeout for buffering an HTML body once response headers have arrived.
+/// Headers-then-stall is not a compile wait — after headers the body should
+/// flow immediately on localhost.
+const HTML_BODY_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(60);
+
 /// Script injected into HTML responses to report navigation events to the parent window.
 /// Monkey-patches history.pushState/replaceState and listens for popstate to catch all
 /// client-side navigation in frameworks like Next.js, React Router, etc.
@@ -68,19 +85,30 @@ const SCROLLBAR_STYLE: &str = r#"<style id="ss-hide-scrollbars">::-webkit-scroll
 /// (`visibility:hidden`) until the saved position is restored — then reveal. The
 /// net effect: a save reloads but the preview stays put, with no visible jump.
 /// Keyed by pathname, so a real navigation still starts at the top.
-const SCROLL_RESTORE: &str = r#"<script id="ss-scroll-restore">(function(){try{if(window.__ssScroll)return;window.__ssScroll=1;if('scrollRestoration' in history)history.scrollRestoration='manual';var K='ssScroll:'+location.pathname;var de=document.documentElement;var save=function(){try{sessionStorage.setItem(K,String(window.scrollY||window.pageYOffset||0));}catch(e){}};window.addEventListener('scroll',save,{passive:true});window.addEventListener('pagehide',save);window.addEventListener('beforeunload',save);var y=sessionStorage.getItem(K);if(y==null)return;var n=parseFloat(y)||0;if(n<=0)return;de.style.visibility='hidden';var done=false;var reveal=function(){if(done)return;done=true;window.scrollTo(0,n);de.style.visibility='';};document.addEventListener('DOMContentLoaded',function(){window.scrollTo(0,n);requestAnimationFrame(reveal);});window.addEventListener('load',function(){window.scrollTo(0,n);reveal();});setTimeout(reveal,1200);}catch(e){try{document.documentElement.style.visibility='';}catch(_){}}})();</script>"#;
+///
+/// The hold is released as soon as the document is tall enough to reach the
+/// saved position (rAF poll), with DOMContentLoaded/load and a 400ms hard cap
+/// as fallbacks — an over-long hold reads as a blank flash unique to the
+/// preview. The script body lives in `scroll_restore.html` so it stays readable
+/// and can be exercised by jsdom tests like the selection script.
+const SCROLL_RESTORE: &str = include_str!("scroll_restore.html");
 
 /// Makes the editor's OWN save feel like Next's in-place Fast Refresh. Astro
 /// full-reloads the whole document on a `.astro` save (which is what makes the
 /// preview jerk), but the edit is ALREADY shown live and Tailwind pushes its new
 /// CSS over a SEPARATE css-update HMR message. So we wrap Vite's HMR WebSocket and
 /// swallow just the `full-reload` message — but ONLY in the brief window right after
-/// the editor commits a save (`window.__ssSuppressUntil`, set on `ss:commit`).
-/// Outside that window full-reloads pass through normally, so an agent editing files
-/// still reloads the preview. CSS updates always pass, so the real compiled CSS
-/// applies. Gated to Vite's `vite-hmr` subprotocol so it never touches a site's own
-/// sockets. Injected at head start so it wraps WebSocket before `@vite/client` connects.
-const RELOAD_SUPPRESS: &str = r#"<script id="ss-reload-suppress">(function(){try{var O=window.WebSocket;if(!O)return;function drop(d){if(!(window.__ssSuppressUntil&&Date.now()<window.__ssSuppressUntil))return false;try{var m=JSON.parse(d);return !!(m&&m.type==='full-reload');}catch(e){return false;}}function W(url,protocols){var ws=arguments.length>1?new O(url,protocols):new O(url);var isVite=protocols==='vite-hmr'||(protocols&&(''+protocols).indexOf('vite-hmr')>=0);if(!isVite)return ws;var add=ws.addEventListener.bind(ws);function flt(h){return function(ev){if(ev&&typeof ev.data==='string'&&drop(ev.data))return;return h.call(ws,ev);};}ws.addEventListener=function(t,h,o){return (t==='message'&&typeof h==='function')?add(t,flt(h),o):add(t,h,o);};var _om=null;try{Object.defineProperty(ws,'onmessage',{configurable:true,get:function(){return _om;},set:function(h){_om=h;if(typeof h==='function')add('message',flt(h));}});}catch(e){}return ws;}W.prototype=O.prototype;try{W.CONNECTING=O.CONNECTING;W.OPEN=O.OPEN;W.CLOSING=O.CLOSING;W.CLOSED=O.CLOSED;}catch(e){}window.WebSocket=W;}catch(e){}})();</script>"#;
+/// the editor commits a save (`window.__ssSuppressUntil`, set on `ss:commit`),
+/// and at most ONE per window: dropping a reload closes the window, so a racing
+/// reload from an unrelated change (an agent editing files) still lands instead
+/// of leaving the preview permanently stale. CSS updates always pass, so the real
+/// compiled CSS applies. Gated to Vite's `vite-hmr` subprotocol so it never touches
+/// a site's own sockets. Injected at head start so it wraps WebSocket before
+/// `@vite/client` connects.
+///
+/// The script body lives in `reload_suppress.html` so the same source is shared
+/// with the jsdom behavior test (`src/components/preview/reloadSuppress.test.ts`).
+const RELOAD_SUPPRESS: &str = include_str!("reload_suppress.html");
 
 /// Boxed body type that can be either a full buffered body or a streamed body.
 type ProxyBody = BoxBody<Bytes, hyper::Error>;
@@ -236,6 +264,25 @@ fn redact_handshake_values(input: &str) -> String {
     }
     out.push_str(rest);
     out
+}
+
+/// Rewrite a `localhost`/`127.0.0.1` Origin header to the dev server's port.
+///
+/// Requests reaching the proxy come from pages served *by* the proxy, so their
+/// Origin names the proxy's ephemeral port. Dev servers that host/origin-check
+/// requests (Vite's HMR WebSocket upgrade, CSRF-guarded endpoints) must instead
+/// see the origin they expect — their own. Non-localhost origins pass through
+/// untouched.
+fn rewrite_localhost_origin(
+    value: &hyper::header::HeaderValue,
+    target_port: u16,
+) -> Option<hyper::header::HeaderValue> {
+    let s = value.to_str().ok()?;
+    let host = s.strip_prefix("http://")?.split(':').next()?;
+    if host != "localhost" && host != "127.0.0.1" {
+        return None;
+    }
+    hyper::header::HeaderValue::from_str(&format!("http://{host}:{target_port}")).ok()
 }
 
 /// A running proxy instance.
@@ -396,7 +443,11 @@ async fn proxy_http_request(
     // Connect to target via hostname so both IPv4 and IPv6 are tried.
     // Vite-based dev servers (Astro, SvelteKit, Nuxt) bind to `localhost` which
     // resolves to `::1` (IPv6) on macOS -- hardcoding 127.0.0.1 fails for those.
-    let stream = TcpStream::connect(format!("localhost:{target_port}")).await?;
+    let stream = tokio::time::timeout(
+        UPSTREAM_CONNECT_TIMEOUT,
+        TcpStream::connect(format!("localhost:{target_port}")),
+    )
+    .await??;
     let io = TokioIo::new(stream);
 
     let (mut sender, conn) = hyper::client::conn::http1::Builder::new()
@@ -441,13 +492,25 @@ async fn proxy_http_request(
             builder = builder.header(key, format!("localhost:{target_port}"));
             continue;
         }
+        // Rewrite Origin for the same reason — a CSRF/origin-checking dev
+        // server must not see the proxy's ephemeral port.
+        if key == hyper::header::ORIGIN {
+            if let Some(v) = rewrite_localhost_origin(value, target_port) {
+                builder = builder.header(key, v);
+                continue;
+            }
+        }
         builder = builder.header(key, value);
     }
 
     let forwarded_req = builder.body(body)?;
 
     // Send request and get response
-    let resp = sender.send_request(forwarded_req).await?;
+    let resp = tokio::time::timeout(
+        UPSTREAM_RESPONSE_TIMEOUT,
+        sender.send_request(forwarded_req),
+    )
+    .await??;
 
     // Intercept auth-handshake redirect loops before they leave the proxy.
     // Forwarding the redirect would bounce the iframe through a third-party
@@ -494,7 +557,9 @@ async fn proxy_http_request(
 
     if is_html {
         // Buffer HTML response body and inject nav script (and error overlay for 5xx)
-        let body_bytes = resp.collect().await?.to_bytes();
+        let body_bytes = tokio::time::timeout(HTML_BODY_TIMEOUT, resp.collect())
+            .await??
+            .to_bytes();
         let is_server_error = status.is_server_error();
 
         let response_body = if body_bytes.len() < MAX_BODY_SIZE {
@@ -528,6 +593,16 @@ async fn proxy_http_request(
             if key == hyper::header::CONTENT_LENGTH || key == hyper::header::CONTENT_ENCODING {
                 continue;
             }
+            // The injected body no longer matches upstream's cache validators,
+            // and the iframe URL carries no cache-busting param — the webview
+            // must never reuse a cached copy of injected HTML (replaced with a
+            // hard no-store below).
+            if key == hyper::header::CACHE_CONTROL
+                || key == hyper::header::ETAG
+                || key == hyper::header::LAST_MODIFIED
+            {
+                continue;
+            }
             // The page renders inside the preview iframe — drop anti-framing
             // headers (Shopify storefronts send X-Frame-Options: DENY).
             if key == hyper::header::X_FRAME_OPTIONS {
@@ -541,6 +616,7 @@ async fn proxy_http_request(
             }
             response = response.header(key, value);
         }
+        response = response.header(hyper::header::CACHE_CONTROL, "no-store");
 
         Ok(response.body(response_body)?)
     } else {
@@ -573,7 +649,14 @@ async fn handle_websocket_upgrade(
     target_port: u16,
 ) -> Result<Response<ProxyBody>, hyper::Error> {
     // Connect via hostname for IPv4/IPv6 compatibility (see proxy_http_request)
-    let target_stream = match TcpStream::connect(format!("localhost:{target_port}")).await {
+    let target_stream = match tokio::time::timeout(
+        UPSTREAM_CONNECT_TIMEOUT,
+        TcpStream::connect(format!("localhost:{target_port}")),
+    )
+    .await
+    .map_err(std::io::Error::from)
+    .and_then(|r| r)
+    {
         Ok(s) => s,
         Err(e) => {
             tracing::error!("[Proxy] WebSocket target connection failed: {}", e);
@@ -623,6 +706,21 @@ async fn handle_websocket_upgrade(
         .version(parts.version);
 
     for (key, value) in &parts.headers {
+        // Rewrite Host/Origin to the dev server's own port, exactly like the
+        // HTTP path. Vite host/origin-checks its HMR WebSocket upgrade; leaking
+        // the proxy's ephemeral port here gets the HMR socket rejected on
+        // stricter setups — the preview then silently stops receiving updates
+        // until the dev server is restarted.
+        if key == hyper::header::HOST {
+            builder = builder.header(key, format!("localhost:{target_port}"));
+            continue;
+        }
+        if key == hyper::header::ORIGIN {
+            if let Some(v) = rewrite_localhost_origin(value, target_port) {
+                builder = builder.header(key, v);
+                continue;
+            }
+        }
         builder = builder.header(key, value);
     }
 
@@ -717,10 +815,45 @@ async fn handle_websocket_upgrade(
 mod tests {
     use super::{
         is_auth_redirect_loop, is_document_navigation, redact_handshake_values,
-        sanitize_csp_for_preview,
+        rewrite_localhost_origin, sanitize_csp_for_preview,
     };
     use hyper::header::HeaderValue;
     use hyper::StatusCode;
+
+    #[test]
+    fn localhost_origin_is_rewritten_to_target_port() {
+        let v = HeaderValue::from_static("http://localhost:61234");
+        assert_eq!(
+            rewrite_localhost_origin(&v, 3000).unwrap(),
+            HeaderValue::from_static("http://localhost:3000")
+        );
+    }
+
+    #[test]
+    fn loopback_ip_origin_keeps_its_host_form() {
+        let v = HeaderValue::from_static("http://127.0.0.1:61234");
+        assert_eq!(
+            rewrite_localhost_origin(&v, 3000).unwrap(),
+            HeaderValue::from_static("http://127.0.0.1:3000")
+        );
+    }
+
+    #[test]
+    fn portless_localhost_origin_gains_target_port() {
+        let v = HeaderValue::from_static("http://localhost");
+        assert_eq!(
+            rewrite_localhost_origin(&v, 4321).unwrap(),
+            HeaderValue::from_static("http://localhost:4321")
+        );
+    }
+
+    #[test]
+    fn non_localhost_origins_pass_through_untouched() {
+        for origin in ["https://localhost:1234", "http://example.com:80", "null"] {
+            let v = HeaderValue::from_str(origin).unwrap();
+            assert!(rewrite_localhost_origin(&v, 3000).is_none());
+        }
+    }
 
     #[test]
     fn csp_without_stripped_directives_passes_through() {
@@ -931,5 +1064,154 @@ mod tests {
     fn redaction_leaves_strings_without_the_param_unchanged() {
         let s = "HTTP 307 redirect to https://my-app.clerk.accounts.dev/v1/client/handshake?redirect_url=x (requested /)";
         assert_eq!(redact_handshake_values(s), s);
+    }
+}
+
+/// End-to-end tests over real sockets: a canned upstream records exactly what
+/// the proxy forwards, and the raw response bytes show what a webview would see.
+#[cfg(test)]
+mod e2e_tests {
+    use super::{start_preview_proxy, stop_preview_proxy};
+    use std::sync::Arc;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio::net::{TcpListener, TcpStream};
+    use tokio::sync::Mutex;
+
+    /// Spawn a fake dev server that captures each request's head (through the
+    /// blank line) and answers with `response`. Returns its port.
+    async fn spawn_upstream(response: &'static str, captured: Arc<Mutex<Vec<String>>>) -> u16 {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        tokio::spawn(async move {
+            while let Ok((mut stream, _)) = listener.accept().await {
+                let captured = captured.clone();
+                tokio::spawn(async move {
+                    let mut head = Vec::new();
+                    let mut buf = [0u8; 1024];
+                    while !head.windows(4).any(|w| w == b"\r\n\r\n") {
+                        match stream.read(&mut buf).await {
+                            Ok(0) | Err(_) => break,
+                            Ok(n) => head.extend_from_slice(&buf[..n]),
+                        }
+                    }
+                    captured
+                        .lock()
+                        .await
+                        .push(String::from_utf8_lossy(&head).to_string());
+                    let _ = stream.write_all(response.as_bytes()).await;
+                });
+            }
+        });
+        port
+    }
+
+    /// Send raw bytes to the proxy and collect the full response.
+    async fn roundtrip(proxy_port: u16, request: String) -> String {
+        let mut client = TcpStream::connect(("127.0.0.1", proxy_port)).await.unwrap();
+        client.write_all(request.as_bytes()).await.unwrap();
+        let mut resp = Vec::new();
+        // WS upgrades keep the socket open — read until headers, then stop.
+        let mut buf = [0u8; 1024];
+        while !resp.windows(4).any(|w| w == b"\r\n\r\n") || resp.starts_with(b"HTTP/1.1 200") {
+            match tokio::time::timeout(std::time::Duration::from_secs(5), client.read(&mut buf))
+                .await
+            {
+                Ok(Ok(0)) | Err(_) => break,
+                Ok(Ok(n)) => resp.extend_from_slice(&buf[..n]),
+                Ok(Err(_)) => break,
+            }
+        }
+        String::from_utf8_lossy(&resp).to_string()
+    }
+
+    #[tokio::test]
+    async fn http_path_rewrites_headers_hardens_caching_and_injects() {
+        let captured = Arc::new(Mutex::new(Vec::new()));
+        let body = "<html><head><title>t</title></head><body>hi</body></html>";
+        let upstream = spawn_upstream(
+            // Cacheable upstream response — the proxy must strip the validators
+            // since the injected body no longer matches them.
+            Box::leak(
+                format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: {}\r\nCache-Control: max-age=3600\r\nETag: \"abc\"\r\n\r\n{body}",
+                    body.len()
+                )
+                .into_boxed_str(),
+            ),
+            captured.clone(),
+        )
+        .await;
+        let proxy_port = start_preview_proxy("e2e-http".into(), upstream)
+            .await
+            .unwrap();
+
+        let resp = roundtrip(
+            proxy_port,
+            format!(
+                "GET / HTTP/1.1\r\nHost: localhost:{proxy_port}\r\nOrigin: http://localhost:{proxy_port}\r\nAccept-Encoding: gzip, br\r\nConnection: close\r\n\r\n"
+            ),
+        )
+        .await;
+        stop_preview_proxy("e2e-http");
+
+        // What the dev server saw: its own port in Host/Origin, no Accept-Encoding.
+        let seen = captured.lock().await.join("").to_lowercase();
+        assert!(
+            seen.contains(&format!("host: localhost:{upstream}")),
+            "{seen}"
+        );
+        assert!(
+            seen.contains(&format!("origin: http://localhost:{upstream}")),
+            "{seen}"
+        );
+        assert!(!seen.contains("accept-encoding"), "{seen}");
+
+        // What the webview gets: injected scripts, hard no-store, no validators.
+        assert!(resp.contains("ss-reload-suppress"), "{resp}");
+        assert!(resp.contains("ss-scroll-restore"), "{resp}");
+        assert!(resp.contains("shipstudio:navigate"), "{resp}");
+        let lower = resp.to_lowercase();
+        assert!(lower.contains("cache-control: no-store"), "{resp}");
+        assert!(!lower.contains("etag"), "{resp}");
+        assert!(!lower.contains("max-age"), "{resp}");
+    }
+
+    #[tokio::test]
+    async fn ws_upgrade_rewrites_host_and_origin_for_hmr() {
+        let captured = Arc::new(Mutex::new(Vec::new()));
+        let upstream = spawn_upstream(
+            "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: s3pPLMBiTxaQ9kYGzzhZRbK+xOo=\r\nSec-WebSocket-Protocol: vite-hmr\r\n\r\n",
+            captured.clone(),
+        )
+        .await;
+        let proxy_port = start_preview_proxy("e2e-ws".into(), upstream)
+            .await
+            .unwrap();
+
+        let resp = roundtrip(
+            proxy_port,
+            format!(
+                "GET / HTTP/1.1\r\nHost: localhost:{proxy_port}\r\nOrigin: http://localhost:{proxy_port}\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Version: 13\r\nSec-WebSocket-Protocol: vite-hmr\r\n\r\n"
+            ),
+        )
+        .await;
+        stop_preview_proxy("e2e-ws");
+
+        // The upgrade reached the dev server with ITS port in Host/Origin —
+        // Vite origin-checks the HMR socket; the proxy port would get it
+        // rejected and silently kill hot updates.
+        let seen = captured.lock().await.join("").to_lowercase();
+        assert!(
+            seen.contains(&format!("host: localhost:{upstream}")),
+            "{seen}"
+        );
+        assert!(
+            seen.contains(&format!("origin: http://localhost:{upstream}")),
+            "{seen}"
+        );
+        assert!(seen.contains("sec-websocket-protocol: vite-hmr"), "{seen}");
+
+        // And the upgrade completed through the proxy.
+        assert!(resp.starts_with("HTTP/1.1 101"), "{resp}");
     }
 }

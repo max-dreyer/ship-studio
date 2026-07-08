@@ -84,7 +84,12 @@ export function usePreviewConnection({
   const [showPageDropdown, setShowPageDropdown] = useState(false);
   const [pageSearch, setPageSearch] = useState('');
   const [proxyPort, setProxyPort] = useState<number | null>(null);
-  const [cacheBuster, setCacheBuster] = useState(() => Date.now());
+  // Bumped to request an imperative iframe reload (Preview watches it). The
+  // iframe URL used to carry a `?_cb=<ts>&shipstudio=1` cache-buster instead,
+  // but those params leaked into the previewed app — its router, SSR search
+  // params, and analytics all saw junk Chrome never sends. Freshness is now the
+  // proxy's job (it serves injected HTML with Cache-Control: no-store).
+  const [reloadToken, setReloadToken] = useState(0);
   // The iframe never proved it rendered a document (issue #179): the server is
   // healthy top-level, but the subframe load aborted — e.g. an auth-middleware
   // redirect loop — and WebKit renders an empty frame with no error anywhere.
@@ -92,11 +97,11 @@ export function usePreviewConnection({
 
   const devServerUrl = `http://localhost:${port}`;
   const baseUrl = proxyPort ? `http://localhost:${proxyPort}` : devServerUrl;
-  const currentUrl = `${baseUrl}${iframePath === '/' ? '' : iframePath}?_cb=${cacheBuster}&shipstudio=1`;
-  // URL safe to hand to the user's default browser: real dev server,
-  // current iframe path, no proxy and no Ship Studio query params. The
-  // iframe needs the proxy URL (for navigation tracking + cache busting)
-  // but external browsers should land on the dev server directly.
+  const currentUrl = `${baseUrl}${iframePath === '/' ? '' : iframePath}`;
+  // URL safe to hand to the user's default browser: real dev server and
+  // current iframe path, no proxy. The iframe needs the proxy URL (for
+  // navigation tracking and script injection) but external browsers should
+  // land on the dev server directly.
   const externalUrl = `${devServerUrl}${iframePath === '/' ? '' : iframePath}`;
 
   const wasRestartingRef = useRef(false);
@@ -156,7 +161,7 @@ export function usePreviewConnection({
     setPages([]);
     setShowPageDropdown(false);
     setPageSearch('');
-    setCacheBuster(Date.now());
+    setReloadToken(0);
     setIframeBlank(false);
     iframeAliveRef.current = false;
 
@@ -285,10 +290,11 @@ export function usePreviewConnection({
   }, [serverReady, port]);
 
   // Arm the blank-iframe watchdog on every explicit navigation: initial proxy
-  // URL, refresh, and page select all change `currentUrl` (cache buster), which
-  // replaces the iframe's document — so the previous proof-of-life no longer
-  // stands. Skipped (and cleared) while the server isn't ready or the URL
-  // bypasses the injecting proxy, where no page could ever prove life.
+  // URL and page select change `currentUrl`, and refresh / same-page select bump
+  // `reloadToken` (imperative reload) — each replaces the iframe's document, so
+  // the previous proof-of-life no longer stands. Skipped (and cleared) while the
+  // server isn't ready or the URL bypasses the injecting proxy, where no page
+  // could ever prove life.
   useEffect(() => {
     const action = decideIframeWatchdogArm('navigation', {
       serverReady,
@@ -304,7 +310,14 @@ export function usePreviewConnection({
     setIframeBlank(false);
     startIframeWatchdogTimer();
     return clearIframeWatchdogTimer;
-  }, [currentUrl, serverReady, proxyPort, startIframeWatchdogTimer, clearIframeWatchdogTimer]);
+  }, [
+    currentUrl,
+    reloadToken,
+    serverReady,
+    proxyPort,
+    startIframeWatchdogTimer,
+    clearIframeWatchdogTimer,
+  ]);
 
   // Give each document hop a fresh window: the iframe's `load` event fires per
   // document (redirect chains, about:blank bounces during refresh). Injected
@@ -390,7 +403,7 @@ export function usePreviewConnection({
 
     void listen<{ windowLabel: string }>('static-file-changed', () => {
       logger.debug('[Preview] File change detected, reloading preview');
-      setCacheBuster(Date.now());
+      setReloadToken((t) => t + 1);
     }).then((fn) => {
       unlisten = fn;
     });
@@ -542,23 +555,35 @@ export function usePreviewConnection({
   // Handlers
   const handleRefresh = useCallback(() => {
     void trackEvent('preview_refreshed', { trigger: 'user' });
-    setIframePath(currentPage);
-    setCacheBuster(Date.now());
-  }, [currentPage]);
+    if (iframePath === currentPage) {
+      // Same URL — a src diff won't reload; request an imperative reload.
+      setReloadToken((t) => t + 1);
+    } else {
+      // Path changed — the src change itself performs a fresh load.
+      setIframePath(currentPage);
+    }
+  }, [currentPage, iframePath]);
 
-  const handlePageSelect = useCallback((route: string) => {
-    void trackEvent('preview_page_selected', {
-      // Strip dynamic-looking segments (numeric ids, uuids) so the cardinality
-      // doesn't explode while still keeping the route shape useful.
-      route_pattern: route.replace(/\/(\d+|[0-9a-f-]{8,})/g, '/:id').slice(0, 200),
-      depth: route.split('/').filter(Boolean).length,
-    });
-    setCurrentPage(route);
-    setIframePath(route);
-    setShowPageDropdown(false);
-    setPageSearch('');
-    setCacheBuster(Date.now());
-  }, []);
+  const handlePageSelect = useCallback(
+    (route: string) => {
+      void trackEvent('preview_page_selected', {
+        // Strip dynamic-looking segments (numeric ids, uuids) so the cardinality
+        // doesn't explode while still keeping the route shape useful.
+        route_pattern: route.replace(/\/(\d+|[0-9a-f-]{8,})/g, '/:id').slice(0, 200),
+        depth: route.split('/').filter(Boolean).length,
+      });
+      setCurrentPage(route);
+      setShowPageDropdown(false);
+      setPageSearch('');
+      if (iframePath === route) {
+        // Re-selecting the visible page acts as a refresh.
+        setReloadToken((t) => t + 1);
+      } else {
+        setIframePath(route);
+      }
+    },
+    [iframePath]
+  );
 
   const handleRetry = useCallback(() => {
     setHasError(false);
@@ -607,6 +632,7 @@ export function usePreviewConnection({
     baseUrl,
     currentUrl,
     externalUrl,
+    reloadToken,
 
     // Page navigation
     currentPage,
