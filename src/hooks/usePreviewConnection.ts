@@ -106,6 +106,9 @@ export function usePreviewConnection({
 
   const wasRestartingRef = useRef(false);
   const healthCheckFailuresRef = useRef(0);
+  // Last time the HMR watchdog auto-reloaded the preview — throttles recovery
+  // so a flapping HMR socket can't put the iframe in a reload loop.
+  const lastHmrRecoveryRef = useRef(0);
   const isStoppedRef = useRef(false);
   isStoppedRef.current = isStopped;
   const retryCountRef = useRef(0);
@@ -390,10 +393,42 @@ export function usePreviewConnection({
         const prompt = `My dev server is returning an error:\n\n${data.message}\n\nPlease help me fix this.`;
         onSendToClaude?.(prompt);
       }
+      if (data && data.type === 'shipstudio:hmr-down') {
+        // The page's HMR socket died and never came back (watchdog in the
+        // injected reload-suppress script). The page still renders but no
+        // longer receives updates — the classic "stale preview until you
+        // restart the dev server". If the server itself is healthy, one
+        // reload reconnects everything; if it's down, the health-check flow
+        // owns recovery, so do nothing here.
+        if (!serverReady) return;
+        if (Date.now() - lastHmrRecoveryRef.current < 15000) return;
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 3000);
+        fetch(devServerUrl, { mode: 'no-cors', signal: controller.signal })
+          .then(() => {
+            lastHmrRecoveryRef.current = Date.now();
+            logger.warn(
+              '[Preview] HMR connection lost while dev server is healthy — auto-reloading preview'
+            );
+            setReloadToken((t) => t + 1);
+          })
+          .catch(() => {
+            // Server unreachable — the periodic health check will surface it.
+          })
+          .finally(() => clearTimeout(timeoutId));
+      }
     };
     window.addEventListener('message', handleMessage);
     return () => window.removeEventListener('message', handleMessage);
-  }, [onSendToClaude, onToast, port, proxyPort, clearIframeWatchdogTimer]);
+  }, [
+    onSendToClaude,
+    onToast,
+    port,
+    proxyPort,
+    serverReady,
+    devServerUrl,
+    clearIframeWatchdogTimer,
+  ]);
 
   // Auto-reload for static HTML projects when files change on disk
   useEffect(() => {

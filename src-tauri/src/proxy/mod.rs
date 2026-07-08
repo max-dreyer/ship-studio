@@ -40,10 +40,17 @@ const UPSTREAM_CONNECT_TIMEOUT: std::time::Duration = std::time::Duration::from_
 /// hung upstream, not a UX timeout.
 const UPSTREAM_RESPONSE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(300);
 
-/// Timeout for buffering an HTML body once response headers have arrived.
-/// Headers-then-stall is not a compile wait — after headers the body should
-/// flow immediately on localhost.
+/// Timeout for buffering an HTML *error* body once response headers have
+/// arrived (5xx pages are buffered whole to extract the framework's error
+/// message; ordinary HTML streams through `HeadInjector` untimed, like any
+/// other streamed response). Headers-then-stall is not a compile wait — after
+/// headers the body should flow immediately on localhost.
 const HTML_BODY_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(60);
+
+/// Cap on how much of an HTML document is held back while scanning for
+/// `</head>`. Real heads are a few KB; if the marker hasn't shown up by now
+/// the document is degenerate — inject at the head-start position and stream on.
+const HEAD_SCAN_CAP: usize = 256 * 1024;
 
 /// Script injected into HTML responses to report navigation events to the parent window.
 /// Monkey-patches history.pushState/replaceState and listens for popstate to catch all
@@ -106,12 +113,153 @@ const SCROLL_RESTORE: &str = include_str!("scroll_restore.html");
 /// a site's own sockets. Injected at head start so it wraps WebSocket before
 /// `@vite/client` connects.
 ///
+/// The same script also runs the HMR watchdog: it tracks HMR sockets (Vite's
+/// `vite-hmr` subprotocol, Next.js's `_next/webpack-hmr` path) and posts
+/// `shipstudio:hmr-down` to the parent when they all close and none reopens
+/// within 5s — the parent then health-checks the dev server and auto-reloads
+/// the preview instead of leaving it silently stale.
+///
 /// The script body lives in `reload_suppress.html` so the same source is shared
 /// with the jsdom behavior test (`src/components/preview/reloadSuppress.test.ts`).
 const RELOAD_SUPPRESS: &str = include_str!("reload_suppress.html");
 
 /// Boxed body type that can be either a full buffered body or a streamed body.
 type ProxyBody = BoxBody<Bytes, hyper::Error>;
+
+/// Incremental HTML injector: buffers the stream only until `</head>` is seen,
+/// injects there, then passes every later chunk straight through.
+///
+/// Both injection points — right after `<head …>` (styles/early scripts) and
+/// right before `</head>` (nav + selection scripts) — live in the document
+/// prefix, so once the prefix is cut the standard whole-document pipeline
+/// (`inject_nav_script`) applies to it verbatim and the remainder needs no
+/// inspection. This is what lets streaming-SSR frameworks (Next.js App Router,
+/// Astro) paint progressively in the preview: they flush the head early and
+/// stream the body, and buffering the whole document — as the proxy used to —
+/// held the first paint until the last byte.
+struct HeadInjector {
+    /// Buffered prefix; `None` once injection happened (pass-through mode).
+    pending: Option<Vec<u8>>,
+    /// How far `pending` has been scanned, so each chunk is scanned once
+    /// (with marker-length overlap for markers split across chunks).
+    scanned: usize,
+}
+
+const HEAD_CLOSE: &[u8] = b"</head>";
+
+impl HeadInjector {
+    fn new() -> Self {
+        Self {
+            pending: Some(Vec::new()),
+            scanned: 0,
+        }
+    }
+
+    /// Feed one chunk; returns bytes ready to emit downstream (empty while the
+    /// injection point is still being scanned for).
+    fn push(&mut self, chunk: &[u8]) -> Vec<u8> {
+        let Some(mut buf) = self.pending.take() else {
+            // Pass-through mode: injection already happened.
+            return chunk.to_vec();
+        };
+        buf.extend_from_slice(chunk);
+        let start = self.scanned.saturating_sub(HEAD_CLOSE.len() - 1);
+
+        if let Some(rel) = find_subslice(&buf[start..], HEAD_CLOSE) {
+            let cut = start + rel + HEAD_CLOSE.len();
+            let (prefix, rest) = buf.split_at(cut);
+            let mut out = inject_nav_script(prefix);
+            out.extend_from_slice(rest);
+            out
+        } else if buf.len() > HEAD_SCAN_CAP {
+            // Degenerate document: no `</head>` in the first 256 KB. Drop
+            // every snippet at the head-start position (after `<head …>`,
+            // `<html …>`, or the document start) and go pass-through.
+            inject_at_head_start(
+                &buf,
+                &format!(
+                    "{SCROLLBAR_STYLE}{RELOAD_SUPPRESS}{SCROLL_RESTORE}{NAV_SCRIPT}{SELECT_SCRIPT}"
+                ),
+            )
+        } else {
+            // Marker not seen yet — keep buffering.
+            self.scanned = buf.len();
+            self.pending = Some(buf);
+            Vec::new()
+        }
+    }
+
+    /// Body ended. A document that never reached `</head>` under the cap gets
+    /// the standard whole-document fallback injection (before `</body>`, else
+    /// appended) — identical to the old buffered behavior.
+    fn finish(mut self) -> Vec<u8> {
+        match self.pending.take() {
+            Some(buf) => inject_nav_script(&buf),
+            None => Vec::new(),
+        }
+    }
+}
+
+fn find_subslice(haystack: &[u8], needle: &[u8]) -> Option<usize> {
+    haystack.windows(needle.len()).position(|w| w == needle)
+}
+
+/// Body implementation fed by a channel — lets a spawned task transform the
+/// upstream stream (head injection) while hyper streams frames to the webview.
+struct ChannelBody {
+    rx: tokio::sync::mpsc::Receiver<Result<hyper::body::Frame<Bytes>, hyper::Error>>,
+}
+
+impl hyper::body::Body for ChannelBody {
+    type Data = Bytes;
+    type Error = hyper::Error;
+
+    fn poll_frame(
+        mut self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Option<Result<hyper::body::Frame<Bytes>, hyper::Error>>> {
+        self.rx.poll_recv(cx)
+    }
+}
+
+/// Stream an HTML body through [`HeadInjector`]: the (injected) prefix is
+/// emitted as soon as `</head>` arrives, everything after it is piped through.
+fn streaming_injected_body(mut body: Incoming) -> ProxyBody {
+    let (tx, rx) = tokio::sync::mpsc::channel(16);
+    tokio::spawn(async move {
+        let mut injector = HeadInjector::new();
+        loop {
+            match body.frame().await {
+                Some(Ok(frame)) => {
+                    // Trailers are irrelevant for dev-server HTML — dropped.
+                    if let Ok(data) = frame.into_data() {
+                        let out = injector.push(&data);
+                        if !out.is_empty()
+                            && tx
+                                .send(Ok(hyper::body::Frame::data(Bytes::from(out))))
+                                .await
+                                .is_err()
+                        {
+                            return; // client went away
+                        }
+                    }
+                }
+                Some(Err(e)) => {
+                    let _ = tx.send(Err(e)).await;
+                    return;
+                }
+                None => break,
+            }
+        }
+        let tail = injector.finish();
+        if !tail.is_empty() {
+            let _ = tx
+                .send(Ok(hyper::body::Frame::data(Bytes::from(tail))))
+                .await;
+        }
+    });
+    ChannelBody { rx }.boxed()
+}
 
 /// Convert full bytes into a ProxyBody.
 fn full_body(data: Bytes) -> ProxyBody {
@@ -556,26 +704,30 @@ async fn proxy_http_request(
     let headers = resp.headers().clone();
 
     if is_html {
-        // Buffer HTML response body and inject nav script (and error overlay for 5xx)
-        let body_bytes = tokio::time::timeout(HTML_BODY_TIMEOUT, resp.collect())
-            .await??
-            .to_bytes();
         let is_server_error = status.is_server_error();
 
-        let response_body = if body_bytes.len() < MAX_BODY_SIZE {
-            let modified = if is_server_error {
-                tracing::warn!(
-                    "[Proxy] Dev server returned {} for HTML response, injecting error overlay",
-                    status.as_u16()
-                );
-                inject_error_into_html(&body_bytes, status.as_u16())
+        let response_body = if is_server_error {
+            // Error pages are buffered whole: extracting the framework's error
+            // message for the overlay needs the full document, and they're small.
+            tracing::warn!(
+                "[Proxy] Dev server returned {} for HTML response, injecting error overlay",
+                status.as_u16()
+            );
+            let body_bytes = tokio::time::timeout(HTML_BODY_TIMEOUT, resp.collect())
+                .await??
+                .to_bytes();
+            if body_bytes.len() < MAX_BODY_SIZE {
+                full_body(Bytes::from(inject_error_into_html(
+                    &body_bytes,
+                    status.as_u16(),
+                )))
             } else {
-                inject_nav_script(&body_bytes)
-            };
-            full_body(Bytes::from(modified))
+                // Too large to inject, pass through as-is
+                full_body(body_bytes)
+            }
         } else {
-            // Too large to inject, pass through as-is
-            full_body(body_bytes)
+            // Ordinary HTML streams through the head injector — see HeadInjector.
+            streaming_injected_body(resp.into_body())
         };
 
         // For error responses, return 200 so the iframe actually renders our overlay.
@@ -809,6 +961,70 @@ async fn handle_websocket_upgrade(
     }
 
     Ok(client_response)
+}
+
+#[cfg(test)]
+mod injector_tests {
+    use super::{inject_nav_script, HeadInjector, HEAD_SCAN_CAP};
+
+    /// Run the injector over `chunks` and return the concatenated output.
+    fn run(chunks: &[&[u8]]) -> Vec<u8> {
+        let mut injector = HeadInjector::new();
+        let mut out = Vec::new();
+        for chunk in chunks {
+            out.extend(injector.push(chunk));
+        }
+        out.extend(injector.finish());
+        out
+    }
+
+    #[test]
+    fn single_chunk_matches_buffered_pipeline() {
+        let html = b"<html><head><title>t</title></head><body>hi</body></html>";
+        assert_eq!(run(&[html]), inject_nav_script(html));
+    }
+
+    #[test]
+    fn marker_split_across_chunks_matches_buffered_pipeline() {
+        let html = b"<html><head><title>t</title></head><body>hi</body></html>";
+        // Split inside `</head>` itself — the nastiest boundary.
+        for split in 20..40 {
+            let (a, b) = html.split_at(split);
+            assert_eq!(run(&[a, b]), inject_nav_script(html), "split at {split}");
+        }
+    }
+
+    #[test]
+    fn body_streams_through_untouched_after_head() {
+        let mut injector = HeadInjector::new();
+        let first = injector.push(b"<html><head></head><body>");
+        assert!(!first.is_empty(), "prefix must flush once </head> is seen");
+        // Later chunks pass through verbatim — even ones containing head-like
+        // markers — because injection already happened.
+        assert_eq!(injector.push(b"<p></head></p>"), b"<p></head></p>");
+        assert!(injector.finish().is_empty());
+    }
+
+    #[test]
+    fn no_head_document_falls_back_like_buffered_pipeline() {
+        let html = b"<html><body>plain</body></html>";
+        assert_eq!(run(&[html]), inject_nav_script(html));
+    }
+
+    #[test]
+    fn cap_overflow_injects_at_head_start_and_streams_on() {
+        // A document whose </head> never arrives within the cap.
+        let mut big = b"<html><head>".to_vec();
+        big.resize(HEAD_SCAN_CAP + 1024, b'x');
+        let mut injector = HeadInjector::new();
+        let out = injector.push(&big);
+        assert!(!out.is_empty(), "cap overflow must flush");
+        let s = String::from_utf8_lossy(&out);
+        assert!(s.contains("ss-hide-scrollbars"));
+        assert!(s.contains("shipstudio:navigate"));
+        // And we're in pass-through mode now.
+        assert_eq!(injector.push(b"tail"), b"tail");
+    }
 }
 
 #[cfg(test)]
@@ -1213,5 +1429,77 @@ mod e2e_tests {
 
         // And the upgrade completed through the proxy.
         assert!(resp.starts_with("HTTP/1.1 101"), "{resp}");
+    }
+
+    #[tokio::test]
+    async fn html_streams_progressively_through_the_proxy() {
+        // Upstream sends the head, then HOLDS the rest until we've verified the
+        // injected head already reached the client — proving the proxy streams
+        // instead of buffering the whole document (progressive SSR paint).
+        let head = "<html><head><title>t</title></head><body><p>first</p>";
+        let tail = "<p>second</p></body></html>";
+        let (release_tx, release_rx) = tokio::sync::oneshot::channel::<()>();
+
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let upstream = listener.local_addr().unwrap().port();
+        tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.unwrap();
+            let mut buf = [0u8; 2048];
+            let _ = stream.read(&mut buf).await;
+            let headers = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: {}\r\n\r\n",
+                head.len() + tail.len()
+            );
+            stream.write_all(headers.as_bytes()).await.unwrap();
+            stream.write_all(head.as_bytes()).await.unwrap();
+            stream.flush().await.unwrap();
+            let _ = release_rx.await;
+            stream.write_all(tail.as_bytes()).await.unwrap();
+        });
+
+        let proxy_port = start_preview_proxy("e2e-stream".into(), upstream)
+            .await
+            .unwrap();
+        let mut client = TcpStream::connect(("127.0.0.1", proxy_port)).await.unwrap();
+        client
+            .write_all(
+                format!(
+                    "GET / HTTP/1.1\r\nHost: localhost:{proxy_port}\r\nConnection: close\r\n\r\n"
+                )
+                .as_bytes(),
+            )
+            .await
+            .unwrap();
+
+        // Read until the first body part arrives — the tail hasn't been sent yet.
+        let mut received = Vec::new();
+        let mut buf = [0u8; 4096];
+        while !String::from_utf8_lossy(&received).contains("<p>first</p>") {
+            let n = tokio::time::timeout(std::time::Duration::from_secs(5), client.read(&mut buf))
+                .await
+                .expect("head must stream before the body completes")
+                .unwrap();
+            assert!(n > 0, "connection closed before head arrived");
+            received.extend_from_slice(&buf[..n]);
+        }
+        let so_far = String::from_utf8_lossy(&received).to_string();
+        assert!(so_far.contains("ss-reload-suppress"), "{so_far}");
+        assert!(so_far.contains("shipstudio:navigate"), "{so_far}");
+        assert!(!so_far.contains("<p>second</p>"), "{so_far}");
+
+        // Release the tail and confirm it flows through untouched.
+        release_tx.send(()).unwrap();
+        loop {
+            match tokio::time::timeout(std::time::Duration::from_secs(5), client.read(&mut buf))
+                .await
+            {
+                Ok(Ok(0)) | Err(_) => break,
+                Ok(Ok(n)) => received.extend_from_slice(&buf[..n]),
+                Ok(Err(_)) => break,
+            }
+        }
+        stop_preview_proxy("e2e-stream");
+        let full = String::from_utf8_lossy(&received).to_string();
+        assert!(full.contains("<p>second</p></body></html>"), "{full}");
     }
 }
