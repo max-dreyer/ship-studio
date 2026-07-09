@@ -63,11 +63,25 @@ describe('buildGuidedSetupPrompt', () => {
     isWindowsMock.mockReturnValue(false);
   });
 
-  it('only lists items that are actually missing', () => {
+  it('tells the agent to check everything itself before installing', () => {
     const prompt = buildGuidedSetupPrompt([item('gh_auth', 'not_authenticated')]);
-    expect(prompt).toContain('gh auth login');
-    expect(prompt).not.toContain('Homebrew');
-    expect(prompt).not.toContain('brew install');
+    expect(prompt).toContain('checking what is already installed yourself');
+    expect(prompt).toContain('`brew --version`');
+    expect(prompt).toContain('`gh auth status`');
+    // Full command list always ships, even for items we detected as ready —
+    // the agent's own checks are the source of truth, not ours.
+    expect(prompt).toContain('brew install');
+    expect(prompt).toContain('Skip any step whose tool already works');
+  });
+
+  it('includes our detection only as an overridable hint', () => {
+    const prompt = buildGuidedSetupPrompt([item('gh_auth', 'not_authenticated')], null, [
+      item('git', 'ready'),
+      item('node', 'ready'),
+    ]);
+    expect(prompt).toContain('detection currently reports installed: Git, Node.js');
+    expect(prompt).toContain('missing: a GitHub sign-in');
+    expect(prompt).toContain('trust what your checks find over this list');
   });
 
   it('numbers steps in install order', () => {
@@ -84,21 +98,16 @@ describe('buildGuidedSetupPrompt', () => {
     expect(prompt).toContain('Ship Studio runs its own checks');
   });
 
-  it('forbids work beyond the listed tools', () => {
-    const prompt = buildGuidedSetupPrompt(FRESH_MISSING);
-    expect(prompt).toContain('Do not install or change anything beyond the tools listed above');
-  });
-
-  it('appends the chosen host CLI as the final step', () => {
+  it('appends the chosen host CLI as the final step, with its check command', () => {
     const vercel = buildGuidedSetupPrompt(FRESH_MISSING, 'vercel');
-    expect(vercel).toContain('6) Vercel CLI: run `npm install -g vercel --force`');
-    expect(vercel).toContain('vercel login');
+    expect(vercel).toContain('6) Vercel CLI');
+    expect(vercel).toContain('npm install -g vercel --force');
+    expect(vercel).toContain('`vercel whoami`');
 
     const cloudflare = buildGuidedSetupPrompt(FRESH_MISSING, 'cloudflare');
-    expect(cloudflare).toContain(
-      '6) Cloudflare Wrangler CLI: run `npm install -g wrangler --force`'
-    );
-    expect(cloudflare).toContain('wrangler login');
+    expect(cloudflare).toContain('6) Cloudflare Wrangler CLI');
+    expect(cloudflare).toContain('npm install -g wrangler --force');
+    expect(cloudflare).toContain('`wrangler whoami`');
     expect(cloudflare).not.toContain('vercel');
   });
 
@@ -108,27 +117,19 @@ describe('buildGuidedSetupPrompt', () => {
     expect(prompt).not.toContain('Vercel');
   });
 
-  it('still produces a hosting-only prompt when nothing else is missing', () => {
-    const prompt = buildGuidedSetupPrompt([], 'cloudflare');
-    expect(prompt).toContain('1) Cloudflare Wrangler CLI');
-    expect(prompt).toContain('the Cloudflare Wrangler CLI (their hosting provider)');
-  });
-
-  it('becomes a verify-only pass when nothing at all is missing', () => {
+  it('verifies everything even when detection says nothing is missing', () => {
     const prompt = buildGuidedSetupPrompt([], null);
-    expect(prompt).toContain('appears to be installed already');
-    expect(prompt).toContain('gh auth status');
-    expect(prompt).not.toContain('Their machine is missing');
+    expect(prompt).toContain('checking what is already installed yourself');
+    expect(prompt).toContain('detection reports everything already installed');
+    expect(prompt).toContain('brew install');
     expect(prompt).not.toContain('\n');
   });
 
-  it('names already-installed tools so the agent confirms them to the user', () => {
-    const prompt = buildGuidedSetupPrompt([item('gh_auth', 'not_authenticated')], null, [
-      item('git', 'ready'),
-      item('node', 'ready'),
-    ]);
-    expect(prompt).toContain('already detected these as installed and working: Git, Node.js');
-    expect(prompt).toContain('Their machine is missing: a GitHub sign-in');
+  it('licenses the agent to fix underlying problems, not just run the script', () => {
+    const prompt = buildGuidedSetupPrompt(FRESH_MISSING);
+    expect(prompt).toContain('no matter what this machine throws at you');
+    expect(prompt).toContain('Xcode Command Line Tools');
+    expect(prompt).toContain('Do not set up anything unrelated');
   });
 });
 

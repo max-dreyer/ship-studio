@@ -182,60 +182,70 @@ export function buildGuidedSetupPrompt(
   alreadyReady: SetupItem[] = []
 ): string {
   const win = isWindows();
-  const nameList = missing.map((i) => PROMPT_ITEM_NAMES[i.id] ?? i.id);
-  const readyNames = alreadyReady.map((i) => PROMPT_ITEM_NAMES[i.id] ?? i.id).join(', ');
-  const instructions = missing
-    .map((i) => itemInstruction(i.id, win))
+
+  // The agent is the source of discovery: it gets the FULL required list
+  // with check commands and verifies everything itself. Our detection rides
+  // along only as a reference hint it can override — the app's probes and
+  // the agent's terminal can see different PATHs, and the terminal is where
+  // the work actually happens.
+  const requiredIds: string[] = ['homebrew', 'node', 'git', 'gh', 'gh_auth'];
+  // npm_fix is conditional — it only exists while ~/.npm is broken, so it
+  // joins the list only when our checks actually surfaced it.
+  if (missing.some((i) => i.id === 'npm_fix')) {
+    requiredIds.splice(1, 0, 'npm_fix');
+  }
+  const instructions = requiredIds
+    .map((id) => itemInstruction(id, win))
     .filter((s): s is string => s !== null);
+
+  const pkgCheck = win ? '`winget --version`' : '`brew --version`';
+  const checkCommands = [
+    pkgCheck,
+    '`node --version`',
+    '`git --version`',
+    '`gh --version`',
+    '`gh auth status`',
+  ];
 
   // The chosen hosting provider's CLI is installed last (both are npm
   // packages, so Node must land first) and signed in via its browser flow.
   if (host === 'vercel') {
-    nameList.push('the Vercel CLI (their hosting provider)');
     instructions.push(
-      'Vercel CLI: run `npm install -g vercel --force`, then sign them in with `vercel login` — a browser opens where they sign in or create a free Vercel account'
+      'Vercel CLI (their hosting provider): run `npm install -g vercel --force`, then sign them in with `vercel login` — a browser opens where they sign in or create a free Vercel account'
     );
+    checkCommands.push('`vercel whoami`');
   } else if (host === 'cloudflare') {
-    nameList.push('the Cloudflare Wrangler CLI (their hosting provider)');
     instructions.push(
-      'Cloudflare Wrangler CLI: run `npm install -g wrangler --force`, then sign them in with `wrangler login` — a browser opens where they sign in or create a free Cloudflare account'
+      'Cloudflare Wrangler CLI (their hosting provider): run `npm install -g wrangler --force`, then sign them in with `wrangler login` — a browser opens where they sign in or create a free Cloudflare account'
     );
+    checkCommands.push('`wrangler whoami`');
   }
 
-  const intro =
-    'You are helping a brand-new Ship Studio user get their computer ready. ' +
-    'Ship Studio is a desktop app for building websites with AI agents, and you are that agent — this is their first impression of you, so be warm, brief, and clear. ' +
-    'Assume the user is not technical: before each step, say what you are about to do in one short sentence. ';
-  const outro =
-    'When everything is verified, tell the user they are all set and to look at the checklist beside this window — Ship Studio runs its own checks and will turn every item green, then show a Continue button.';
+  const missingNames = missing.map((i) => PROMPT_ITEM_NAMES[i.id] ?? i.id).join(', ');
+  const readyNames = alreadyReady.map((i) => PROMPT_ITEM_NAMES[i.id] ?? i.id).join(', ');
+  const detectionHint =
+    missingNames && readyNames
+      ? `For reference, Ship Studio's own detection currently reports installed: ${readyNames}; missing: ${missingNames} — but trust what your checks find over this list. `
+      : missingNames
+        ? `For reference, Ship Studio's own detection currently reports everything missing: ${missingNames} — but trust what your checks find over this list. `
+        : "For reference, Ship Studio's own detection reports everything already installed — but trust what your checks find over this list. ";
 
-  // Nothing to install: a verify-only pass. The agent confirms each tool
-  // works and reports back, instead of being told to install a blank list.
-  if (instructions.length === 0) {
-    return (
-      intro +
-      'Good news: everything Ship Studio needs appears to be installed already. ' +
-      'Quickly verify each tool yourself — run `git --version`, `gh --version`, `gh auth status`, and `node --version` — and give the user one friendly summary of what you found. ' +
-      'If something is actually broken, explain it in plain words and fix only that; do not install or change anything else. ' +
-      outro
-    );
-  }
-
-  const names = nameList.join(', ');
   const steps = instructions.map((s, idx) => `${String(idx + 1)}) ${s}`).join('; ');
 
   return (
-    intro +
-    (readyNames
-      ? `Ship Studio already detected these as installed and working: ${readyNames} — start by telling the user that good news in one sentence (no need to re-verify them). `
-      : '') +
-    `Their machine is missing: ${names}. ` +
-    `Set these up one at a time, in this exact order, using exactly these commands: ${steps}. ` +
+    'You are helping a brand-new Ship Studio user get their computer ready. ' +
+    'Ship Studio is a desktop app for building websites with AI agents, and you are that agent — this is their first impression of you, so be warm, brief, and clear. ' +
+    'Assume the user is not technical: before each step, say what you are about to do in one short sentence. ' +
+    `Start by checking what is already installed yourself: run ${checkCommands.join(', ')}, then give the user one short summary of what's already good and what's missing. ` +
+    detectionHint +
+    `Then set up ONLY what is actually missing, one at a time, in this order, using these exact commands as the standard path: ${steps}. ` +
+    'Skip any step whose tool already works. ' +
     'When you are asked to approve a command permission, reassure the user it is safe to approve the commands listed above. ' +
-    'After each step, verify it actually worked (run the tool with --version, or `gh auth status` for the sign-in) before moving on — a clean exit is a claim, not proof. ' +
-    'If a command fails, read the error, explain it in plain words, and fix it; if the user has to do something themselves (type a password, click through a browser), tell them exactly what to expect. ' +
-    'Do not install or change anything beyond the tools listed above. ' +
-    outro
+    'After each install, verify it actually worked (run the tool with --version, or `gh auth status` for the sign-in) before moving on — a clean exit is a claim, not proof. ' +
+    'Your job is to get every listed tool working no matter what this machine throws at you: if a standard command fails, read the error, explain it in plain words, and fix the underlying problem — installing prerequisites (like Xcode Command Line Tools), repairing PATH or npm permissions, or retrying another official install method are all fair game. ' +
+    'If the user has to do something themselves (type a password, click through a browser), tell them exactly what to expect. ' +
+    'Do not set up anything unrelated to the tools listed above. ' +
+    'When everything is verified, tell the user they are all set and to look at the checklist beside this window — Ship Studio runs its own checks and will turn every item green, then show a Continue button.'
   );
 }
 
