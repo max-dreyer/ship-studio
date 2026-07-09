@@ -174,6 +174,16 @@ fn decode_project_segment(segment: &str) -> Option<String> {
 /// fall back to an ephemeral port and persist the new one — per-project
 /// registrations self-correct the next time that project is opened.
 pub async fn start_global_agent_bridge(app: tauri::AppHandle) -> Result<(u16, String), String> {
+    // Kill switch: support/debug escape hatch if the bridge misbehaves in the
+    // field. With the server down, agents just see one failed-to-connect MCP
+    // entry and everything else works normally.
+    if std::env::var("SHIPSTUDIO_DISABLE_AGENT_BRIDGE").is_ok_and(|v| !v.is_empty() && v != "0") {
+        return Err(
+            "Agent bridge disabled by SHIPSTUDIO_DISABLE_AGENT_BRIDGE environment variable"
+                .to_string(),
+        );
+    }
+
     if let Ok(guard) = GLOBAL_BRIDGE.lock() {
         if let Some(existing) = guard.as_ref() {
             return Ok((existing.port, existing.token.clone()));
