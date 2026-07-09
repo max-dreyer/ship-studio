@@ -28,6 +28,8 @@ interface PreviewSizeControlProps {
   onApply: (width: number, height: number | null) => void;
   /** Reset to full pane width / auto height. */
   onFit: () => void;
+  /** Bump to open the popover from outside (Cmd+K command). */
+  openSignal?: number;
 }
 
 export function PreviewSizeControl({
@@ -37,6 +39,7 @@ export function PreviewSizeControl({
   scalePercent,
   onApply,
   onFit,
+  openSignal = 0,
 }: PreviewSizeControlProps) {
   const [open, setOpen] = useState(false);
   const [widthText, setWidthText] = useState('');
@@ -48,8 +51,19 @@ export function PreviewSizeControl({
     setWidthText(String(width));
     setHeightText(hasCustomHeight ? String(height) : '');
     setOpen(true);
-    void trackEvent('preview_size_popover_opened');
   };
+
+  // External open requests (the Cmd+K "Set exact preview size…" command) —
+  // guarded render-time state adjustment, per the React derived-state pattern.
+  const [seenSignal, setSeenSignal] = useState(openSignal);
+  if (openSignal !== seenSignal) {
+    setSeenSignal(openSignal);
+    if (openSignal > 0 && !open) openPopover();
+  }
+
+  useEffect(() => {
+    if (open) void trackEvent('preview_size_popover_opened');
+  }, [open]);
 
   useEffect(() => {
     if (!open) return;

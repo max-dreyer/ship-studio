@@ -736,6 +736,31 @@ export const Preview = forwardRef<PreviewHandle, PreviewProps>(function Preview(
     [cssEditorEnabled, cssEditorOn, cssToggleEditMode, openCssEditor, onToast]
   );
 
+  // Exact-size popover (dimensions readout). The palette command opens it via
+  // a bump signal so the popover state can stay local to the control.
+  const [sizePopoverSignal, setSizePopoverSignal] = useState(0);
+  useCommands(
+    () => [
+      {
+        id: 'preview.setSize',
+        title: 'Set exact preview size…',
+        category: 'action' as const,
+        when: 'project' as const,
+        keywords: [
+          'viewport',
+          'width',
+          'height',
+          'breakpoint',
+          'resize',
+          'dimensions',
+          'responsive',
+        ],
+        run: () => setSizePopoverSignal((s) => s + 1),
+      },
+    ],
+    []
+  );
+
   // Element tree (navigator) — left column in fullscreen edit mode, like
   // Webflow's navigator: read-only, select-only. Toggleable from the toolbar;
   // the choice persists cross-project like the editor pin.
@@ -1233,6 +1258,7 @@ export const Preview = forwardRef<PreviewHandle, PreviewProps>(function Preview(
                 }
                 onApply={resize.previewAtSize}
                 onFit={() => resize.handleBreakpointClick('full')}
+                openSignal={sizePopoverSignal}
               />
             );
           })()}

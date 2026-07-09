@@ -87,7 +87,9 @@ function serializeDomForAgent(node: DomNode, depth: number, out: string[]): void
     .join(' ');
   const open = attrs ? `<${node.tag} ${attrs}>` : `<${node.tag}>`;
   if (VOID_ELEMENTS.has(node.tag)) {
-    out.push(pad + open.replace('>', ' />'));
+    // Rewrite the CLOSING bracket — .replace('>') would hit a '>' inside an
+    // attribute value first (escapeHtmlAttr doesn't escape '>').
+    out.push(`${pad}${open.slice(0, -1)} />`);
     return;
   }
   if (node.children.length === 0) {

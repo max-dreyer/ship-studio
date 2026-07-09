@@ -327,10 +327,16 @@ pub fn run() {
                     commands::setup::cleanup_auth_processes_sync();
                     proxy::stop_all_proxies();
                     static_server::stop_all_static_servers();
-                    agent_bridge::stop_all_agent_bridges();
                     // Mobile previews are torn down per-window above
                     // (teardown_mobile_previews_for_window_sync), so there's no
                     // global sim shutdown to do here.
+                }
+
+                // The agent bridge serves EVERY window (one global MCP server),
+                // so it must outlive the main window: project windows still
+                // need their preview tools after main closes.
+                if remaining_windows == 0 {
+                    agent_bridge::stop_all_agent_bridges();
                 }
             }
         })
