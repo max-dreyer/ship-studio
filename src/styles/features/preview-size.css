@@ -93,6 +93,15 @@
   color: var(--text-primary);
   font-size: var(--font-size-sm);
   font-variant-numeric: tabular-nums;
+  /* WebKit's native number spinners don't theme (black on our dark UI). */
+  appearance: textfield;
+  -moz-appearance: textfield;
+}
+
+.preview-size-input::-webkit-outer-spin-button,
+.preview-size-input::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
 }
 
 .preview-size-input:focus {
