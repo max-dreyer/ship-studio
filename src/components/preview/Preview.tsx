@@ -1018,7 +1018,7 @@ export const Preview = forwardRef<PreviewHandle, PreviewProps>(function Preview(
             >
               <path d="M4 4l7.07 17 2.51-7.39L21 11.07z" />
             </svg>
-            <span>Edit</span>
+            <span className="preview-toolbar-btn-label">Edit</span>
             <span
               className={`preview-edit-toggle-switch ${activeEditMode ? 'is-on' : ''}`}
               aria-hidden
@@ -1047,7 +1047,7 @@ export const Preview = forwardRef<PreviewHandle, PreviewProps>(function Preview(
               >
                 <path d="M4 4l7.07 17 2.51-7.39L21 11.07z" />
               </svg>
-              <span>Edit</span>
+              <span className="preview-toolbar-btn-label">Edit</span>
             </button>
             <span className="preview-edit-tooltip" role="tooltip">
               <strong>Visual editing</strong>
@@ -1080,7 +1080,7 @@ export const Preview = forwardRef<PreviewHandle, PreviewProps>(function Preview(
               <polyline points="4 17 10 11 4 5" />
               <line x1="12" y1="19" x2="20" y2="19" />
             </svg>
-            <span>Inspect</span>
+            <span className="preview-toolbar-btn-label">Inspect</span>
             <span className={`preview-logs-toggle-switch ${showLogs ? 'is-on' : ''}`} aria-hidden />
           </button>
         )}

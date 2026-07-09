@@ -28,6 +28,19 @@
   min-height: 0;
   overflow: hidden;
   position: relative;
+  /* The PANE's width (not the window's) decides toolbar density — same
+     container-query pattern as split-pane's terminal-pane. Safe here:
+     width comes from the flex parent, never from content. */
+  container-type: inline-size;
+  container-name: preview-pane;
+}
+
+/* Narrow pane: Edit / Inspect / Open drop their text and become icon
+   buttons. The little toggle switches stay — they carry the on/off state. */
+@container preview-pane (max-width: 800px) {
+  .preview-toolbar-btn-label {
+    display: none;
+  }
 }
 
 /* When inspect is open, insert a handle-sized row for the resize handle
