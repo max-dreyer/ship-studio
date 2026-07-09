@@ -83,6 +83,22 @@ pub async fn set_external_agent_opt_in(enabled: bool) -> Result<(), CommandError
     Ok(())
 }
 
+/// Directory the guided onboarding agent runs in: the projects root
+/// (~/ShipStudio by default), created if missing — NOT the user's home.
+/// An agent scanning $HOME trips macOS TCC permission prompts (Photos,
+/// Desktop, Documents) attributed to Ship Studio, and the pending dialog
+/// freezes the scan mid-syscall, which reads as "the agent is stuck"
+/// (found in fresh-VM testing).
+#[tauri::command]
+#[tracing::instrument]
+pub async fn ensure_agent_workdir() -> Result<String, CommandError> {
+    let root = crate::utils::projects_root().map_err(|e| CommandError::Io { message: e })?;
+    std::fs::create_dir_all(&root).map_err(|e| CommandError::Io {
+        message: format!("Failed to create {}: {e}", root.display()),
+    })?;
+    Ok(root.to_string_lossy().to_string())
+}
+
 /// Valid default-host choices. Kept in sync with the onboarding hosting step.
 const VALID_HOSTS: &[&str] = &["vercel", "cloudflare"];
 

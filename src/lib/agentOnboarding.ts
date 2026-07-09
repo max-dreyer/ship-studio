@@ -46,6 +46,17 @@ export async function setExternalAgentOptIn(enabled: boolean): Promise<void> {
   return invoke('set_external_agent_opt_in', { enabled });
 }
 
+/**
+ * Directory the guided agent session runs in — the projects root
+ * (~/ShipStudio), created if missing. Never the user's home: an agent
+ * scanning $HOME trips macOS permission prompts (Photos, Desktop, Documents)
+ * attributed to Ship Studio, and the pending dialog freezes the agent
+ * mid-scan.
+ */
+export async function ensureAgentWorkdir(): Promise<string> {
+  return invoke<string>('ensure_agent_workdir');
+}
+
 // ============ Default host ============
 
 /** Hosting providers offered during onboarding. */

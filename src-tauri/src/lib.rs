@@ -643,6 +643,7 @@ pub fn run() {
             commands::setup::set_external_agent_opt_in,
             commands::setup::set_default_host,
             commands::setup::get_default_host,
+            commands::setup::ensure_agent_workdir,
             commands::setup::mark_setup_complete,
             commands::setup::reset_setup_state,
             commands::setup::get_default_agent_id,

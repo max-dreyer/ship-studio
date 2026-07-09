@@ -12,7 +12,7 @@
  * can launch whatever agent CLI they use and paste it.
  */
 
-import { useCallback, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { OnboardingTerminal } from '../OnboardingTerminal';
 import { DemoAgentTerminal } from './DemoAgentTerminal';
 import { SetupChecklist } from './SetupChecklist';
@@ -20,6 +20,7 @@ import { Button } from '../../primitives/Button';
 import { SetupItem } from '../../../lib/setup';
 import {
   buildGuidedSetupPrompt,
+  ensureAgentWorkdir,
   getMissingRequiredItems,
   getReadyRequiredItems,
   guidedAgentSpawn,
@@ -27,6 +28,7 @@ import {
   otherAgentShellSpawn,
   HostChoice,
 } from '../../../lib/agentOnboarding';
+import { logger } from '../../../lib/logger';
 import { useCopyToClipboard } from '../../../hooks/useCopyToClipboard';
 import { trackEvent } from '../../../lib/analytics';
 
@@ -63,6 +65,23 @@ export function GuidedSetupPhase({
   const [session, setSession] = useState(0);
   const [agentExit, setAgentExit] = useState<number | null>(null);
   const { copy, isCopied } = useCopyToClipboard();
+
+  // Spawn the agent in ~/ShipStudio, never $HOME — scanning the home folder
+  // trips macOS permission prompts (Photos/Desktop/Documents) attributed to
+  // Ship Studio, and the pending dialog freezes the agent mid-scan. `null`
+  // while resolving; empty string = resolution failed, spawn with the
+  // terminal's default rather than blocking the phase.
+  const [workdir, setWorkdir] = useState<string | null>(null);
+  useEffect(() => {
+    ensureAgentWorkdir()
+      .then(setWorkdir)
+      .catch((err: unknown) => {
+        logger.warn('Failed to prepare agent workdir — falling back to home', {
+          error: String(err),
+        });
+        setWorkdir('');
+      });
+  }, []);
 
   const isOther = agentBinaryId === null;
   const complete = isAgentLedSetupComplete(items, agentBinaryId);
@@ -121,14 +140,15 @@ export function GuidedSetupPhase({
         <div className="agent-guided-terminal">
           {demoMode ? (
             <DemoAgentTerminal hostChoice={hostChoice} />
-          ) : (
+          ) : workdir !== null ? (
             <OnboardingTerminal
               key={session}
               command={spawn.command}
               args={spawn.args}
+              cwd={workdir || undefined}
               onExit={handleAgentExit}
             />
-          )}
+          ) : null}
           {!complete && agentExit !== null && !demoMode && (
             <div className="agent-guided-exit-notice">
               <span>

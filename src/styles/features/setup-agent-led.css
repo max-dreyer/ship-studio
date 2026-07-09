@@ -211,6 +211,8 @@
   border-radius: var(--radius-md);
   overflow: hidden;
   background: var(--bg-primary);
+  /* Same left gutter the workspace gives Claude/Codex TUIs (terminal.css). */
+  padding-left: 12px; /* css-ok: matches .terminal-tab-content's 12px gutter */
 }
 
 .agent-guided-sidebar {
