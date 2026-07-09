@@ -2,7 +2,65 @@
 
 use super::node_tool_command;
 use crate::errors::CommandError;
+use crate::external_command::run_with_timeout;
 use crate::utils::validate_project_path;
+
+/// Ceiling for one capture-script run (page load + scroll + shot).
+const CAPTURE_TIMEOUT_SECS: u64 = 180;
+/// Ceiling for downloading Chromium during self-heal (~130MB).
+const BROWSER_INSTALL_TIMEOUT_SECS: u64 = 600;
+
+/// Run a capture script, self-healing the failure mode that otherwise bricks
+/// screenshots forever: the playwright npm package is present but its browser
+/// binary is gone (macOS evicts ~/Library/Caches/ms-playwright, and a
+/// playwright version bump moves to a new browser build the old cache doesn't
+/// have). `get_playwright_env()` only checks node_modules, so detect the miss
+/// from the script's own error output, reinstall Chromium, and retry once.
+async fn run_capture_script(
+    script_path: &std::path::Path,
+    playwright_env: &std::path::Path,
+) -> Result<std::process::Output, CommandError> {
+    let run = || {
+        let mut cmd = node_tool_command("node");
+        cmd.arg(script_path).current_dir(playwright_env);
+        run_with_timeout(
+            tokio::process::Command::from(cmd),
+            "playwright capture",
+            CAPTURE_TIMEOUT_SECS,
+        )
+    };
+
+    let output = run().await?;
+    if output.status.success() {
+        return Ok(output);
+    }
+
+    let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+    if stderr.contains("Executable doesn't exist") || stderr.contains("playwright install") {
+        tracing::warn!("Playwright browser binary missing — reinstalling Chromium and retrying");
+        let mut install = node_tool_command("npx");
+        install
+            .args(["playwright", "install", "chromium"])
+            .current_dir(playwright_env);
+        let install_out = run_with_timeout(
+            tokio::process::Command::from(install),
+            "playwright install chromium",
+            BROWSER_INSTALL_TIMEOUT_SECS,
+        )
+        .await?;
+        if !install_out.status.success() {
+            let install_stderr = String::from_utf8_lossy(&install_out.stderr);
+            return Err((format!(
+                "Playwright's Chromium browser is missing and reinstalling it failed: {install_stderr}"
+            ))
+            .into());
+        }
+        return run().await;
+    }
+
+    // Other failures pass through — callers report status + stderr in detail.
+    Ok(output)
+}
 
 /// Get or create a shared Playwright environment directory.
 /// Installs Playwright and Chromium once, reused for all screenshots.
@@ -171,11 +229,7 @@ const {{ chromium }} = require('playwright');
 
     // Run the script from the playwright environment directory
     // This ensures require('playwright') can find the module
-    let output = node_tool_command("node")
-        .arg(&script_path)
-        .current_dir(&playwright_env)
-        .output()
-        .map_err(|e| format!("Failed to run capture script: {e}"))?;
+    let output = run_capture_script(&script_path, &playwright_env).await?;
 
     // Clean up script file
     let _ = std::fs::remove_file(&script_path);
@@ -277,11 +331,7 @@ const {{ chromium }} = require('playwright');
         .map_err(|e| format!("Failed to write capture script: {e}"))?;
 
     // Run the script
-    let output = node_tool_command("node")
-        .arg(&script_path)
-        .current_dir(&playwright_env)
-        .output()
-        .map_err(|e| format!("Failed to run capture script: {e}"))?;
+    let output = run_capture_script(&script_path, &playwright_env).await?;
 
     // Clean up script file
     let _ = std::fs::remove_file(&script_path);

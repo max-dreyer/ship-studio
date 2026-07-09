@@ -62,6 +62,13 @@ const TOOL_META: Record<string, ToolMeta> = {
     label: () => 'Agent is taking a screenshot',
     effect: { kind: 'flash', x: 0.5, y: 0.5 },
   },
+  preview_status: { label: () => 'Agent is checking the preview' },
+  // The interaction tools get their cursor via agentCursorAt() once the shim
+  // reports the real element position — no static effect here.
+  preview_click: { label: () => 'Agent is clicking in the page' },
+  preview_type: { label: () => 'Agent is typing in the page' },
+  preview_scroll: { label: () => 'Agent is scrolling the preview' },
+  preview_query: { label: () => 'Agent is inspecting elements' },
 };
 
 let activeCount = 0;
@@ -126,6 +133,23 @@ export function beginAgentActivity(
     }
     notify();
   };
+}
+
+/**
+ * Show the agent cursor at a real position (fractions of the preview frame).
+ * Called by interaction tools once the shim reports the target's rect, so the
+ * cursor lands on the actual element the agent clicked/typed into.
+ */
+export function agentCursorAt(fx: number, fy: number): void {
+  effectSeq += 1;
+  effect = { kind: 'cursor', x: fx, y: fy, seq: effectSeq };
+  if (effectTimer) clearTimeout(effectTimer);
+  effectTimer = setTimeout(() => {
+    effect = null;
+    effectTimer = null;
+    notify();
+  }, EFFECT_MS);
+  notify();
 }
 
 export const agentActivityStore = {

@@ -18,6 +18,9 @@ import {
   formatElementsForAgent,
 } from './inspectFormat';
 import { addMcpServer, removeMcpServer } from './mcp';
+import { asCommandError, formatCommandError } from './errors';
+import { execPreviewAction, type PreviewActionResult } from './previewActions';
+import { agentCursorAt } from './agentActivityStore';
 import { logger } from './logger';
 
 export interface AgentBridgeInfo {
@@ -48,6 +51,12 @@ export interface BridgeToolContext {
   projectPath: string;
   /** Full URL of the page the preview is showing, or null if not running. */
   getCurrentUrl: () => string | null;
+  /** Whether the dev server is up and the preview is rendering. */
+  serverReady: boolean;
+  /** In-app path the preview is currently on (e.g. '/about'). */
+  currentPath: string;
+  /** Known routes of the app (from the pages dropdown detection). */
+  pages: string[];
   navigate: (route: string) => void;
   reload: () => void;
 }
@@ -150,6 +159,48 @@ function freshDomSnapshot(
   });
 }
 
+/**
+ * Convert a shim action result into an MCP result. On success, fly the agent
+ * cursor to the real element position so the user sees exactly where the
+ * agent acted.
+ */
+function actionToolResult(
+  result: PreviewActionResult,
+  describe: (data: Record<string, unknown>) => string
+): McpToolResult {
+  if (!result.ok) return errorResult(result.error ?? 'The action failed for an unknown reason.');
+  if (result.rect) agentCursorAt(result.rect.fx, result.rect.fy);
+  return text(describe(result.data ?? {}));
+}
+
+/** One-call situational summary so the agent can diagnose instead of guess. */
+function buildStatusReport(ctx: BridgeToolContext): string {
+  const lines: string[] = [];
+  if (!ctx.serverReady) {
+    lines.push(
+      'Dev server: NOT running (or still starting). The preview has nothing to show yet — ask the user to start the dev server or open the preview panel.'
+    );
+  } else {
+    lines.push('Dev server: running, preview connected.');
+    lines.push(`Current page: ${ctx.currentPath || '/'} (${ctx.getCurrentUrl() ?? 'URL unknown'})`);
+  }
+  if (ctx.pages.length > 0) {
+    lines.push(`Available pages (${ctx.pages.length}): ${ctx.pages.join(', ')}`);
+  }
+  const consoleEntries = inspectStore.getConsoleEntries();
+  const errorCount = consoleEntries.filter((e) => e.level === 'error').length;
+  const warnCount = consoleEntries.filter((e) => e.level === 'warn').length;
+  lines.push(
+    `Console: ${consoleEntries.length} entries captured (${errorCount} errors, ${warnCount} warnings).` +
+      (errorCount > 0 ? " Call preview_console with level 'error' to read them." : '')
+  );
+  const failedRequests = filterNetwork(inspectStore.getNetworkEntries(), true).length;
+  lines.push(
+    `Network: ${inspectStore.getNetworkEntries().length} requests captured, ${failedRequests} failed.`
+  );
+  return lines.join('\n');
+}
+
 /** Validate a preview_navigate path: in-app absolute path, not a full URL. */
 export function isValidPreviewPath(path: unknown): path is string {
   return (
@@ -225,14 +276,82 @@ export async function executeBridgeTool(
       case 'preview_screenshot': {
         return await captureScreenshot(ctx, args.full_page === true);
       }
+      case 'preview_status': {
+        return text(buildStatusReport(ctx));
+      }
+      case 'preview_click': {
+        if (typeof args.selector !== 'string' || !args.selector) {
+          return errorResult("preview_click requires a 'selector' (CSS selector string).");
+        }
+        const result = await execPreviewAction({
+          action: 'click',
+          selector: args.selector,
+          text: typeof args.text === 'string' ? args.text : undefined,
+          index: typeof args.index === 'number' ? args.index : undefined,
+        });
+        return actionToolResult(result, (data) => {
+          const matches =
+            typeof data.matches === 'number' && data.matches > 1
+              ? ` (${data.matches} elements matched — clicked the first; pass 'index' or narrow the selector to target another)`
+              : '';
+          return `Clicked ${String(data.clicked)}${matches}. Check preview_console or the DOM to see what happened.`;
+        });
+      }
+      case 'preview_type': {
+        if (typeof args.selector !== 'string' || !args.selector) {
+          return errorResult("preview_type requires a 'selector' (CSS selector string).");
+        }
+        if (typeof args.value !== 'string') {
+          return errorResult("preview_type requires a 'value' (the text to enter).");
+        }
+        const result = await execPreviewAction({
+          action: 'type',
+          selector: args.selector,
+          value: args.value,
+          text: typeof args.text === 'string' ? args.text : undefined,
+          index: typeof args.index === 'number' ? args.index : undefined,
+          submit: args.submit === true,
+        });
+        return actionToolResult(
+          result,
+          (data) =>
+            `Entered ${String(data.valueLength)} characters into ${String(data.typedInto)}${args.submit === true ? ' and submitted' : ''}.`
+        );
+      }
+      case 'preview_scroll': {
+        const result = await execPreviewAction({
+          action: 'scroll',
+          selector: typeof args.selector === 'string' ? args.selector : undefined,
+          text: typeof args.text === 'string' ? args.text : undefined,
+          to: args.to === 'top' || args.to === 'bottom' ? args.to : undefined,
+          y: typeof args.y === 'number' ? args.y : undefined,
+        });
+        return actionToolResult(result, (data) => `Scrolled to ${String(data.scrolledTo)}.`);
+      }
+      case 'preview_query': {
+        if (typeof args.selector !== 'string' || !args.selector) {
+          return errorResult("preview_query requires a 'selector' (CSS selector string).");
+        }
+        const result = await execPreviewAction({
+          action: 'query',
+          selector: args.selector,
+          text: typeof args.text === 'string' ? args.text : undefined,
+        });
+        if (!result.ok) return errorResult(result.error ?? 'Query failed for an unknown reason.');
+        return text(JSON.stringify(result.data, null, 2));
+      }
       default:
         return errorResult(`Unknown tool: ${request.tool}`);
     }
   } catch (err) {
+    // Backend rejections are CommandError objects — String() would swallow
+    // the detail as "[object Object]". Surface the real message to both the
+    // agent and the logs.
+    const detail = err instanceof Error ? err.message : formatCommandError(asCommandError(err));
     logger.error('[AgentBridge] Tool execution failed', {
       tool: request.tool,
-      error: String(err),
+      error: detail,
     });
-    return errorResult(`Tool '${request.tool}' failed: ${String(err)}`);
+    return errorResult(`Tool '${request.tool}' failed: ${detail}`);
   }
 }

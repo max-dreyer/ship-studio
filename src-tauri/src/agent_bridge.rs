@@ -353,7 +353,7 @@ fn initialize_result(params: Option<&Value>) -> Value {
             "name": "ship-studio-preview",
             "version": env!("CARGO_PKG_VERSION"),
         },
-        "instructions": "Tools for the Ship Studio live preview of this project. After making code changes, use preview_console to check for runtime errors and preview_screenshot to see the rendered result. preview_navigate moves the preview the user is looking at, so tell them when you do it.",
+        "instructions": "Tools for the Ship Studio live preview of this project. Start with preview_status to see what's running and which pages exist. After making code changes, use preview_console to check for runtime errors and preview_screenshot to see the rendered result. preview_click/preview_type/preview_scroll interact with the page like a user would; preview_navigate switches pages. Actions are visible to the user (an agent cursor shows what you do), so narrate what you're doing.",
     })
 }
 
@@ -412,6 +412,69 @@ const TOOLS: &[ToolDef] = &[
         description: "Reload the current preview page.",
         timeout_secs: DEFAULT_TOOL_TIMEOUT_SECS,
         input_schema: || json!({ "type": "object", "properties": {} }),
+    },
+    ToolDef {
+        name: "preview_status",
+        description: "One-call situational summary of the live preview: dev server state, current page, the app's available pages/routes, and console/network error counts. Call this first when something seems off or before navigating.",
+        timeout_secs: DEFAULT_TOOL_TIMEOUT_SECS,
+        input_schema: || json!({ "type": "object", "properties": {} }),
+    },
+    ToolDef {
+        name: "preview_click",
+        description: "Click an element in the preview page, found by CSS selector (optionally narrowed by contained text). Fires real pointer/mouse events, so framework handlers run. The user sees an agent cursor land on the element.",
+        timeout_secs: DEFAULT_TOOL_TIMEOUT_SECS,
+        input_schema: || json!({
+            "type": "object",
+            "properties": {
+                "selector": { "type": "string", "description": "CSS selector for the target element, e.g. 'button.submit' or 'a[href=\"/about\"]'." },
+                "text": { "type": "string", "description": "Only match elements whose text contains this (case-insensitive)." },
+                "index": { "type": "integer", "description": "Which match to click when several elements match (0-based, default 0)." }
+            },
+            "required": ["selector"]
+        }),
+    },
+    ToolDef {
+        name: "preview_type",
+        description: "Type into an input, textarea, or contenteditable in the preview page (replaces its current value; works with React controlled inputs). Optionally submit afterwards.",
+        timeout_secs: DEFAULT_TOOL_TIMEOUT_SECS,
+        input_schema: || json!({
+            "type": "object",
+            "properties": {
+                "selector": { "type": "string", "description": "CSS selector for the field, e.g. 'input[name=\"email\"]'." },
+                "value": { "type": "string", "description": "The text to enter (replaces the field's current value)." },
+                "text": { "type": "string", "description": "Only match elements whose text contains this (case-insensitive)." },
+                "index": { "type": "integer", "description": "Which match to use when several elements match (0-based, default 0)." },
+                "submit": { "type": "boolean", "description": "Submit the field's form (or press Enter) after typing." }
+            },
+            "required": ["selector", "value"]
+        }),
+    },
+    ToolDef {
+        name: "preview_scroll",
+        description: "Scroll the preview page — to an element (by CSS selector), or to 'top'/'bottom', or to an absolute Y offset.",
+        timeout_secs: DEFAULT_TOOL_TIMEOUT_SECS,
+        input_schema: || json!({
+            "type": "object",
+            "properties": {
+                "selector": { "type": "string", "description": "Scroll this element into view." },
+                "text": { "type": "string", "description": "Only match elements whose text contains this (case-insensitive)." },
+                "to": { "type": "string", "enum": ["top", "bottom"], "description": "Scroll to the top or bottom of the page." },
+                "y": { "type": "number", "description": "Absolute Y offset in pixels." }
+            }
+        }),
+    },
+    ToolDef {
+        name: "preview_query",
+        description: "Inspect specific elements in the preview by CSS selector: returns match count, visibility, and each match's HTML (capped). More precise and cheaper than reading the whole DOM with preview_dom.",
+        timeout_secs: DEFAULT_TOOL_TIMEOUT_SECS,
+        input_schema: || json!({
+            "type": "object",
+            "properties": {
+                "selector": { "type": "string", "description": "CSS selector to match, e.g. '.hero h1' or 'form input'." },
+                "text": { "type": "string", "description": "Only match elements whose text contains this (case-insensitive)." }
+            },
+            "required": ["selector"]
+        }),
     },
     ToolDef {
         name: "preview_screenshot",

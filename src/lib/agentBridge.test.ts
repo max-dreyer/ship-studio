@@ -19,6 +19,9 @@ import {
 const makeCtx = (overrides: Partial<BridgeToolContext> = {}): BridgeToolContext => ({
   projectPath: '/Users/me/ShipStudio/site',
   getCurrentUrl: () => 'http://localhost:4173/',
+  serverReady: true,
+  currentPath: '/',
+  pages: ['/', '/about'],
   navigate: vi.fn(),
   reload: vi.fn(),
   ...overrides,
@@ -88,6 +91,38 @@ describe('executeBridgeTool', () => {
     const result = await executeBridgeTool({ requestId: 5, tool: 'preview_reload' }, ctx);
     expect(ctx.reload).toHaveBeenCalled();
     expect(result.isError).toBeUndefined();
+  });
+
+  it('preview_status reports server, page, and route info', async () => {
+    const result = await executeBridgeTool({ requestId: 20, tool: 'preview_status' }, makeCtx());
+    const report = (result.content[0] as { text: string }).text;
+    expect(result.isError).toBeUndefined();
+    expect(report).toContain('running');
+    expect(report).toContain('/about');
+    expect(report).toContain('Console:');
+  });
+
+  it('preview_status tells the agent when the dev server is down', async () => {
+    const result = await executeBridgeTool(
+      { requestId: 21, tool: 'preview_status' },
+      makeCtx({ serverReady: false })
+    );
+    expect((result.content[0] as { text: string }).text).toContain('NOT running');
+  });
+
+  it('preview_click without a selector errors in-band', async () => {
+    const result = await executeBridgeTool({ requestId: 22, tool: 'preview_click' }, makeCtx());
+    expect(result.isError).toBe(true);
+    expect((result.content[0] as { text: string }).text).toContain('selector');
+  });
+
+  it('preview_type without a value errors in-band', async () => {
+    const result = await executeBridgeTool(
+      { requestId: 23, tool: 'preview_type', arguments: { selector: 'input' } },
+      makeCtx()
+    );
+    expect(result.isError).toBe(true);
+    expect((result.content[0] as { text: string }).text).toContain('value');
   });
 
   it('returns an isError result for unknown tools', async () => {

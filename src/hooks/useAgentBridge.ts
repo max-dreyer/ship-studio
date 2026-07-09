@@ -25,6 +25,12 @@ interface UseAgentBridgeParams {
   projectPath: string;
   /** Full URL of the page the preview is currently showing (null = not running). */
   currentUrl: string | null;
+  /** Whether the dev server is up and the preview is rendering. */
+  serverReady: boolean;
+  /** In-app path the preview is currently on. */
+  currentPath: string;
+  /** Known routes of the app (pages dropdown detection). */
+  pages: string[];
   navigate: (route: string) => void;
   reload: () => void;
 }
@@ -32,14 +38,25 @@ interface UseAgentBridgeParams {
 export function useAgentBridge({
   projectPath,
   currentUrl,
+  serverReady,
+  currentPath,
+  pages,
   navigate,
   reload,
 }: UseAgentBridgeParams) {
   // Live values for the long-lived listener — rebinding the Tauri listener on
   // every URL change would race in-flight requests.
-  const ctxRef = useRef({ projectPath, currentUrl, navigate, reload });
+  const ctxRef = useRef({
+    projectPath,
+    currentUrl,
+    serverReady,
+    currentPath,
+    pages,
+    navigate,
+    reload,
+  });
   useEffect(() => {
-    ctxRef.current = { projectPath, currentUrl, navigate, reload };
+    ctxRef.current = { projectPath, currentUrl, serverReady, currentPath, pages, navigate, reload };
   });
 
   // One registration per project+URL: the token rotates per app run, so a
@@ -81,20 +98,18 @@ export function useAgentBridge({
       unlisten = await listen<BridgeRequest>('agent-bridge-request', (event) => {
         const request = event.payload;
         void (async () => {
-          const {
-            projectPath: path,
-            currentUrl: liveUrl,
-            navigate: nav,
-            reload: rel,
-          } = ctxRef.current;
+          const live = ctxRef.current;
           // Light up the preview overlay (glow/cursor/chip) for the call's
           // duration so it's obvious this is the agent acting, not the user.
           const endActivity = beginAgentActivity(request.tool, request.arguments);
           const result = await executeBridgeTool(request, {
-            projectPath: path,
-            getCurrentUrl: () => liveUrl,
-            navigate: nav,
-            reload: rel,
+            projectPath: live.projectPath,
+            getCurrentUrl: () => live.currentUrl,
+            serverReady: live.serverReady,
+            currentPath: live.currentPath,
+            pages: live.pages,
+            navigate: live.navigate,
+            reload: live.reload,
           });
           endActivity();
           void trackEvent('agent_bridge_tool_used', {

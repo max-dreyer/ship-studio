@@ -331,10 +331,14 @@ export const Preview = forwardRef<PreviewHandle, PreviewProps>(function Preview(
   });
 
   // Agent preview bridge: an MCP server the workspace agent uses to read the
-  // preview's console/network/DOM, navigate it, and take screenshots.
+  // preview's console/network/DOM, click/type/scroll in it, navigate it, and
+  // take screenshots.
   useAgentBridge({
     projectPath,
     currentUrl: conn.serverReady ? conn.currentUrl : null,
+    serverReady: conn.serverReady,
+    currentPath: conn.currentPage,
+    pages: conn.filteredPages.map((p) => p.route),
     navigate: conn.handlePageSelect,
     reload: conn.handleRefresh,
   });
