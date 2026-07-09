@@ -85,7 +85,7 @@
 }
 
 .agent-pick-card.detected-ready {
-  border-color: rgba(var(--success-rgb), 0.5);
+  border-color: rgba(var(--action-rgb), 0.5);
 }
 
 .agent-pick-card-icon {
@@ -117,7 +117,7 @@
 }
 
 .agent-pick-card-status.ready {
-  color: var(--success);
+  color: var(--action);
 }
 
 /* ============ Agent setup detail (Phase 0, after a card click) ============ */
@@ -237,9 +237,9 @@
 
 .agent-guided-complete {
   padding: var(--spacing-md);
-  border: 1px solid rgba(var(--success-rgb), 0.4);
+  border: 1px solid rgba(var(--action-rgb), 0.4);
   border-radius: var(--radius-md);
-  background: rgba(var(--success-rgb), 0.08);
+  background: rgba(var(--action-rgb), 0.08);
 }
 
 .agent-guided-complete p {

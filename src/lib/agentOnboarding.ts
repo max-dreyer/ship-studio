@@ -91,6 +91,14 @@ export function getMissingRequiredItems(items: SetupItem[]): SetupItem[] {
   );
 }
 
+/** Required items already detected as ready — the prompt names these so the
+ *  agent confirms them to the user instead of silently skipping them. */
+export function getReadyRequiredItems(items: SetupItem[]): SetupItem[] {
+  return AGENT_LED_REQUIRED_ITEM_IDS.map((id) => items.find((i) => i.id === id)).filter(
+    (item): item is SetupItem => item !== undefined && item.status === 'ready'
+  );
+}
+
 /**
  * The agent-led flow is complete when every required item is ready AND the
  * chosen agent pair is ready. Computed from items (not `allReady`) so it
@@ -170,10 +178,12 @@ const PROMPT_ITEM_NAMES: Record<string, string> = {
  */
 export function buildGuidedSetupPrompt(
   missing: SetupItem[],
-  host: HostChoice | null = null
+  host: HostChoice | null = null,
+  alreadyReady: SetupItem[] = []
 ): string {
   const win = isWindows();
   const nameList = missing.map((i) => PROMPT_ITEM_NAMES[i.id] ?? i.id);
+  const readyNames = alreadyReady.map((i) => PROMPT_ITEM_NAMES[i.id] ?? i.id).join(', ');
   const instructions = missing
     .map((i) => itemInstruction(i.id, win))
     .filter((s): s is string => s !== null);
@@ -216,6 +226,9 @@ export function buildGuidedSetupPrompt(
 
   return (
     intro +
+    (readyNames
+      ? `Ship Studio already detected these as installed and working: ${readyNames} — start by telling the user that good news in one sentence (no need to re-verify them). `
+      : '') +
     `Their machine is missing: ${names}. ` +
     `Set these up one at a time, in this exact order, using exactly these commands: ${steps}. ` +
     'When you are asked to approve a command permission, reassure the user it is safe to approve the commands listed above. ' +

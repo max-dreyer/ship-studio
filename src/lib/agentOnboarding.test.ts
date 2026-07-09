@@ -121,6 +121,15 @@ describe('buildGuidedSetupPrompt', () => {
     expect(prompt).not.toContain('Their machine is missing');
     expect(prompt).not.toContain('\n');
   });
+
+  it('names already-installed tools so the agent confirms them to the user', () => {
+    const prompt = buildGuidedSetupPrompt([item('gh_auth', 'not_authenticated')], null, [
+      item('git', 'ready'),
+      item('node', 'ready'),
+    ]);
+    expect(prompt).toContain('already detected these as installed and working: Git, Node.js');
+    expect(prompt).toContain('Their machine is missing: a GitHub sign-in');
+  });
 });
 
 describe('guidedAgentSpawn', () => {

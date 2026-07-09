@@ -21,6 +21,7 @@ import { SetupItem } from '../../../lib/setup';
 import {
   buildGuidedSetupPrompt,
   getMissingRequiredItems,
+  getReadyRequiredItems,
   guidedAgentSpawn,
   isAgentLedSetupComplete,
   otherAgentShellSpawn,
@@ -57,6 +58,8 @@ export function GuidedSetupPhase({
   // agent relaunched after partial progress only gets the remaining items.
   const missingRef = useRef<SetupItem[] | null>(null);
   missingRef.current ??= getMissingRequiredItems(items);
+  const readyRef = useRef<SetupItem[] | null>(null);
+  readyRef.current ??= getReadyRequiredItems(items);
   const [session, setSession] = useState(0);
   const [agentExit, setAgentExit] = useState<number | null>(null);
   const { copy, isCopied } = useCopyToClipboard();
@@ -65,7 +68,7 @@ export function GuidedSetupPhase({
   const complete = isAgentLedSetupComplete(items, agentBinaryId);
 
   const prompt = useMemo(
-    () => buildGuidedSetupPrompt(missingRef.current ?? [], hostChoice),
+    () => buildGuidedSetupPrompt(missingRef.current ?? [], hostChoice, readyRef.current ?? []),
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [session, hostChoice]
   );
@@ -80,6 +83,7 @@ export function GuidedSetupPhase({
 
   const handleRestart = useCallback(() => {
     missingRef.current = null; // recompute from current items on next render
+    readyRef.current = null;
     setAgentExit(null);
     setSession((s) => s + 1);
     void trackEvent('agent_guided_setup_restarted', { agent_id: agentBinaryId ?? 'other' });
