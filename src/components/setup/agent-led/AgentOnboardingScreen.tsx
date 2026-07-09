@@ -242,9 +242,19 @@ export function AgentOnboardingScreen({ onComplete }: AgentOnboardingScreenProps
 
   // Live verification while the agent works: poll real checks (or mock state
   // in demo mode) so the checklist ticks green as the agent installs things.
+  // Hosting isn't part of "complete", but its checklist row still needs to
+  // tick — keep polling until the Vercel pair settles too (found in VM
+  // testing: polling stopped at required-complete and the Vercel row froze
+  // gray while the agent was still installing it).
+  const vercelRowSettled =
+    hostChoice !== 'vercel' ||
+    (items.find((i) => i.id === 'vercel')?.status === 'ready' &&
+      items.find((i) => i.id === 'vercel_auth')?.status === 'ready');
   usePolling(fetchStatus, {
     intervalMs: 3000,
-    enabled: phase === 'guided' && !isAgentLedSetupComplete(items, chosenBinaryId ?? null),
+    enabled:
+      phase === 'guided' &&
+      !(isAgentLedSetupComplete(items, chosenBinaryId ?? null) && vercelRowSettled),
     name: 'agentOnboardingStatus',
   });
 
