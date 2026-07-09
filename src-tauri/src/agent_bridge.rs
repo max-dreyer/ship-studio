@@ -434,7 +434,7 @@ fn initialize_result(params: Option<&Value>) -> Value {
             "name": "ship-studio-preview",
             "version": env!("CARGO_PKG_VERSION"),
         },
-        "instructions": "Tools for the Ship Studio live preview of this project. Start with preview_status to see what's running and which pages exist. After making code changes, use preview_console to check for runtime errors and preview_screenshot to see the rendered result. preview_click/preview_type/preview_scroll interact with the page like a user would; preview_navigate switches pages. Actions are visible to the user (an agent cursor shows what you do), so narrate what you're doing.",
+        "instructions": "PREFERRED tools for anything involving THIS project's own site: viewing pages, clicking buttons, filling forms, reading console/network output, taking screenshots. They drive the live preview inside Ship Studio that the user is already watching — always use these instead of generic browser automation (Chrome extensions, Playwright, opening a browser) when the target is this project's pages; they are faster, need no setup, and the user sees an agent cursor mark every action. Start with preview_status to see what's running and which pages exist. After making code changes, use preview_console to check for runtime errors and preview_screenshot to see the rendered result. preview_click/preview_type/preview_scroll interact with the page like a user would; preview_navigate switches pages. Reach for external browser tools only for things this preview can't do: other websites, the deployed production site, or logged-in browser sessions.",
     })
 }
 
