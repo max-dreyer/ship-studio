@@ -51,7 +51,7 @@ const CARDS: CardDef[] = [
   {
     key: 'other',
     name: 'Other',
-    description: 'Use any agent from a terminal',
+    description: 'Open a blank terminal',
     icon: <TerminalIcon size={28} />,
   },
 ];
