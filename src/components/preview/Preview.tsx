@@ -26,6 +26,7 @@ import { createPortal } from 'react-dom';
 import { usePreviewConnection, SERVER_MAX_RETRIES } from '../../hooks/usePreviewConnection';
 import { useAgentBridge } from '../../hooks/useAgentBridge';
 import { AgentActivityOverlay } from './AgentActivityOverlay';
+import { PreviewSizeControl } from './PreviewSizeControl';
 import { usePreviewCapture } from '../../hooks/usePreviewCapture';
 import {
   usePreviewResize,
@@ -1219,31 +1220,20 @@ export const Preview = forwardRef<PreviewHandle, PreviewProps>(function Preview(
           (() => {
             // The wrapper reports its VISUAL box; when the frame is scaled to
             // fit, the page actually lays out at the true (unscaled) size —
-            // that's the honest number to show and to tell the agent.
+            // that's the honest number to show (and to let the user set).
             const w = Math.round(iframeSize.w / resize.previewScale);
             const h = Math.round(iframeSize.h / resize.previewScale);
-            const scaleNote =
-              resize.previewScale < 1
-                ? ` (scaled to ${Math.round(resize.previewScale * 100)}%)`
-                : '';
             return (
-              <button
-                type="button"
-                className="preview-dimensions"
-                title={onSendToClaude ? 'Click to send to agent' : undefined}
-                disabled={!onSendToClaude}
-                aria-label={`Preview dimensions ${w} by ${h}${scaleNote}${
-                  onSendToClaude ? ', click to send to agent' : ''
-                }`}
-                onClick={() => {
-                  if (!onSendToClaude) return;
-                  onSendToClaude(
-                    `The preview viewport is currently ${w} × ${h} (width × height in CSS pixels)${scaleNote}.`
-                  );
-                }}
-              >
-                {w} × {h}
-              </button>
+              <PreviewSizeControl
+                width={w}
+                height={h}
+                hasCustomHeight={resize.customHeight !== null}
+                scalePercent={
+                  resize.previewScale < 1 ? Math.round(resize.previewScale * 100) : null
+                }
+                onApply={resize.previewAtSize}
+                onFit={() => resize.handleBreakpointClick('full')}
+              />
             );
           })()}
 
