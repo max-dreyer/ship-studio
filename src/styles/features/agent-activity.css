@@ -90,8 +90,8 @@
   position: absolute;
   inset: 0;
   border-radius: var(--radius-full);
-  background: rgba(var(--action-rgb), 0.55);
-  animation: agact-dot-ping 1.5s cubic-bezier(0, 0, 0.2, 1) infinite;
+  background: rgba(var(--action-rgb), 0.35);
+  animation: agact-dot-ping 2s cubic-bezier(0, 0, 0.2, 1) infinite;
 }
 
 @keyframes agact-chip-in {
@@ -138,10 +138,10 @@
 @keyframes agact-dot-ping {
   from {
     transform: scale(1);
-    opacity: 0.9;
+    opacity: 0.6;
   }
   to {
-    transform: scale(3);
+    transform: scale(2.2);
     opacity: 0;
   }
 }
