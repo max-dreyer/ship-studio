@@ -221,7 +221,18 @@ This uses a **mock backend** — item statuses are faked. Clicking "Install" sim
 
 #### 3. Testing on a Fresh Machine (Real End-to-End)
 
-This is the gold standard test. On a clean macOS install (or a VM):
+This is the gold standard test — the true production path, no env vars, on a machine with nothing installed.
+
+**Disposable macOS VM (recommended):** `scripts/onboarding-vm.sh` wraps the whole flow with [Tart](https://github.com/cirruslabs/tart). One-time setup instructions are in the script header (standalone Tart binary + the `macos-sequoia-vanilla` image — *vanilla*, not *base*, which ships with Homebrew preinstalled and ruins the test). Then:
+
+```bash
+./scripts/onboarding-vm.sh fresh   # build DMG if needed, boot a pristine VM with it mounted
+./scripts/onboarding-vm.sh reset   # throw the used VM away; next fresh starts clean
+```
+
+VM login is admin/admin; the DMG appears under "My Shared Files → dmg" in Finder. Locally-built DMGs aren't notarized — right-click → Open. Budget ~35GB disk for the image. Clones are copy-on-write, so retest cycles are fast and always pristine.
+
+Alternatively, on a real clean macOS install:
 
 1. Install Xcode CLI tools: `xcode-select --install`
 2. Install Rust: `curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh`
