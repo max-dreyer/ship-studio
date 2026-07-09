@@ -11,13 +11,12 @@ import { useEffect, useRef } from 'react';
 import { listen } from '@tauri-apps/api/event';
 import {
   executeBridgeTool,
+  getAgentBridgeUrl,
   registerPreviewMcpServer,
   respondToBridgeRequest,
-  startAgentBridge,
   type BridgeRequest,
 } from '../lib/agentBridge';
 import { beginAgentActivity } from '../lib/agentActivityStore';
-import { getWindowLabel } from '../lib/window';
 import { logger } from '../lib/logger';
 import { trackEvent } from '../lib/analytics';
 
@@ -59,10 +58,6 @@ export function useAgentBridge({
     ctxRef.current = { projectPath, currentUrl, serverReady, currentPath, pages, navigate, reload };
   });
 
-  // One registration per project+URL: the token rotates per app run, so a
-  // fresh run re-registers, but re-renders and reconnects don't.
-  const registeredKeyRef = useRef<string | null>(null);
-
   useEffect(() => {
     if (!projectPath) return;
     let cancelled = false;
@@ -71,29 +66,24 @@ export function useAgentBridge({
     const setUp = async () => {
       let url: string;
       try {
-        const info = await startAgentBridge(getWindowLabel());
-        url = info.url;
+        url = await getAgentBridgeUrl(projectPath);
       } catch (err) {
-        logger.error('[AgentBridge] Failed to start bridge server', { error: String(err) });
+        logger.error('[AgentBridge] Failed to get bridge URL', { error: String(err) });
         return;
       }
       if (cancelled) return;
 
       // Register with the agent CLI (best-effort: the agent may not be
-      // installed, and the preview works fine without the bridge).
-      const key = `${projectPath}|${url}`;
-      if (registeredKeyRef.current !== key) {
-        registeredKeyRef.current = key;
-        registerPreviewMcpServer(url, projectPath).then(
-          () => logger.info('[AgentBridge] Registered preview MCP server', { projectPath }),
-          (err) => {
-            registeredKeyRef.current = null;
-            logger.warn('[AgentBridge] Could not register preview MCP server', {
-              error: String(err),
-            });
-          }
-        );
-      }
+      // installed, and the preview works fine without the bridge). The URL is
+      // stable across runs, so this is a no-op after the first registration.
+      registerPreviewMcpServer(url, projectPath).then(
+        () => logger.info('[AgentBridge] Preview MCP server registration ensured', { projectPath }),
+        (err) => {
+          logger.warn('[AgentBridge] Could not register preview MCP server', {
+            error: String(err),
+          });
+        }
+      );
 
       unlisten = await listen<BridgeRequest>('agent-bridge-request', (event) => {
         const request = event.payload;

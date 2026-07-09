@@ -119,6 +119,18 @@ pub fn run() {
         .plugin(tauri_plugin_deep_link::init())
         .plugin(tauri_plugin_dialog::init())
         .setup(|_app| {
+            // Start the agent preview bridge (global loopback MCP server) at
+            // launch so it's listening before any agent session spawns —
+            // registrations from previous runs stay valid from second zero.
+            {
+                let handle = _app.handle().clone();
+                tauri::async_runtime::spawn(async move {
+                    if let Err(e) = agent_bridge::start_global_agent_bridge(handle).await {
+                        tracing::error!("[AgentBridge] Failed to start global bridge: {}", e);
+                    }
+                });
+            }
+
             // Point the Android mirror bridge at the bundled scrcpy-server jar (its
             // low-latency video source). If the resource is missing, the bridge
             // falls back to a system scrcpy install, then to screenrecord.
@@ -277,10 +289,10 @@ pub fn run() {
                 let label = window.label().to_string();
                 tracing::info!("Window {} destroyed, cleaning up", label);
 
-                // Stop preview proxy, static server, and agent bridge for this window
+                // Stop preview proxy and static server for this window (the
+                // agent bridge is global — it lives for the app's lifetime)
                 proxy::stop_preview_proxy(&label);
                 static_server::stop_static_server(&label);
-                agent_bridge::stop_agent_bridge(&label);
 
                 // Kill PTY processes (dev server, etc.) owned by this window
                 let killed = commands::pty::kill_window_pty_sync(&label);
@@ -583,8 +595,7 @@ pub fn run() {
             commands::static_server::start_static_server,
             commands::static_server::stop_static_server,
             // Agent Preview Bridge (MCP server for the workspace agent)
-            commands::agent_bridge::start_agent_bridge,
-            commands::agent_bridge::stop_agent_bridge,
+            commands::agent_bridge::get_agent_bridge_url,
             commands::agent_bridge::agent_bridge_respond,
             // Project Type Detection
             commands::projects::detect_project_type_command,

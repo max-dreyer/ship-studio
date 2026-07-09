@@ -23,12 +23,6 @@ import { execPreviewAction, type PreviewActionResult } from './previewActions';
 import { agentCursorAt } from './agentActivityStore';
 import { logger } from './logger';
 
-export interface AgentBridgeInfo {
-  port: number;
-  token: string;
-  url: string;
-}
-
 /** Tool call forwarded from the Rust MCP server. */
 export interface BridgeRequest {
   requestId: number;
@@ -69,12 +63,13 @@ const MAX_INLINE_IMAGE_BASE64_CHARS = 2_000_000;
 
 const DEFAULT_ENTRY_LIMIT = 50;
 
-export async function startAgentBridge(windowLabel: string): Promise<AgentBridgeInfo> {
-  return invoke<AgentBridgeInfo>('start_agent_bridge', { windowLabel });
-}
-
-export async function stopAgentBridge(windowLabel: string): Promise<void> {
-  return invoke('stop_agent_bridge', { windowLabel });
+/**
+ * The project's MCP URL (stable across app runs: persistent token + port,
+ * project path encoded in the path for routing). Starts the global bridge
+ * server if it isn't running yet.
+ */
+export async function getAgentBridgeUrl(projectPath: string): Promise<string> {
+  return invoke<string>('get_agent_bridge_url', { projectPath });
 }
 
 export async function respondToBridgeRequest(
@@ -84,19 +79,38 @@ export async function respondToBridgeRequest(
   return invoke('agent_bridge_respond', { requestId, result });
 }
 
+/** localStorage record of which URL each project is registered with. */
+const REGISTRATION_CACHE_KEY = 'shipstudio.agentBridgeRegistrations';
+
+function readRegistrationCache(): Record<string, string> {
+  try {
+    const raw = localStorage.getItem(REGISTRATION_CACHE_KEY);
+    const parsed: unknown = raw ? JSON.parse(raw) : null;
+    return parsed && typeof parsed === 'object' ? (parsed as Record<string, string>) : {};
+  } catch {
+    return {};
+  }
+}
+
 /**
- * Register (or refresh) the bridge as an MCP server in the agent's config for
- * this project. The URL embeds a per-run token, so a stale registration from
- * a previous app run is removed first. Local scope: the config stays in the
- * user's own agent settings and never lands in the repo (the token must not
- * be committed).
+ * Register the bridge as an MCP server in the agent's config for this
+ * project. The URL is stable across app runs (persistent token + port), so
+ * this is effectively install-once: a localStorage cache skips the agent-CLI
+ * round-trips when the project is already registered with the same URL, and
+ * a changed URL (e.g. the stable port was taken) self-corrects here.
+ *
+ * Local scope: the config stays in the user's own agent settings and never
+ * lands in the repo (the URL embeds a secret and must not be committed).
  */
 export async function registerPreviewMcpServer(url: string, projectPath: string): Promise<void> {
   const agentId = 'claude-code';
+  const cache = readRegistrationCache();
+  if (cache[projectPath] === url) return;
+
   try {
     await removeMcpServer(PREVIEW_MCP_SERVER_NAME, 'local', projectPath, agentId);
   } catch {
-    // Not registered yet — the normal case on first run.
+    // Not registered yet — the normal case on first registration.
   }
   await addMcpServer(
     `--transport http ${PREVIEW_MCP_SERVER_NAME} ${url}`,
@@ -104,6 +118,14 @@ export async function registerPreviewMcpServer(url: string, projectPath: string)
     projectPath,
     agentId
   );
+  try {
+    localStorage.setItem(
+      REGISTRATION_CACHE_KEY,
+      JSON.stringify({ ...readRegistrationCache(), [projectPath]: url })
+    );
+  } catch {
+    // Cache is an optimization; registration itself succeeded.
+  }
 }
 
 /** Text-only convenience result. */

@@ -55,17 +55,15 @@ const SCREENSHOT_TOOL_TIMEOUT_SECS: u64 = 240;
 const KNOWN_PROTOCOL_VERSIONS: &[&str] = &["2024-11-05", "2025-03-26", "2025-06-18"];
 const LATEST_PROTOCOL_VERSION: &str = "2025-03-26";
 
-/// A running bridge server for one workspace window.
-struct BridgeInstance {
+/// The single global bridge server (one per app process).
+struct GlobalBridge {
     port: u16,
     token: String,
     shutdown_tx: Option<oneshot::Sender<()>>,
     _task_handle: JoinHandle<()>,
 }
 
-/// window_label -> instance
-static BRIDGE_INSTANCES: LazyLock<Mutex<HashMap<String, BridgeInstance>>> =
-    LazyLock::new(|| Mutex::new(HashMap::new()));
+static GLOBAL_BRIDGE: LazyLock<Mutex<Option<GlobalBridge>>> = LazyLock::new(|| Mutex::new(None));
 
 /// In-flight tool calls awaiting a frontend answer, keyed by request id.
 static PENDING_REQUESTS: LazyLock<Mutex<HashMap<u64, oneshot::Sender<Value>>>> =
@@ -73,68 +71,103 @@ static PENDING_REQUESTS: LazyLock<Mutex<HashMap<u64, oneshot::Sender<Value>>>> =
 
 static NEXT_REQUEST_ID: AtomicU64 = AtomicU64::new(1);
 
-/// Info returned to the frontend so it can register the server with the agent.
-#[derive(serde::Serialize, Clone)]
-pub struct BridgeInfo {
-    pub port: u16,
-    pub token: String,
-    pub url: String,
+/// Per-project MCP URL. The project path rides in the URL (base64url) so the
+/// one global server can route each tool call to the window that has that
+/// project open — and so a registration written into the agent's config today
+/// still routes correctly in any future app run.
+fn project_bridge_url(port: u16, token: &str, canonical_project_path: &str) -> String {
+    use base64::Engine;
+    let encoded =
+        base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(canonical_project_path.as_bytes());
+    format!("http://127.0.0.1:{port}/mcp/{token}/{encoded}")
 }
 
-fn bridge_url(port: u16, token: &str) -> String {
-    format!("http://127.0.0.1:{port}/mcp/{token}")
+fn decode_project_segment(segment: &str) -> Option<String> {
+    use base64::Engine;
+    let bytes = base64::engine::general_purpose::URL_SAFE_NO_PAD
+        .decode(segment.trim_end_matches('/'))
+        .ok()?;
+    String::from_utf8(bytes).ok()
 }
 
-/// Start (or return the already-running) bridge server for a window.
-pub async fn start_agent_bridge(
-    app: tauri::AppHandle,
-    window_label: String,
-) -> Result<BridgeInfo, String> {
-    // Idempotent: a window keeps one bridge for its whole life.
-    if let Ok(instances) = BRIDGE_INSTANCES.lock() {
-        if let Some(existing) = instances.get(&window_label) {
-            return Ok(BridgeInfo {
-                port: existing.port,
-                token: existing.token.clone(),
-                url: bridge_url(existing.port, &existing.token),
-            });
+/// Start the global bridge server (idempotent — later calls return the
+/// running instance). Called once at app startup so the server exists before
+/// any agent session spawns.
+///
+/// The token and port persist in app state: a `claude mcp add` registration
+/// done in one app run must keep working in every later run. If the stored
+/// port is taken (another Ship Studio instance, or an unrelated process), we
+/// fall back to an ephemeral port and persist the new one — per-project
+/// registrations self-correct the next time that project is opened.
+pub async fn start_global_agent_bridge(app: tauri::AppHandle) -> Result<(u16, String), String> {
+    if let Ok(guard) = GLOBAL_BRIDGE.lock() {
+        if let Some(existing) = guard.as_ref() {
+            return Ok((existing.port, existing.token.clone()));
         }
     }
 
-    let listener = TcpListener::bind("127.0.0.1:0")
-        .await
-        .map_err(|e| format!("Failed to bind agent bridge port: {e}"))?;
+    let mut state = crate::commands::setup::read_app_state();
+    let token = match state.agent_bridge_token.clone() {
+        Some(t) if !t.is_empty() => t,
+        _ => uuid::Uuid::new_v4().simple().to_string(),
+    };
+
+    // Prefer the port from the last run so registered URLs stay valid.
+    let mut listener = None;
+    if let Some(stored_port) = state.agent_bridge_port {
+        match TcpListener::bind(("127.0.0.1", stored_port)).await {
+            Ok(l) => listener = Some(l),
+            Err(e) => {
+                tracing::warn!(
+                    "[AgentBridge] Stored port {} unavailable ({}) — binding a new one",
+                    stored_port,
+                    e
+                );
+            }
+        }
+    }
+    let listener = match listener {
+        Some(l) => l,
+        None => TcpListener::bind("127.0.0.1:0")
+            .await
+            .map_err(|e| format!("Failed to bind agent bridge port: {e}"))?,
+    };
     let port = listener
         .local_addr()
         .map_err(|e| format!("Failed to get agent bridge address: {e}"))?
         .port();
 
-    let token = uuid::Uuid::new_v4().simple().to_string();
-    let (shutdown_tx, mut shutdown_rx) = oneshot::channel::<()>();
+    // Persist the stable identity for future runs.
+    if state.agent_bridge_token.as_deref() != Some(token.as_str())
+        || state.agent_bridge_port != Some(port)
+    {
+        state.agent_bridge_token = Some(token.clone());
+        state.agent_bridge_port = Some(port);
+        if let Err(e) = crate::commands::setup::write_app_state(&state) {
+            tracing::warn!(
+                "[AgentBridge] Could not persist bridge identity (registrations will rotate next run): {}",
+                e
+            );
+        }
+    }
 
-    let label_for_task = window_label.clone();
+    let (shutdown_tx, mut shutdown_rx) = oneshot::channel::<()>();
     let token_for_task = token.clone();
     let task_handle = tokio::spawn(async move {
-        tracing::info!(
-            "[AgentBridge] MCP server started on port {} for window '{}'",
-            port,
-            label_for_task
-        );
+        tracing::info!("[AgentBridge] Global MCP server started on port {}", port);
         loop {
             tokio::select! {
                 result = listener.accept() => {
                     match result {
                         Ok((stream, _addr)) => {
                             let app = app.clone();
-                            let label = label_for_task.clone();
                             let token = token_for_task.clone();
                             tokio::spawn(async move {
                                 let io = TokioIo::new(stream);
                                 let service = service_fn(move |req: Request<Incoming>| {
                                     let app = app.clone();
-                                    let label = label.clone();
                                     let token = token.clone();
-                                    async move { handle_http(app, label, token, req).await }
+                                    async move { handle_http(app, token, req).await }
                                 });
                                 if let Err(e) = http1::Builder::new().serve_connection(io, service).await {
                                     tracing::debug!("[AgentBridge] Connection error: {}", e);
@@ -152,55 +185,35 @@ pub async fn start_agent_bridge(
         }
     });
 
-    let info = BridgeInfo {
-        port,
-        token: token.clone(),
-        url: bridge_url(port, &token),
-    };
-
-    BRIDGE_INSTANCES
-        .lock()
-        .map_err(|e| format!("Failed to acquire agent bridge lock: {e}"))?
-        .insert(
-            window_label,
-            BridgeInstance {
-                port,
-                token,
-                shutdown_tx: Some(shutdown_tx),
-                _task_handle: task_handle,
-            },
-        );
-
-    Ok(info)
-}
-
-/// Stop the bridge for a window (called on window close).
-pub fn stop_agent_bridge(window_label: &str) {
-    if let Ok(mut instances) = BRIDGE_INSTANCES.lock() {
-        if let Some(mut instance) = instances.remove(window_label) {
-            if let Some(tx) = instance.shutdown_tx.take() {
-                let _ = tx.send(());
-            }
-            tracing::info!(
-                "[AgentBridge] Stopped bridge for window '{}' (port {})",
-                window_label,
-                instance.port
-            );
-        }
+    if let Ok(mut guard) = GLOBAL_BRIDGE.lock() {
+        *guard = Some(GlobalBridge {
+            port,
+            token: token.clone(),
+            shutdown_tx: Some(shutdown_tx),
+            _task_handle: task_handle,
+        });
     }
+
+    Ok((port, token))
 }
 
-/// Stop all bridges (app cleanup).
+/// URL for one project's MCP registration; starts the server if needed.
+pub async fn agent_bridge_url_for_project(
+    app: tauri::AppHandle,
+    canonical_project_path: &str,
+) -> Result<String, String> {
+    let (port, token) = start_global_agent_bridge(app).await?;
+    Ok(project_bridge_url(port, &token, canonical_project_path))
+}
+
+/// Stop the global bridge (app cleanup).
 pub fn stop_all_agent_bridges() {
-    if let Ok(mut instances) = BRIDGE_INSTANCES.lock() {
-        for (label, mut instance) in instances.drain() {
-            if let Some(tx) = instance.shutdown_tx.take() {
+    if let Ok(mut guard) = GLOBAL_BRIDGE.lock() {
+        if let Some(mut bridge) = guard.take() {
+            if let Some(tx) = bridge.shutdown_tx.take() {
                 let _ = tx.send(());
             }
-            tracing::info!(
-                "[AgentBridge] Stopped bridge for window '{}' (cleanup)",
-                label
-            );
+            tracing::info!("[AgentBridge] Stopped global bridge (cleanup)");
         }
     }
 }
@@ -260,7 +273,6 @@ fn has_valid_host(req: &Request<Incoming>) -> bool {
 
 async fn handle_http(
     app: tauri::AppHandle,
-    window_label: String,
     token: String,
     req: Request<Incoming>,
 ) -> Result<Response<ServerBody>, hyper::Error> {
@@ -269,10 +281,17 @@ async fn handle_http(
         return Ok(plain_response(StatusCode::FORBIDDEN, "Forbidden"));
     }
 
-    let expected_path = format!("/mcp/{token}");
-    if req.uri().path().trim_end_matches('/') != expected_path {
-        return Ok(plain_response(StatusCode::NOT_FOUND, "Not found"));
-    }
+    // Path shape: /mcp/<token>/<base64url(project path)>
+    let expected_prefix = format!("/mcp/{token}/");
+    let project_path = match req
+        .uri()
+        .path()
+        .strip_prefix(&expected_prefix)
+        .and_then(decode_project_segment)
+    {
+        Some(p) if !p.is_empty() => p,
+        _ => return Ok(plain_response(StatusCode::NOT_FOUND, "Not found")),
+    };
 
     match *req.method() {
         Method::POST => {
@@ -307,7 +326,7 @@ async fn handle_http(
                     .body(full_body(Bytes::new()))
                     .unwrap());
             }
-            let response = handle_rpc(&app, &window_label, &message).await;
+            let response = handle_rpc(&app, &project_path, &message).await;
             Ok(json_response(response))
         }
         // We don't offer a server-initiated SSE stream.
@@ -503,7 +522,7 @@ fn tools_list_result() -> Value {
     json!({ "tools": tools })
 }
 
-async fn handle_rpc(app: &tauri::AppHandle, window_label: &str, message: &Value) -> Value {
+async fn handle_rpc(app: &tauri::AppHandle, project_path: &str, message: &Value) -> Value {
     let id = message.get("id").cloned().unwrap_or(Value::Null);
     let method = message.get("method").and_then(Value::as_str).unwrap_or("");
     let params = message.get("params");
@@ -523,7 +542,7 @@ async fn handle_rpc(app: &tauri::AppHandle, window_label: &str, message: &Value)
                 .unwrap_or_else(|| json!({}));
             match TOOLS.iter().find(|t| t.name == name) {
                 Some(tool) => {
-                    let result = dispatch_tool(app, window_label, tool, arguments).await;
+                    let result = dispatch_tool(app, project_path, tool, arguments).await;
                     success_response(id, result)
                 }
                 None => error_response(id, -32602, &format!("Unknown tool: {name}")),
@@ -533,15 +552,24 @@ async fn handle_rpc(app: &tauri::AppHandle, window_label: &str, message: &Value)
     }
 }
 
-/// Forward a tool call to the window's frontend and wait for its answer.
-/// Failures come back as in-band tool errors (isError: true) rather than
-/// protocol errors, so the agent can read what went wrong and adapt.
+/// Forward a tool call to the frontend of the window that has this project
+/// open, and wait for its answer. Failures come back as in-band tool errors
+/// (isError: true) rather than protocol errors, so the agent can read what
+/// went wrong and adapt.
 async fn dispatch_tool(
     app: &tauri::AppHandle,
-    window_label: &str,
+    project_path: &str,
     tool: &ToolDef,
     arguments: Value,
 ) -> Value {
+    // Route by project: the registration URL carries the project path, and
+    // the window registry knows which window (if any) has it open.
+    let Some(window_label) = crate::state::get_window_for_project(project_path) else {
+        return tool_error_result(
+            "This project isn't open in Ship Studio right now. Ask the user to open the project (its preview provides these tools).",
+        );
+    };
+
     let request_id = NEXT_REQUEST_ID.fetch_add(1, Ordering::Relaxed);
     let (tx, rx) = oneshot::channel::<Value>();
 
@@ -565,7 +593,7 @@ async fn dispatch_tool(
         window_label
     );
 
-    if let Err(e) = app.emit_to(window_label, "agent-bridge-request", payload) {
+    if let Err(e) = app.emit_to(&window_label, "agent-bridge-request", payload) {
         if let Ok(mut pending) = PENDING_REQUESTS.lock() {
             pending.remove(&request_id);
         }
@@ -667,10 +695,18 @@ mod tests {
     }
 
     #[test]
-    fn test_bridge_url_format() {
-        assert_eq!(
-            bridge_url(4123, "abc123"),
-            "http://127.0.0.1:4123/mcp/abc123"
-        );
+    fn test_project_bridge_url_roundtrip() {
+        let project = "/Users/me/ShipStudio/my site"; // spaces must survive
+        let url = project_bridge_url(4123, "abc123", project);
+        assert!(url.starts_with("http://127.0.0.1:4123/mcp/abc123/"));
+        let segment = url.rsplit('/').next().unwrap();
+        assert_eq!(decode_project_segment(segment).as_deref(), Some(project));
+    }
+
+    #[test]
+    fn test_decode_project_segment_rejects_garbage() {
+        assert!(decode_project_segment("!!!not-base64!!!").is_none());
+        // Empty decodes to an empty string, which handle_http rejects.
+        assert_eq!(decode_project_segment("").as_deref(), Some(""));
     }
 }

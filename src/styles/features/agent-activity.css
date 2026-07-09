@@ -73,12 +73,23 @@
   animation: agact-chip-in var(--transition) ease-out;
 }
 
+/* Solid dot with a ping ring radiating from behind it (live-indicator style). */
 .agent-activity-chip-dot {
+  position: relative;
   width: 8px;
   height: 8px;
+  flex-shrink: 0;
   border-radius: var(--radius-full);
   background: var(--action);
-  animation: agact-dot-pulse 1.2s ease-in-out infinite;
+}
+
+.agent-activity-chip-dot::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: var(--radius-full);
+  background: rgba(var(--action-rgb), 0.55);
+  animation: agact-dot-ping 1.5s cubic-bezier(0, 0, 0.2, 1) infinite;
 }
 
 @keyframes agact-chip-in {
@@ -92,15 +103,14 @@
   }
 }
 
-@keyframes agact-dot-pulse {
-  0%,
-  100% {
-    opacity: 1;
+@keyframes agact-dot-ping {
+  from {
     transform: scale(1);
+    opacity: 0.9;
   }
-  50% {
-    opacity: 0.55;
-    transform: scale(0.8);
+  to {
+    transform: scale(3);
+    opacity: 0;
   }
 }
 

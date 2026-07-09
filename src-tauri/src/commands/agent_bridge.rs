@@ -1,29 +1,26 @@
-//! Commands for the agent preview bridge (the loopback MCP server that lets
-//! the workspace agent read the preview's console/network/DOM, navigate it,
-//! and take screenshots). The server itself lives in `crate::agent_bridge`.
+//! Commands for the agent preview bridge (the global loopback MCP server that
+//! lets the workspace agent read the preview's console/network/DOM, interact
+//! with the page, navigate it, and take screenshots). The server itself lives
+//! in `crate::agent_bridge` and starts at app launch.
 
-use crate::agent_bridge::{self, BridgeInfo};
+use crate::agent_bridge;
 use crate::errors::CommandError;
+use crate::utils::validate_project_path;
 
-/// Start (or return the already-running) bridge MCP server for this window.
-/// Returns the port, token, and full URL to register with the agent CLI.
+/// The MCP URL to register for this project (starts the global bridge if it
+/// isn't running yet). The project path rides inside the URL so the server
+/// can route tool calls to whichever window has the project open.
 #[tauri::command]
 #[tracing::instrument(skip(app))]
-pub async fn start_agent_bridge(
+pub async fn get_agent_bridge_url(
     app: tauri::AppHandle,
-    window_label: String,
-) -> Result<BridgeInfo, CommandError> {
-    agent_bridge::start_agent_bridge(app, window_label)
+    project_path: String,
+) -> Result<String, CommandError> {
+    let validated = validate_project_path(&project_path)?;
+    let canonical = validated.to_string_lossy().to_string();
+    agent_bridge::agent_bridge_url_for_project(app, &canonical)
         .await
         .map_err(CommandError::from)
-}
-
-/// Stop the bridge server for this window.
-#[tauri::command]
-#[tracing::instrument]
-pub async fn stop_agent_bridge(window_label: String) -> Result<(), CommandError> {
-    agent_bridge::stop_agent_bridge(&window_label);
-    Ok(())
 }
 
 /// Answer an in-flight bridge tool call. `result` must be a full MCP
