@@ -1,0 +1,176 @@
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+
+const invokeMock = vi.fn<(...args: unknown[]) => Promise<unknown>>();
+vi.mock('@tauri-apps/api/core', () => ({
+  invoke: (...args: unknown[]): Promise<unknown> => invokeMock(...args),
+}));
+
+vi.mock('./logger', () => ({
+  logger: { error: vi.fn(), warn: vi.fn(), info: vi.fn(), debug: vi.fn() },
+}));
+
+import {
+  executeBridgeTool,
+  isValidPreviewPath,
+  registerPreviewMcpServer,
+  type BridgeToolContext,
+} from './agentBridge';
+
+const makeCtx = (overrides: Partial<BridgeToolContext> = {}): BridgeToolContext => ({
+  projectPath: '/Users/me/ShipStudio/site',
+  getCurrentUrl: () => 'http://localhost:4173/',
+  navigate: vi.fn(),
+  reload: vi.fn(),
+  ...overrides,
+});
+
+beforeEach(() => {
+  invokeMock.mockReset();
+});
+
+describe('isValidPreviewPath', () => {
+  it('accepts in-app absolute paths', () => {
+    expect(isValidPreviewPath('/')).toBe(true);
+    expect(isValidPreviewPath('/about')).toBe(true);
+    expect(isValidPreviewPath('/blog/post-1?tab=2')).toBe(true);
+  });
+
+  it('rejects full URLs, protocol-relative URLs, and relative paths', () => {
+    expect(isValidPreviewPath('https://evil.com')).toBe(false);
+    expect(isValidPreviewPath('//evil.com')).toBe(false);
+    expect(isValidPreviewPath('about')).toBe(false);
+    expect(isValidPreviewPath('/foo/https://x')).toBe(false);
+    expect(isValidPreviewPath(42)).toBe(false);
+    expect(isValidPreviewPath(undefined)).toBe(false);
+  });
+});
+
+describe('executeBridgeTool', () => {
+  it('returns console output as text (empty store)', async () => {
+    const result = await executeBridgeTool({ requestId: 1, tool: 'preview_console' }, makeCtx());
+    expect(result.isError).toBeUndefined();
+    expect(result.content[0]).toMatchObject({ type: 'text' });
+    expect((result.content[0] as { text: string }).text).toContain('console');
+  });
+
+  it('returns network output as text (empty store)', async () => {
+    const result = await executeBridgeTool(
+      { requestId: 2, tool: 'preview_network', arguments: { failed_only: true } },
+      makeCtx()
+    );
+    expect(result.isError).toBeUndefined();
+    expect((result.content[0] as { text: string }).text).toContain('network');
+  });
+
+  it('navigates on a valid path and tells the agent', async () => {
+    const ctx = makeCtx();
+    const result = await executeBridgeTool(
+      { requestId: 3, tool: 'preview_navigate', arguments: { path: '/pricing' } },
+      ctx
+    );
+    expect(ctx.navigate).toHaveBeenCalledWith('/pricing');
+    expect(result.isError).toBeUndefined();
+    expect((result.content[0] as { text: string }).text).toContain('/pricing');
+  });
+
+  it('rejects navigation to a full URL without navigating', async () => {
+    const ctx = makeCtx();
+    const result = await executeBridgeTool(
+      { requestId: 4, tool: 'preview_navigate', arguments: { path: 'https://evil.com' } },
+      ctx
+    );
+    expect(ctx.navigate).not.toHaveBeenCalled();
+    expect(result.isError).toBe(true);
+  });
+
+  it('reloads the preview', async () => {
+    const ctx = makeCtx();
+    const result = await executeBridgeTool({ requestId: 5, tool: 'preview_reload' }, ctx);
+    expect(ctx.reload).toHaveBeenCalled();
+    expect(result.isError).toBeUndefined();
+  });
+
+  it('returns an isError result for unknown tools', async () => {
+    const result = await executeBridgeTool({ requestId: 6, tool: 'preview_dance' }, makeCtx());
+    expect(result.isError).toBe(true);
+    expect((result.content[0] as { text: string }).text).toContain('preview_dance');
+  });
+
+  it('screenshot errors in-band when the preview is not running', async () => {
+    const ctx = makeCtx({ getCurrentUrl: () => null });
+    const result = await executeBridgeTool({ requestId: 7, tool: 'preview_screenshot' }, ctx);
+    expect(result.isError).toBe(true);
+    expect(invokeMock).not.toHaveBeenCalled();
+  });
+
+  it('screenshot returns inline image content with the saved path', async () => {
+    invokeMock.mockImplementation((cmd: unknown) => {
+      if (cmd === 'capture_viewport_playwright')
+        return Promise.resolve('/proj/.shipstudio/screenshots/s.png');
+      if (cmd === 'get_screenshot_base64') return Promise.resolve('data:image/png;base64,aGVsbG8=');
+      return Promise.reject(new Error(`unexpected command ${String(cmd)}`));
+    });
+    const result = await executeBridgeTool({ requestId: 8, tool: 'preview_screenshot' }, makeCtx());
+    expect(result.isError).toBeUndefined();
+    expect(result.content[0]).toMatchObject({
+      type: 'image',
+      data: 'aGVsbG8=',
+      mimeType: 'image/png',
+    });
+    expect((result.content[1] as { text: string }).text).toContain('s.png');
+  });
+
+  it('screenshot uses the fullpage command when full_page is true', async () => {
+    invokeMock.mockImplementation((cmd: unknown) => {
+      if (cmd === 'capture_fullpage_playwright')
+        return Promise.resolve('/proj/.shipstudio/screenshots/f.png');
+      if (cmd === 'get_screenshot_base64') return Promise.resolve('data:image/png;base64,aGVsbG8=');
+      return Promise.reject(new Error(`unexpected command ${String(cmd)}`));
+    });
+    const result = await executeBridgeTool(
+      { requestId: 9, tool: 'preview_screenshot', arguments: { full_page: true } },
+      makeCtx()
+    );
+    expect(result.isError).toBeUndefined();
+    expect(invokeMock).toHaveBeenCalledWith('capture_fullpage_playwright', expect.anything());
+  });
+
+  it('converts thrown command errors into verbose isError results', async () => {
+    invokeMock.mockRejectedValue(new Error('Playwright screenshot failed. stderr: boom'));
+    const result = await executeBridgeTool(
+      { requestId: 10, tool: 'preview_screenshot' },
+      makeCtx()
+    );
+    expect(result.isError).toBe(true);
+    expect((result.content[0] as { text: string }).text).toContain('boom');
+  });
+});
+
+describe('registerPreviewMcpServer', () => {
+  it('removes any stale registration, then adds with http transport at local scope', async () => {
+    invokeMock.mockResolvedValue(undefined);
+    await registerPreviewMcpServer('http://127.0.0.1:4123/mcp/abc', '/Users/me/ShipStudio/site');
+    expect(invokeMock).toHaveBeenCalledWith('remove_mcp_server', {
+      name: 'shipstudio-preview',
+      scope: 'local',
+      projectPath: '/Users/me/ShipStudio/site',
+      agentId: 'claude-code',
+    });
+    expect(invokeMock).toHaveBeenCalledWith('add_mcp_server', {
+      rawArgs: '--transport http shipstudio-preview http://127.0.0.1:4123/mcp/abc',
+      scope: 'local',
+      projectPath: '/Users/me/ShipStudio/site',
+      agentId: 'claude-code',
+    });
+  });
+
+  it('still adds when the stale removal fails (nothing registered yet)', async () => {
+    invokeMock.mockImplementation((cmd: unknown) =>
+      cmd === 'remove_mcp_server'
+        ? Promise.reject(new Error('No MCP server found'))
+        : Promise.resolve(undefined)
+    );
+    await registerPreviewMcpServer('http://127.0.0.1:4123/mcp/abc', '/p');
+    expect(invokeMock).toHaveBeenCalledWith('add_mcp_server', expect.anything());
+  });
+});

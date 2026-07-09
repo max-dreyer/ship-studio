@@ -24,6 +24,7 @@ import {
 } from 'react';
 import { createPortal } from 'react-dom';
 import { usePreviewConnection, SERVER_MAX_RETRIES } from '../../hooks/usePreviewConnection';
+import { useAgentBridge } from '../../hooks/useAgentBridge';
 import { usePreviewCapture } from '../../hooks/usePreviewCapture';
 import {
   usePreviewResize,
@@ -326,6 +327,15 @@ export const Preview = forwardRef<PreviewHandle, PreviewProps>(function Preview(
     onPageChange,
     onSendToClaude,
     onToast,
+  });
+
+  // Agent preview bridge: an MCP server the workspace agent uses to read the
+  // preview's console/network/DOM, navigate it, and take screenshots.
+  useAgentBridge({
+    projectPath,
+    currentUrl: conn.serverReady ? conn.currentUrl : null,
+    navigate: conn.handlePageSelect,
+    reload: conn.handleRefresh,
   });
 
   // The managed dev-server process is known-dead (the exit watcher saw it die
