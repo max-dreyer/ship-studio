@@ -26,9 +26,11 @@ export function GitHubIcon({ size = 16 }: IconProps) {
 }
 
 export function VercelIcon({ size = 16 }: IconProps) {
+  // Official mark is an equilateral triangle: 24 wide, 24·√3/2 ≈ 20.78 tall,
+  // vertically centered in the viewBox (simple-icons geometry).
   return (
     <svg width={size} height={size} viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
-      <path d="M12 2 22 20H2L12 2Z" />
+      <path d="m12 1.608 12 20.784H0Z" />
     </svg>
   );
 }
