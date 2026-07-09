@@ -160,9 +160,28 @@ Unit tests are colocated in source files using `#[cfg(test)]` modules.
 
 ### Onboarding / Setup Wizard Testing
 
-Onboarding is critical — it's the first thing every new user sees. There are two ways to test it:
+Onboarding is critical — it's the first thing every new user sees.
 
-#### 1. Real Mode: `SHIPSTUDIO_FORCE_ONBOARDING=1` (recommended for UI/flow testing)
+**There are two onboarding experiences**, chosen by `OnboardingRouter` (`src/components/setup/OnboardingRouter.tsx`):
+
+- **Agent-led (default)** — Phase 0 gets one AI agent installed + signed in, then Phase 1 spawns that agent in a terminal with a prescriptive setup prompt (`buildGuidedSetupPrompt` in `src/lib/agentOnboarding.ts`) and it installs everything else (Homebrew/winget, Node, Git, GitHub CLI, GitHub sign-in) while a checklist verifies with the app's own `get_full_setup_status` checks. The agent drives; the app verifies — completion is decided by our checks, never by the agent's claim.
+- **Classic wizard** — the 4-step deterministic flow described below. Always one click away via the pinned "Try classic onboarding" corner button; the choice persists in `localStorage` (`shipstudio.onboardingMode`).
+
+#### Visual testing for the agent-led flow (works on any machine)
+
+```bash
+SHIPSTUDIO_FORCE_SETUP=fresh pnpm tauri dev
+```
+
+Under mock mode the agent-led flow is fully scripted and deterministic: Phase 0 install/connect buttons flip the backend mock state after a visible beat (no real terminals), and Phase 1 plays a scripted demo agent session (`DemoAgentTerminal`) that "installs" each tool on a ~30s timeline, flipping mock items ready via `mock_mark_setup_item_ready` so the real checklist polling ticks green end-to-end. Nothing touches the host machine — this is the reliable way for any contributor to eyeball the whole flow.
+
+Other useful scenarios: `SHIPSTUDIO_FORCE_SETUP=auth-only` (agents installed, nothing signed in — exercises Phase 0 connect), `almost-done` (only GitHub sign-in missing — short guided phase).
+
+`SHIPSTUDIO_FORCE_ONBOARDING=1` shows the agent-led flow with **real** checks. On a fully set-up dev machine the pick phase is still shown (the fast path to celebration is deliberately skipped under this env var) so you can eyeball Phase 0 with real agent statuses; the guided phase only runs when something is actually missing, so a real end-to-end guided run needs a fresh machine/VM.
+
+The classic wizard's two modes below work unchanged — click "Try classic onboarding" to reach them.
+
+#### 1. Classic, Real Mode: `SHIPSTUDIO_FORCE_ONBOARDING=1`
 
 ```bash
 SHIPSTUDIO_FORCE_ONBOARDING=1 pnpm tauri dev

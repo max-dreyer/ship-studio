@@ -638,6 +638,8 @@ pub fn run() {
             commands::setup::get_system_arch,
             commands::setup::install_version,
             commands::setup::quick_setup_check,
+            commands::setup::get_onboarding_test_mode,
+            commands::setup::mock_mark_setup_item_ready,
             commands::setup::mark_setup_complete,
             commands::setup::reset_setup_state,
             commands::setup::get_default_agent_id,
