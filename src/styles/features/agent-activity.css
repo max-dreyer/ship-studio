@@ -61,7 +61,8 @@
   display: flex;
   align-items: center;
   gap: var(--spacing-sm);
-  padding: var(--spacing-xs) var(--spacing-md);
+  /* Tighter on the left so the dot sits optically flush in the pill. */
+  padding: var(--spacing-xs) var(--spacing-md) var(--spacing-xs) var(--spacing-sm);
   background: var(--bg-secondary);
   border: 1px solid rgba(var(--action-rgb), 0.5);
   border-radius: var(--radius-pill);
