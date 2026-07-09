@@ -25,6 +25,7 @@ import {
 import { createPortal } from 'react-dom';
 import { usePreviewConnection, SERVER_MAX_RETRIES } from '../../hooks/usePreviewConnection';
 import { useAgentBridge } from '../../hooks/useAgentBridge';
+import { AgentActivityOverlay } from './AgentActivityOverlay';
 import { usePreviewCapture } from '../../hooks/usePreviewCapture';
 import {
   usePreviewResize,
@@ -1320,6 +1321,9 @@ export const Preview = forwardRef<PreviewHandle, PreviewProps>(function Preview(
                   : undefined
               }
             />
+            {/* Agent activity layer: glow + cursor + action chip while the
+                workspace agent drives the preview through the agent bridge. */}
+            <AgentActivityOverlay />
             {/* Blank-iframe watchdog overlay: the server is healthy top-level but
                 the page never proved it rendered inside the embedded iframe —
                 e.g. an auth redirect loop aborted the subframe load (issue #179). */}

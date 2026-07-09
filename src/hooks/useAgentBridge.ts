@@ -16,6 +16,7 @@ import {
   startAgentBridge,
   type BridgeRequest,
 } from '../lib/agentBridge';
+import { beginAgentActivity } from '../lib/agentActivityStore';
 import { getWindowLabel } from '../lib/window';
 import { logger } from '../lib/logger';
 import { trackEvent } from '../lib/analytics';
@@ -86,12 +87,16 @@ export function useAgentBridge({
             navigate: nav,
             reload: rel,
           } = ctxRef.current;
+          // Light up the preview overlay (glow/cursor/chip) for the call's
+          // duration so it's obvious this is the agent acting, not the user.
+          const endActivity = beginAgentActivity(request.tool, request.arguments);
           const result = await executeBridgeTool(request, {
             projectPath: path,
             getCurrentUrl: () => liveUrl,
             navigate: nav,
             reload: rel,
           });
+          endActivity();
           void trackEvent('agent_bridge_tool_used', {
             tool: request.tool,
             is_error: result.isError === true,
