@@ -57,14 +57,23 @@ const CARDS: CardDef[] = [
 ];
 
 /** Detected state of one agent pair, for the card badge. */
-function detectionBadge(items: SetupItem[], key: AgentCardKey): 'ready' | 'installed' | null {
+function detectionState(
+  items: SetupItem[],
+  key: AgentCardKey
+): 'ready' | 'installed' | 'missing' | null {
   if (key === 'other') return null;
   const binary = items.find((i) => i.id === key);
   const auth = items.find((i) => i.id === `${key}_auth`);
   if (binary?.status === 'ready' && auth?.status === 'ready') return 'ready';
   if (binary?.status === 'ready') return 'installed';
-  return null;
+  return 'missing';
 }
+
+const STATUS_LABELS: Record<'ready' | 'installed' | 'missing', string> = {
+  ready: '✓ Ready',
+  installed: 'Sign-in needed',
+  missing: 'Not installed',
+};
 
 interface AgentPickGridProps {
   items: SetupItem[];
@@ -76,23 +85,22 @@ export function AgentPickGrid({ items, onSelect, disabled }: AgentPickGridProps)
   return (
     <div className="agent-pick-grid" role="list">
       {CARDS.map((card) => {
-        const badge = detectionBadge(items, card.key);
+        const state = detectionState(items, card.key);
         return (
           <button
             key={card.key}
             type="button"
             role="listitem"
-            className={`agent-pick-card ${badge === 'ready' ? 'detected-ready' : ''}`}
+            className={`agent-pick-card ${state === 'ready' ? 'detected-ready' : ''}`}
             onClick={() => onSelect(card.key)}
             disabled={disabled}
           >
-            {badge === 'ready' && <span className="agent-pick-card-tag ready">Ready ✓</span>}
-            {badge === 'installed' && (
-              <span className="agent-pick-card-tag installed">Installed</span>
-            )}
             <span className="agent-pick-card-icon">{card.icon}</span>
             <span className="agent-pick-card-name">{card.name}</span>
             <span className="agent-pick-card-desc">{card.description}</span>
+            {state && (
+              <span className={`agent-pick-card-status ${state}`}>{STATUS_LABELS[state]}</span>
+            )}
           </button>
         );
       })}

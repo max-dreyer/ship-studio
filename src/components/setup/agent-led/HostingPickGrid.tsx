@@ -33,12 +33,12 @@ export function HostingPickGrid({ items, onSelect, onSkip, disabled }: HostingPi
         onClick={() => onSelect('vercel')}
         disabled={disabled}
       >
-        {vercelReady && <span className="agent-pick-card-tag ready">Ready ✓</span>}
         <span className="agent-pick-card-icon">
           <VercelIcon size={26} />
         </span>
         <span className="agent-pick-card-name">Vercel</span>
         <span className="agent-pick-card-desc">Fast global hosting with free SSL</span>
+        {vercelReady && <span className="agent-pick-card-status ready">✓ Ready</span>}
       </button>
       <button
         type="button"

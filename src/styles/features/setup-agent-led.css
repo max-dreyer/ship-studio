@@ -109,28 +109,15 @@
   line-height: 1.35;
 }
 
-.agent-pick-card-tag {
-  position: absolute;
-  top: var(--spacing-sm);
-  left: 50%;
-  transform: translateX(-50%);
-  padding: 1px var(--spacing-sm);
-  border-radius: var(--radius-full);
-  font-size: 10px; /* css-ok: badge micro-size, below the type scale on purpose */
-  font-weight: 600;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
+/* Detection state, as a quiet caption under the description — no pill. */
+.agent-pick-card-status {
+  font-size: var(--font-size-xs);
+  color: var(--text-muted);
   white-space: nowrap;
 }
 
-.agent-pick-card-tag.ready {
-  background: rgba(var(--success-rgb), 0.15);
+.agent-pick-card-status.ready {
   color: var(--success);
-}
-
-.agent-pick-card-tag.installed {
-  background: var(--tint);
-  color: var(--text-secondary);
 }
 
 /* ============ Agent setup detail (Phase 0, after a card click) ============ */
