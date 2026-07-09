@@ -99,14 +99,22 @@ export function useAgentSetupActions({ fetchStatus, updateItemStatus, mock }: Pa
       }
 
       // Auth items: re-check first — the user may have completed auth in a
-      // previously cancelled terminal without the checklist updating.
+      // previously cancelled terminal without the checklist updating. Only
+      // skip the terminal when the CHECKLIST source agrees the item is ready;
+      // if the quick probe and the checklist disagree, fall through and open
+      // the login terminal anyway — the CLI's own flow is the tiebreaker the
+      // user can actually see. (A probe-only early return here deadlocks the
+      // button: it "loads" and nothing ever happens — the #159 failure shape.)
       if (itemId === 'claude_auth') {
         const isAuthed = await checkClaudeAuthStatus();
         if (!mountedRef.current) return;
         if (isAuthed) {
-          await fetchStatus();
-          if (mountedRef.current) setActiveItemId(null);
-          return;
+          const status = await fetchStatus();
+          if (!mountedRef.current) return;
+          if (status && isSetupItemReady(status.items, itemId)) {
+            setActiveItemId(null);
+            return;
+          }
         }
       }
 

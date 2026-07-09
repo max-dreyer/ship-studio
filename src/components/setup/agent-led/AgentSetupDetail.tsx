@@ -67,7 +67,7 @@ export function AgentSetupDetail({
         <div>
           <h2 className="agent-setup-detail-name">{displayName}</h2>
           <p className="agent-setup-detail-sub">
-            Two quick steps — install it, then sign in to your account.
+            This is the agent that gets you set up — you can add more agents later.
           </p>
         </div>
       </div>

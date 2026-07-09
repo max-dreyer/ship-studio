@@ -794,7 +794,15 @@ pub async fn resolve_cli_path(name: String) -> Result<Option<ResolvedCli>, Comma
         });
     }
 
-    Ok(find_executable(&name).map(|path| {
+    // find_binary_by_name, NOT find_executable: it walks which() + the
+    // extended PATH + well-known install dirs (~/.local/bin, ~/.opencode/bin,
+    // …). On a fresh machine the claude installer drops the binary in
+    // ~/.local/bin BEFORE any shell profile puts that dir on PATH — the
+    // status checks (find_binary_by_name) saw it and reported "installed ✓",
+    // while this resolver (find_executable) said "not found", so the
+    // sign-in terminal refused to spawn. The checklist and this resolver
+    // must share one notion of "installed".
+    Ok(find_binary_by_name(&name).map(|path| {
         let dir = path
             .parent()
             .map(|p| p.to_string_lossy().to_string())

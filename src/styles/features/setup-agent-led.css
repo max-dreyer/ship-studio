@@ -140,6 +140,8 @@
 }
 
 .agent-setup-detail-back:hover:not(:disabled) {
+  /* Text-color change only — override the global button hover background. */
+  background: none;
   color: var(--text-primary);
 }
 
