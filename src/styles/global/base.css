@@ -48,8 +48,6 @@
   --action: #54e36e;
   --action-hover: #45c55d;
   --action-text: #1e1e1e;
-  /* RGB triplet of --action for alpha tints: rgba(var(--action-rgb), 0.1) */
-  --action-rgb: 84, 227, 110;
 
   /* Status colors (light variants for tinted backgrounds / pill states) */
   --success: #4ecdc4;
