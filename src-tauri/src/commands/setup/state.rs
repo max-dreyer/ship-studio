@@ -65,6 +65,60 @@ pub async fn mark_setup_complete() -> Result<(), CommandError> {
     Ok(())
 }
 
+/// Persist that the user brings their own agent ("Other" in the agent-led
+/// onboarding). Setup checks then treat the agent requirement as satisfied,
+/// so the user isn't redirected back to onboarding on every launch.
+#[tauri::command]
+#[tracing::instrument]
+pub async fn set_external_agent_opt_in(enabled: bool) -> Result<(), CommandError> {
+    // Test modes: don't persist to disk (mirrors mark_setup_complete).
+    if is_force_onboarding_mode() || is_mock_mode() {
+        tracing::info!("Test mode: skipping external agent opt-in persistence");
+        return Ok(());
+    }
+    let mut state = read_app_state();
+    state.external_agent = Some(enabled);
+    write_app_state(&state)?;
+    tracing::info!(enabled, "External agent opt-in persisted");
+    Ok(())
+}
+
+/// Valid default-host choices. Kept in sync with the onboarding hosting step.
+const VALID_HOSTS: &[&str] = &["vercel", "cloudflare"];
+
+/// Persist the workspace-wide default hosting provider chosen during
+/// onboarding. New projects default to this host.
+#[tauri::command]
+#[tracing::instrument]
+pub async fn set_default_host(host: String) -> Result<(), CommandError> {
+    if !VALID_HOSTS.contains(&host.as_str()) {
+        return Err(CommandError::Validation {
+            field: "host".to_string(),
+            reason: format!(
+                "unknown host `{host}` — expected one of: {}",
+                VALID_HOSTS.join(", ")
+            ),
+        });
+    }
+    // Test modes: don't persist to disk (mirrors mark_setup_complete).
+    if is_force_onboarding_mode() || is_mock_mode() {
+        tracing::info!(host, "Test mode: skipping default host persistence");
+        return Ok(());
+    }
+    let mut state = read_app_state();
+    state.default_host = Some(host.clone());
+    write_app_state(&state)?;
+    tracing::info!(host, "Default host persisted");
+    Ok(())
+}
+
+/// The persisted default hosting provider, if one was chosen.
+#[tauri::command]
+#[tracing::instrument]
+pub async fn get_default_host() -> Option<String> {
+    read_app_state().default_host
+}
+
 /// Clear setup complete flag (for testing/reset)
 #[tauri::command]
 #[tracing::instrument]

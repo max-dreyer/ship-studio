@@ -606,8 +606,10 @@ pub async fn get_full_setup_status() -> FullSetupStatus {
         .filter(|i| REQUIRED_ITEMS.contains(&i.id.as_str()) || i.id == "npm_fix")
         .all(|i| matches!(i.status, SetupItemStatus::Ready));
 
-    // At least one agent pair must be fully ready
-    let at_least_one_agent = !detected_agents.is_empty();
+    // At least one agent pair must be fully ready — or the user declared they
+    // bring their own agent ("Other" in agent-led onboarding).
+    let external_agent = read_app_state().external_agent.unwrap_or(false);
+    let at_least_one_agent = !detected_agents.is_empty() || external_agent;
     let all_ready = base_ready && at_least_one_agent;
 
     // Track optional auth status separately
@@ -676,22 +678,24 @@ pub async fn quick_setup_check() -> crate::types::QuickSetupCheck {
     let git_present = find_executable("git").is_some();
     let gh_present = find_executable("gh").is_some();
 
-    // Check ALL agents — at least one pair must be present
-    let at_least_one_agent = ALL_AGENTS.iter().any(|agent| {
-        let binary_present = find_binary_by_name(agent.binary_name).is_some();
-        if !binary_present {
-            return false;
-        }
-        if let Some(home) = dirs::home_dir() {
-            let agent_dir = home.join(agent.auth_config_dir);
-            agent
-                .auth_indicators
-                .iter()
-                .any(|indicator| agent_dir.join(indicator).exists())
-        } else {
-            false
-        }
-    });
+    // Check ALL agents — at least one pair must be present (or the user
+    // opted to bring their own agent via "Other" in agent-led onboarding)
+    let at_least_one_agent = app_state.external_agent.unwrap_or(false)
+        || ALL_AGENTS.iter().any(|agent| {
+            let binary_present = find_binary_by_name(agent.binary_name).is_some();
+            if !binary_present {
+                return false;
+            }
+            if let Some(home) = dirs::home_dir() {
+                let agent_dir = home.join(agent.auth_config_dir);
+                agent
+                    .auth_indicators
+                    .iter()
+                    .any(|indicator| agent_dir.join(indicator).exists())
+            } else {
+                false
+            }
+        });
 
     // For gh_auth, we trust the cached state since checking requires subprocess
     // It will be verified in the background after showing projects

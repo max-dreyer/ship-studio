@@ -191,7 +191,9 @@ To get an aggregate "any modal opened" count in PostHog, use a regex match on ev
 | `onboarding_completed` | `agents`, `entry_path` (`wizard`/`fast_path`/`agent_led`/`agent_led_fast_path`) |
 | `default_agent_selected` | `agent_id`, `agent_count` |
 | `onboarding_mode_switched` | `to` (`classic`/`agent`) — the escape-hatch health metric: a spike in `to: classic` means agent-led onboarding is failing people |
-| `agent_guided_setup_started` | `agent_id`, `missing_items`, `demo` (true under mock mode) |
+| `agent_card_selected` | `key` (`claude`/`codex`/`cursor`/`opencode`/`other`), `already_ready` |
+| `onboarding_host_selected` | `host` (`vercel`/`cloudflare`/`skipped`) — becomes the workspace default host |
+| `agent_guided_setup_started` | `agent_id` (`other` for bring-your-own), `missing_items`, `host`, `demo` (true under mock mode) |
 | `agent_guided_setup_restarted` | `agent_id` — the agent session ended before setup finished and the user relaunched it |
 
 ### Errors & misc

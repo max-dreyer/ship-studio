@@ -39,6 +39,161 @@
   color: var(--text-primary);
 }
 
+/* ============ Agent pick grid (Phase 0) ============ */
+
+/* Wide enough for three cards per row; flex centering gives the 3 + 2 split. */
+.onboarding-content.agent-onboarding-content {
+  max-width: 600px;
+  width: 100%;
+}
+
+.agent-pick-grid {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: var(--spacing-md);
+}
+
+.agent-pick-card {
+  position: relative;
+  width: 170px;
+  height: 170px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--spacing-sm);
+  padding: var(--spacing-md);
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  color: var(--text-primary);
+  cursor: pointer;
+  text-align: center;
+  transition: all var(--transition);
+}
+
+.agent-pick-card:hover:not(:disabled) {
+  background: var(--bg-tertiary);
+  border-color: var(--accent);
+  transform: translateY(-1px);
+}
+
+.agent-pick-card:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.agent-pick-card.detected-ready {
+  border-color: rgba(var(--success-rgb), 0.5);
+}
+
+.agent-pick-card-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 48px;
+  height: 48px;
+  border-radius: var(--radius-md);
+  background: var(--tint-subtle);
+}
+
+.agent-pick-card-name {
+  font-size: var(--font-size-sm);
+  font-weight: 600;
+}
+
+.agent-pick-card-desc {
+  font-size: var(--font-size-xs);
+  color: var(--text-muted);
+  line-height: 1.35;
+}
+
+.agent-pick-card-tag {
+  position: absolute;
+  top: var(--spacing-sm);
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 1px var(--spacing-sm);
+  border-radius: var(--radius-full);
+  font-size: 10px; /* css-ok: badge micro-size, below the type scale on purpose */
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.agent-pick-card-tag.ready {
+  background: rgba(var(--success-rgb), 0.15);
+  color: var(--success);
+}
+
+.agent-pick-card-tag.installed {
+  background: var(--tint);
+  color: var(--text-secondary);
+}
+
+/* ============ Agent setup detail (Phase 0, after a card click) ============ */
+
+.agent-setup-detail {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-md);
+}
+
+.agent-setup-detail-back {
+  align-self: flex-start;
+  background: none;
+  border: none;
+  padding: 0;
+  color: var(--text-muted);
+  font-size: var(--font-size-sm);
+  cursor: pointer;
+  transition: color var(--transition);
+}
+
+.agent-setup-detail-back:hover:not(:disabled) {
+  color: var(--text-primary);
+}
+
+.agent-setup-detail-back:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.agent-setup-detail-header {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-md);
+}
+
+.agent-setup-detail-name {
+  margin: 0;
+  font-size: var(--font-size-lg);
+}
+
+.agent-setup-detail-sub {
+  margin: 2px 0 0;
+  color: var(--text-muted);
+  font-size: var(--font-size-sm);
+}
+
+/* ============ "Other" prompt bar (guided phase) ============ */
+
+.agent-guided-prompt-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--spacing-md);
+  margin-bottom: var(--spacing-md);
+  padding: var(--spacing-sm) var(--spacing-md);
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  color: var(--text-secondary);
+  font-size: var(--font-size-sm);
+}
+
 /* ============ Guided phase layout ============ */
 
 /* The guided phase needs real estate for the terminal + checklist. */
@@ -155,6 +310,17 @@
   flex-shrink: 0;
   border: 1.5px solid var(--border);
   border-radius: var(--radius-full);
+}
+
+.agent-setup-checklist-footnote {
+  margin: var(--spacing-md) 0 0;
+  font-size: var(--font-size-xs);
+  color: var(--text-muted);
+}
+
+/* Muted "skip" card in the hosting grid. */
+.agent-pick-card-muted .agent-pick-card-icon {
+  color: var(--text-muted);
 }
 
 /* ============ Demo terminal (mock mode) ============ */

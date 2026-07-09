@@ -6,6 +6,10 @@
  * The agent drives; the app verifies. Completion is decided exclusively by
  * `isAgentLedSetupComplete` over freshly polled items — never by the agent
  * declaring success.
+ *
+ * `agentBinaryId: null` is the "Other" path: a plain shell opens instead of
+ * a managed agent, with the guided prompt one Copy click away so the user
+ * can launch whatever agent CLI they use and paste it.
  */
 
 import { useCallback, useMemo, useRef, useState } from 'react';
@@ -19,16 +23,21 @@ import {
   getMissingRequiredItems,
   guidedAgentSpawn,
   isAgentLedSetupComplete,
+  otherAgentShellSpawn,
+  HostChoice,
 } from '../../../lib/agentOnboarding';
+import { useCopyToClipboard } from '../../../hooks/useCopyToClipboard';
 import { trackEvent } from '../../../lib/analytics';
 
 interface GuidedSetupPhaseProps {
-  /** Binary id of the agent chosen in Phase 0 (e.g. "claude"). */
-  agentBinaryId: string;
-  /** Display name of the chosen agent (e.g. "Claude Code"). */
+  /** Binary id of the chosen agent (e.g. "claude"), or null for "Other". */
+  agentBinaryId: string | null;
+  /** Display name of the chosen agent (e.g. "Claude Code" / "Your agent"). */
   agentDisplayName: string;
   /** Live setup items — the owner polls these while this phase is mounted. */
   items: SetupItem[];
+  /** Hosting provider chosen in the hosting step (null = skipped). */
+  hostChoice: HostChoice | null;
   /** Mock mode: play the scripted demo instead of spawning a real agent. */
   demoMode: boolean;
   /** Called when the user clicks Continue after everything is verified. */
@@ -39,6 +48,7 @@ export function GuidedSetupPhase({
   agentBinaryId,
   agentDisplayName,
   items,
+  hostChoice,
   demoMode,
   onVerified,
 }: GuidedSetupPhaseProps) {
@@ -49,13 +59,19 @@ export function GuidedSetupPhase({
   missingRef.current ??= getMissingRequiredItems(items);
   const [session, setSession] = useState(0);
   const [agentExit, setAgentExit] = useState<number | null>(null);
+  const { copy, isCopied } = useCopyToClipboard();
 
+  const isOther = agentBinaryId === null;
   const complete = isAgentLedSetupComplete(items, agentBinaryId);
 
-  const spawn = useMemo(
-    () => guidedAgentSpawn(agentBinaryId, buildGuidedSetupPrompt(missingRef.current ?? [])),
+  const prompt = useMemo(
+    () => buildGuidedSetupPrompt(missingRef.current ?? [], hostChoice),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [agentBinaryId, session]
+    [session, hostChoice]
+  );
+  const spawn = useMemo(
+    () => (isOther ? otherAgentShellSpawn() : guidedAgentSpawn(agentBinaryId, prompt)),
+    [isOther, agentBinaryId, prompt]
   );
 
   const handleAgentExit = useCallback((exitCode: number | null) => {
@@ -66,26 +82,41 @@ export function GuidedSetupPhase({
     missingRef.current = null; // recompute from current items on next render
     setAgentExit(null);
     setSession((s) => s + 1);
-    void trackEvent('agent_guided_setup_restarted', { agent_id: agentBinaryId });
+    void trackEvent('agent_guided_setup_restarted', { agent_id: agentBinaryId ?? 'other' });
   }, [agentBinaryId]);
 
   return (
     <div className="agent-guided-phase">
       <div className="agent-guided-header">
         <h2 className="wizard-step-title">
-          {complete ? 'Everything is set up and verified' : `${agentDisplayName} is setting you up`}
+          {complete
+            ? 'Everything is set up and verified'
+            : isOther
+              ? 'Launch your agent to finish setup'
+              : `${agentDisplayName} is setting you up`}
         </h2>
         <p className="wizard-step-subtitle">
           {complete
             ? 'All checks passed — you’re ready to start building.'
-            : 'Follow along in the terminal — your agent explains each step and will tell you if it needs anything (like a password or a browser sign-in).'}
+            : isOther
+              ? 'Start your agent in this terminal, then paste the setup instructions below into it.'
+              : 'Follow along in the terminal — your agent explains each step and will tell you if it needs anything (like a password or a browser sign-in).'}
         </p>
       </div>
+
+      {isOther && !complete && !demoMode && (
+        <div className="agent-guided-prompt-bar">
+          <span>Setup instructions for your agent:</span>
+          <Button variant="secondary" size="sm" onClick={() => void copy(prompt)}>
+            {isCopied ? 'Copied!' : 'Copy instructions'}
+          </Button>
+        </div>
+      )}
 
       <div className="agent-guided-layout">
         <div className="agent-guided-terminal">
           {demoMode ? (
-            <DemoAgentTerminal />
+            <DemoAgentTerminal hostChoice={hostChoice} />
           ) : (
             <OnboardingTerminal
               key={session}
@@ -96,9 +127,13 @@ export function GuidedSetupPhase({
           )}
           {!complete && agentExit !== null && !demoMode && (
             <div className="agent-guided-exit-notice">
-              <span>The agent session ended before setup finished.</span>
+              <span>
+                {isOther
+                  ? 'The terminal session ended before setup finished.'
+                  : 'The agent session ended before setup finished.'}
+              </span>
               <Button variant="secondary" size="sm" onClick={handleRestart}>
-                Restart the agent
+                {isOther ? 'Reopen terminal' : 'Restart the agent'}
               </Button>
             </div>
           )}
@@ -109,6 +144,7 @@ export function GuidedSetupPhase({
             items={items}
             agentBinaryId={agentBinaryId}
             agentDisplayName={agentDisplayName}
+            hostChoice={hostChoice}
           />
           {complete && (
             <div className="agent-guided-complete">

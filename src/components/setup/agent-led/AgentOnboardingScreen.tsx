@@ -7,16 +7,21 @@
  * its own checks. The classic wizard remains one click away at all times via
  * the router's corner button.
  *
- * States: loading → pick (Phase 0) → guided (Phase 1) → complete.
- * Machines that are already fully set up fast-path to complete, mirroring the
- * classic wizard — except under SHIPSTUDIO_FORCE_ONBOARDING, where the pick
- * phase is always shown so the flow can be eyeballed on a dev machine.
+ * States: loading → pick (grid → per-agent detail) → guided → complete.
+ * "Other" skips agent management entirely: it opens a plain terminal for any
+ * agent CLI we don't manage, records the external-agent opt-in so setup
+ * checks don't bounce the user back, and defaults the workspace to the
+ * Terminal agent. Machines that are already fully set up fast-path to
+ * complete — except under SHIPSTUDIO_FORCE_ONBOARDING, where the pick phase
+ * is always shown so the flow can be eyeballed on a dev machine.
  */
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
-import { AgentStep } from '../steps/AgentStep';
+import { ReactNode, useCallback, useEffect, useRef, useState } from 'react';
 import { CelebrationScreen } from '../CelebrationScreen';
 import { OnboardingTerminal } from '../OnboardingTerminal';
+import { AgentPickGrid, AgentCardKey } from './AgentPickGrid';
+import { AgentSetupDetail } from './AgentSetupDetail';
+import { HostingPickGrid } from './HostingPickGrid';
 import { GuidedSetupPhase } from './GuidedSetupPhase';
 import { useAgentSetupActions } from './useAgentSetupActions';
 import { Button } from '../../primitives/Button';
@@ -33,15 +38,19 @@ import {
   getMissingRequiredItems,
   getOnboardingTestMode,
   isAgentLedSetupComplete,
+  setDefaultHost,
+  setExternalAgentOptIn,
+  HostChoice,
   OnboardingTestMode,
 } from '../../../lib/agentOnboarding';
 import { initDefaultAgent, getAgentById } from '../../../lib/agent';
+import { ClaudeIcon, CodexIcon, CursorIcon, OpencodeIcon } from '../../icons';
 import { usePolling } from '../../../hooks/usePolling';
 import { withTimeout, TimeoutError } from '../../../lib/withTimeout';
 import { trackEvent, trackPageview } from '../../../lib/analytics';
 import { logger } from '../../../lib/logger';
 
-type Phase = 'loading' | 'pick' | 'guided' | 'complete';
+type Phase = 'loading' | 'pick' | 'hosting' | 'guided' | 'complete';
 
 const SETUP_STATUS_TIMEOUT_MS = 15_000;
 
@@ -54,6 +63,13 @@ function agentIdForBinary(binaryId: string): string {
   return binaryId === 'claude' ? 'claude-code' : binaryId;
 }
 
+const DETAIL_ICONS: Record<string, ReactNode> = {
+  claude: <ClaudeIcon size={28} />,
+  codex: <CodexIcon size={28} />,
+  cursor: <CursorIcon size={28} />,
+  opencode: <OpencodeIcon size={28} />,
+};
+
 interface AgentOnboardingScreenProps {
   /** Called when setup is complete and the user continues. */
   onComplete: () => void;
@@ -63,12 +79,18 @@ export function AgentOnboardingScreen({ onComplete }: AgentOnboardingScreenProps
   const [phase, setPhase] = useState<Phase>('loading');
   const [items, setItems] = useState<SetupItem[]>([]);
   const [error, setError] = useState<string | null>(null);
-  const [selectedAgentId, setSelectedAgentId] = useState<string | null>(null);
-  const [chosenBinaryId, setChosenBinaryId] = useState<string | null>(null);
+  /** Agent card being set up in the detail view (grid shown when null). */
+  const [detailAgent, setDetailAgent] = useState<AgentCardKey | null>(null);
+  /** The committed choice driving the guided phase; 'other' = BYO agent. */
+  const [chosenKey, setChosenKey] = useState<AgentCardKey | null>(null);
+  /** Hosting provider chosen in the hosting step (null = skipped). */
+  const [hostChoice, setHostChoice] = useState<HostChoice | null>(null);
   const [testMode, setTestMode] = useState<OnboardingTestMode>({
     mock: false,
     forceOnboarding: false,
   });
+
+  const chosenBinaryId = chosenKey === 'other' ? null : chosenKey;
 
   const fetchStatus = useCallback(async (): Promise<FullSetupStatus | null> => {
     try {
@@ -96,6 +118,81 @@ export function AgentOnboardingScreen({ onComplete }: AgentOnboardingScreenProps
   }, []);
 
   const actions = useAgentSetupActions({ fetchStatus, updateItemStatus, mock: testMode.mock });
+
+  const fireCompleted = useCallback((agents: string[], entryPath: string) => {
+    void trackEvent('onboarding_completed', {
+      agents,
+      entry_path: entryPath,
+      $screen_name: 'Onboarding',
+    });
+  }, []);
+
+  /** Commit a ready agent, then ask about hosting before the guided phase. */
+  const proceedWithAgent = useCallback(async (binaryId: string) => {
+    const agentId = agentIdForBinary(binaryId);
+    await setDefaultAgentId(agentId);
+    initDefaultAgent(agentId);
+    setChosenKey(binaryId as AgentCardKey);
+    setDetailAgent(null);
+    trackPageview('Onboarding - Hosting Pick');
+    setPhase('hosting');
+  }, []);
+
+  /** "Other": bring-your-own agent — plain terminal, external-agent opt-in. */
+  const proceedWithOther = useCallback(async () => {
+    setChosenKey('other');
+    setDetailAgent(null);
+    // Persist both sides of the choice up front: the workspace opens with
+    // the plain Terminal agent, and setup checks stop requiring a managed
+    // agent so this user isn't bounced back to onboarding on relaunch.
+    await setDefaultAgentId('terminal');
+    initDefaultAgent('terminal');
+    await setExternalAgentOptIn(true).catch((err: unknown) => {
+      logger.warn('Failed to persist external agent opt-in', { error: String(err) });
+    });
+    trackPageview('Onboarding - Hosting Pick');
+    setPhase('hosting');
+  }, []);
+
+  /**
+   * Hosting decided (or skipped) — now route to the guided phase, or straight
+   * to celebration when there is genuinely nothing left to set up. Cloudflare
+   * has no backend detection yet, so choosing it always runs the guided phase.
+   */
+  const handleHostDecision = useCallback(
+    async (host: HostChoice | null) => {
+      setHostChoice(host);
+      void trackEvent('onboarding_host_selected', { host: host ?? 'skipped' });
+      if (host) {
+        await setDefaultHost(host).catch((err: unknown) => {
+          logger.warn('Failed to persist default host', { error: String(err) });
+        });
+      }
+
+      const agentId = chosenKey === 'other' || !chosenKey ? 'other' : agentIdForBinary(chosenKey);
+      const missing = getMissingRequiredItems(items);
+      const vercelReady =
+        items.find((i) => i.id === 'vercel')?.status === 'ready' &&
+        items.find((i) => i.id === 'vercel_auth')?.status === 'ready';
+      const hostNeedsSetup =
+        host === 'cloudflare' ? true : host === 'vercel' ? !vercelReady : false;
+
+      if (missing.length === 0 && !hostNeedsSetup) {
+        fireCompleted([agentId], 'agent_led');
+        setPhase('complete');
+        return;
+      }
+      void trackEvent('agent_guided_setup_started', {
+        agent_id: agentId,
+        missing_items: missing.map((i) => i.id),
+        host: host ?? 'skipped',
+        demo: testMode.mock,
+      });
+      trackPageview('Onboarding - Agent Guided Setup');
+      setPhase('guided');
+    },
+    [chosenKey, items, fireCompleted, testMode.mock]
+  );
 
   // Initial load: test mode + status, then route.
   useEffect(() => {
@@ -127,12 +224,8 @@ export function AgentOnboardingScreen({ onComplete }: AgentOnboardingScreenProps
         const agentId = agentIdForBinary(readyPair.binaryId);
         await setDefaultAgentId(agentId);
         initDefaultAgent(agentId);
-        setChosenBinaryId(readyPair.binaryId);
-        void trackEvent('onboarding_completed', {
-          agents: [agentId],
-          entry_path: 'agent_led_fast_path',
-          $screen_name: 'Onboarding',
-        });
+        setChosenKey(readyPair.binaryId as AgentCardKey);
+        fireCompleted([agentId], 'agent_led_fast_path');
         setPhase('complete');
         return;
       }
@@ -147,56 +240,58 @@ export function AgentOnboardingScreen({ onComplete }: AgentOnboardingScreenProps
   // in demo mode) so the checklist ticks green as the agent installs things.
   usePolling(fetchStatus, {
     intervalMs: 3000,
-    enabled:
-      phase === 'guided' && !(chosenBinaryId && isAgentLedSetupComplete(items, chosenBinaryId)),
+    enabled: phase === 'guided' && !isAgentLedSetupComplete(items, chosenBinaryId ?? null),
     name: 'agentOnboardingStatus',
   });
 
-  const readyPairs = useMemo(() => getReadyAgentPairs(items), [items]);
-  const canContinue =
-    readyPairs.length === 1 || (readyPairs.length > 1 && selectedAgentId !== null);
-
-  const handleStartGuided = useCallback(async () => {
-    const agentId =
-      readyPairs.length > 1 && selectedAgentId
-        ? selectedAgentId
-        : readyPairs[0]
-          ? agentIdForBinary(readyPairs[0].binaryId)
-          : null;
-    if (!agentId) return;
-
-    await setDefaultAgentId(agentId);
-    initDefaultAgent(agentId);
-    const binaryId = agentId === 'claude-code' ? 'claude' : agentId;
-    setChosenBinaryId(binaryId);
-
-    const missing = getMissingRequiredItems(items);
-    if (missing.length === 0) {
-      void trackEvent('onboarding_completed', {
-        agents: [agentId],
-        entry_path: 'agent_led',
-        $screen_name: 'Onboarding',
+  const handleCardSelect = useCallback(
+    (key: AgentCardKey) => {
+      void trackEvent('agent_card_selected', {
+        key,
+        already_ready:
+          key !== 'other' &&
+          items.find((i) => i.id === key)?.status === 'ready' &&
+          items.find((i) => i.id === `${key}_auth`)?.status === 'ready',
       });
-      setPhase('complete');
+      if (key === 'other') {
+        void proceedWithOther();
+        return;
+      }
+      const pairReady =
+        items.find((i) => i.id === key)?.status === 'ready' &&
+        items.find((i) => i.id === `${key}_auth`)?.status === 'ready';
+      if (pairReady) {
+        void proceedWithAgent(key);
+      } else {
+        setDetailAgent(key);
+      }
+    },
+    [items, proceedWithAgent, proceedWithOther]
+  );
+
+  // Detail view: the moment the chosen pair turns fully ready (install +
+  // sign-in verified), advance automatically — the user already committed by
+  // clicking the card. Guarded to fire once.
+  const advancedFromDetailRef = useRef(false);
+  useEffect(() => {
+    if (!detailAgent || phase !== 'pick') {
+      advancedFromDetailRef.current = false;
       return;
     }
-    void trackEvent('agent_guided_setup_started', {
-      agent_id: agentId,
-      missing_items: missing.map((i) => i.id),
-      demo: testMode.mock,
-    });
-    trackPageview('Onboarding - Agent Guided Setup');
-    setPhase('guided');
-  }, [readyPairs, selectedAgentId, items, testMode.mock]);
+    const pairReady =
+      items.find((i) => i.id === detailAgent)?.status === 'ready' &&
+      items.find((i) => i.id === `${detailAgent}_auth`)?.status === 'ready';
+    const busy = actions.activeItemId !== null || actions.terminalConfig !== null;
+    if (pairReady && !busy && !advancedFromDetailRef.current) {
+      advancedFromDetailRef.current = true;
+      void proceedWithAgent(detailAgent);
+    }
+  }, [detailAgent, phase, items, actions.activeItemId, actions.terminalConfig, proceedWithAgent]);
 
   const handleVerified = useCallback(() => {
-    void trackEvent('onboarding_completed', {
-      agents: chosenBinaryId ? [agentIdForBinary(chosenBinaryId)] : [],
-      entry_path: 'agent_led',
-      $screen_name: 'Onboarding',
-    });
+    fireCompleted(chosenBinaryId ? [agentIdForBinary(chosenBinaryId)] : ['other'], 'agent_led');
     setPhase('complete');
-  }, [chosenBinaryId]);
+  }, [chosenBinaryId, fireCompleted]);
 
   if (phase === 'loading') {
     return (
@@ -216,18 +311,31 @@ export function AgentOnboardingScreen({ onComplete }: AgentOnboardingScreenProps
 
   const chosenAgentDisplayName = chosenBinaryId
     ? getAgentById(agentIdForBinary(chosenBinaryId)).displayName
-    : '';
+    : 'Your agent';
 
   return (
     <div className="onboarding-screen">
-      <div className={`onboarding-content ${phase === 'guided' ? 'agent-guided-content' : ''}`}>
+      <div
+        className={`onboarding-content agent-onboarding-content ${phase === 'guided' ? 'agent-guided-content' : ''}`}
+      >
         <div className="onboarding-header">
           <img src="/ship_studio_full_noshadow.svg" alt="Ship Studio" className="onboarding-logo" />
-          {phase === 'pick' && (
+          {phase === 'pick' && !detailAgent && (
             <>
-              <h1>Meet your setup crew</h1>
+              <h1>First, pick your AI agent</h1>
               <p className="onboarding-reassurance">
-                Pick an AI agent — it installs everything else and walks you through the rest.
+                To start building, your computer needs a few tools — Git, GitHub, and Node.js. The
+                best way to install them is with an AI agent: it does the work and explains each
+                step. Which one would you like to use?
+              </p>
+            </>
+          )}
+          {phase === 'hosting' && (
+            <>
+              <h1>Where should your sites go live?</h1>
+              <p className="onboarding-reassurance">
+                Pick a hosting provider — new projects will publish there by default, and your agent
+                will set it up for you. Not sure? Skip it and decide later.
               </p>
             </>
           )}
@@ -242,43 +350,41 @@ export function AgentOnboardingScreen({ onComplete }: AgentOnboardingScreenProps
           </div>
         )}
 
-        {phase === 'pick' && (
-          <>
-            <AgentStep
-              items={items}
-              onItemAction={(id) => void actions.handleItemAction(id)}
-              activeItemId={actions.activeItemId}
-              terminalActive={actions.terminalConfig !== null}
-              onAgentSelect={setSelectedAgentId}
-              selectedAgentId={selectedAgentId}
-            />
-            <div className="wizard-nav">
-              <div className="wizard-nav-spacer" />
-              {!canContinue && (
-                <span className="wizard-nav-hint">
-                  {readyPairs.length > 1
-                    ? 'Choose your agent to continue'
-                    : 'Install and connect an agent to continue'}
-                </span>
-              )}
-              <button
-                className="wizard-nav-next"
-                onClick={() => void handleStartGuided()}
-                disabled={
-                  !canContinue || actions.activeItemId !== null || actions.terminalConfig !== null
-                }
-              >
-                Start guided setup
-              </button>
-            </div>
-          </>
+        {phase === 'pick' && !detailAgent && (
+          <AgentPickGrid
+            items={items}
+            onSelect={handleCardSelect}
+            disabled={actions.activeItemId !== null || actions.terminalConfig !== null}
+          />
         )}
 
-        {phase === 'guided' && chosenBinaryId && (
+        {phase === 'pick' && detailAgent && detailAgent !== 'other' && (
+          <AgentSetupDetail
+            binaryId={detailAgent}
+            displayName={getAgentById(agentIdForBinary(detailAgent)).displayName}
+            icon={DETAIL_ICONS[detailAgent]}
+            items={items}
+            onItemAction={(id) => void actions.handleItemAction(id)}
+            activeItemId={actions.activeItemId}
+            terminalActive={actions.terminalConfig !== null}
+            onBack={() => setDetailAgent(null)}
+          />
+        )}
+
+        {phase === 'hosting' && (
+          <HostingPickGrid
+            items={items}
+            onSelect={(host) => void handleHostDecision(host)}
+            onSkip={() => void handleHostDecision(null)}
+          />
+        )}
+
+        {phase === 'guided' && chosenKey && (
           <GuidedSetupPhase
             agentBinaryId={chosenBinaryId}
             agentDisplayName={chosenAgentDisplayName}
             items={items}
+            hostChoice={hostChoice}
             demoMode={testMode.mock}
             onVerified={handleVerified}
           />

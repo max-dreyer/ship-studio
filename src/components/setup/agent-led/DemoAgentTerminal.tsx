@@ -7,8 +7,8 @@
  * contributors; see CLAUDE.md → Onboarding Testing.
  */
 
-import { useEffect, useRef, useState } from 'react';
-import { mockMarkSetupItemReady } from '../../../lib/agentOnboarding';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { mockMarkSetupItemReady, HostChoice } from '../../../lib/agentOnboarding';
 import { logger } from '../../../lib/logger';
 
 interface DemoLine {
@@ -63,24 +63,58 @@ const SCRIPT: DemoLine[] = [
   { kind: 'out', text: '! First copy your one-time code: ABCD-1234', delayMs: 900 },
   { kind: 'out', text: '✓ Authentication complete.', delayMs: 2200 },
   { kind: 'ok', text: '✓ GitHub account connected', delayMs: 700, markReady: 'gh_auth' },
-  {
-    kind: 'agent',
-    text: 'That’s everything! Watch the checklist — Ship Studio is running its own checks, and every item should turn green. You’re ready to ship. 🚢',
-    delayMs: 1100,
-  },
 ];
 
-export function DemoAgentTerminal() {
+/** Host-specific demo beats, appended before the wrap-up line. */
+const HOST_SCRIPTS: Record<HostChoice, DemoLine[]> = {
+  vercel: [
+    {
+      kind: 'agent',
+      text: 'And your hosting — installing the Vercel CLI and signing you in.',
+      delayMs: 1100,
+    },
+    { kind: 'cmd', text: '$ npm install -g vercel --force && vercel login', delayMs: 900 },
+    { kind: 'ok', text: '✓ Vercel connected', delayMs: 1600, markReady: 'vercel' },
+    { kind: 'ok', text: '✓ Vercel account signed in', delayMs: 700, markReady: 'vercel_auth' },
+  ],
+  cloudflare: [
+    {
+      kind: 'agent',
+      text: 'And your hosting — installing the Cloudflare Wrangler CLI and signing you in.',
+      delayMs: 1100,
+    },
+    { kind: 'cmd', text: '$ npm install -g wrangler --force && wrangler login', delayMs: 900 },
+    { kind: 'ok', text: '✓ Cloudflare connected', delayMs: 1600 },
+  ],
+};
+
+const WRAP_UP: DemoLine = {
+  kind: 'agent',
+  text: 'That’s everything! Watch the checklist — Ship Studio is running its own checks, and every item should turn green. You’re ready to ship. 🚢',
+  delayMs: 1100,
+};
+
+interface DemoAgentTerminalProps {
+  /** Hosting provider chosen in the hosting step (null = skipped). */
+  hostChoice: HostChoice | null;
+}
+
+export function DemoAgentTerminal({ hostChoice }: DemoAgentTerminalProps) {
   const [visibleCount, setVisibleCount] = useState(0);
   const scrollRef = useRef<HTMLDivElement>(null);
+
+  const script = useMemo(
+    () => [...SCRIPT, ...(hostChoice ? HOST_SCRIPTS[hostChoice] : []), WRAP_UP],
+    [hostChoice]
+  );
 
   useEffect(() => {
     let cancelled = false;
     let timer: ReturnType<typeof setTimeout> | null = null;
 
     const playFrom = (index: number) => {
-      if (cancelled || index >= SCRIPT.length) return;
-      const line = SCRIPT[index];
+      if (cancelled || index >= script.length) return;
+      const line = script[index];
       timer = setTimeout(() => {
         if (cancelled) return;
         setVisibleCount(index + 1);
@@ -101,7 +135,7 @@ export function DemoAgentTerminal() {
       cancelled = true;
       if (timer) clearTimeout(timer);
     };
-  }, []);
+  }, [script]);
 
   // Keep the newest line in view.
   useEffect(() => {
@@ -112,12 +146,12 @@ export function DemoAgentTerminal() {
   return (
     <div className="demo-agent-terminal" ref={scrollRef} aria-label="Demo agent session">
       <div className="demo-agent-terminal-badge">Demo — scripted session, nothing is installed</div>
-      {SCRIPT.slice(0, visibleCount).map((line, idx) => (
+      {script.slice(0, visibleCount).map((line, idx) => (
         <div key={idx} className={`demo-agent-line demo-agent-line-${line.kind}`}>
           {line.text}
         </div>
       ))}
-      {visibleCount < SCRIPT.length && <span className="demo-agent-cursor" />}
+      {visibleCount < script.length && <span className="demo-agent-cursor" />}
     </div>
   );
 }

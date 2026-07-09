@@ -37,6 +37,33 @@ export async function mockMarkSetupItemReady(itemId: string): Promise<void> {
   return invoke('mock_mark_setup_item_ready', { itemId });
 }
 
+/**
+ * Persist that the user brings their own agent ("Other" in the agent pick).
+ * Setup checks then treat the agent requirement as satisfied so the user
+ * isn't redirected back to onboarding on every launch.
+ */
+export async function setExternalAgentOptIn(enabled: boolean): Promise<void> {
+  return invoke('set_external_agent_opt_in', { enabled });
+}
+
+// ============ Default host ============
+
+/** Hosting providers offered during onboarding. */
+export type HostChoice = 'vercel' | 'cloudflare';
+
+/**
+ * Persist the workspace-wide default hosting provider. New projects default
+ * to this host (the way Vercel is used for all projects today).
+ */
+export async function setDefaultHost(host: HostChoice): Promise<void> {
+  return invoke('set_default_host', { host });
+}
+
+/** The persisted default hosting provider, if one was chosen. */
+export async function getDefaultHost(): Promise<HostChoice | null> {
+  return invoke<HostChoice | null>('get_default_host');
+}
+
 // ============ Required items & completion ============
 
 /**
@@ -69,9 +96,15 @@ export function getMissingRequiredItems(items: SetupItem[]): SetupItem[] {
  * chosen agent pair is ready. Computed from items (not `allReady`) so it
  * stays truthful under SHIPSTUDIO_FORCE_ONBOARDING, which pins `allReady`
  * to false while onboarding is open.
+ *
+ * `agentBinaryId: null` means the "Other" path — an agent we don't manage —
+ * so only the required items gate completion. The backend's own `allReady`
+ * still requires a known agent pair, so a user going this route will be
+ * offered agent setup again from the dashboard; that's honest, not a bug.
  */
-export function isAgentLedSetupComplete(items: SetupItem[], agentBinaryId: string): boolean {
+export function isAgentLedSetupComplete(items: SetupItem[], agentBinaryId: string | null): boolean {
   const requiredReady = AGENT_LED_REQUIRED_ITEM_IDS.every((id) => isSetupItemReady(items, id));
+  if (agentBinaryId === null) return requiredReady;
   const pairReady =
     items.find((i) => i.id === agentBinaryId)?.status === 'ready' &&
     items.find((i) => i.id === `${agentBinaryId}_auth`)?.status === 'ready';
@@ -135,14 +168,32 @@ const PROMPT_ITEM_NAMES: Record<string, string> = {
  * instructions. The app's own checks decide completion, and the prompt says
  * so, so the agent doesn't overclaim.
  */
-export function buildGuidedSetupPrompt(missing: SetupItem[]): string {
+export function buildGuidedSetupPrompt(
+  missing: SetupItem[],
+  host: HostChoice | null = null
+): string {
   const win = isWindows();
-  const names = missing.map((i) => PROMPT_ITEM_NAMES[i.id] ?? i.id).join(', ');
-  const steps = missing
+  const nameList = missing.map((i) => PROMPT_ITEM_NAMES[i.id] ?? i.id);
+  const instructions = missing
     .map((i) => itemInstruction(i.id, win))
-    .filter((s): s is string => s !== null)
-    .map((s, idx) => `${String(idx + 1)}) ${s}`)
-    .join('; ');
+    .filter((s): s is string => s !== null);
+
+  // The chosen hosting provider's CLI is installed last (both are npm
+  // packages, so Node must land first) and signed in via its browser flow.
+  if (host === 'vercel') {
+    nameList.push('the Vercel CLI (their hosting provider)');
+    instructions.push(
+      'Vercel CLI: run `npm install -g vercel --force`, then sign them in with `vercel login` — a browser opens where they sign in or create a free Vercel account'
+    );
+  } else if (host === 'cloudflare') {
+    nameList.push('the Cloudflare Wrangler CLI (their hosting provider)');
+    instructions.push(
+      'Cloudflare Wrangler CLI: run `npm install -g wrangler --force`, then sign them in with `wrangler login` — a browser opens where they sign in or create a free Cloudflare account'
+    );
+  }
+
+  const names = nameList.join(', ');
+  const steps = instructions.map((s, idx) => `${String(idx + 1)}) ${s}`).join('; ');
 
   return (
     'You are helping a brand-new Ship Studio user get their computer ready. ' +
@@ -172,4 +223,12 @@ export function guidedAgentSpawn(agentBinaryId: string, prompt: string): Termina
   }
   const binary = agentBinaryId === 'cursor' ? 'cursor-agent' : agentBinaryId;
   return { command: binary, args: [prompt] };
+}
+
+/**
+ * Plain interactive shell for the "Other" path — the user launches whatever
+ * agent CLI they use and pastes the guided prompt themselves.
+ */
+export function otherAgentShellSpawn(): TerminalCommand {
+  return isWindows() ? { command: 'powershell', args: [] } : { command: '/bin/zsh', args: ['-il'] };
 }

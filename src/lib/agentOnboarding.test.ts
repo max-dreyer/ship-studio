@@ -88,6 +88,31 @@ describe('buildGuidedSetupPrompt', () => {
     const prompt = buildGuidedSetupPrompt(FRESH_MISSING);
     expect(prompt).toContain('Do not install or change anything beyond the tools listed above');
   });
+
+  it('appends the chosen host CLI as the final step', () => {
+    const vercel = buildGuidedSetupPrompt(FRESH_MISSING, 'vercel');
+    expect(vercel).toContain('6) Vercel CLI: run `npm install -g vercel --force`');
+    expect(vercel).toContain('vercel login');
+
+    const cloudflare = buildGuidedSetupPrompt(FRESH_MISSING, 'cloudflare');
+    expect(cloudflare).toContain(
+      '6) Cloudflare Wrangler CLI: run `npm install -g wrangler --force`'
+    );
+    expect(cloudflare).toContain('wrangler login');
+    expect(cloudflare).not.toContain('vercel');
+  });
+
+  it('omits hosting entirely when skipped', () => {
+    const prompt = buildGuidedSetupPrompt(FRESH_MISSING, null);
+    expect(prompt).not.toContain('wrangler');
+    expect(prompt).not.toContain('Vercel');
+  });
+
+  it('still produces a hosting-only prompt when nothing else is missing', () => {
+    const prompt = buildGuidedSetupPrompt([], 'cloudflare');
+    expect(prompt).toContain('1) Cloudflare Wrangler CLI');
+    expect(prompt).toContain('the Cloudflare Wrangler CLI (their hosting provider)');
+  });
 });
 
 describe('guidedAgentSpawn', () => {
@@ -157,5 +182,14 @@ describe('isAgentLedSetupComplete', () => {
     ];
     expect(isAgentLedSetupComplete(items, 'claude')).toBe(true);
     expect(isAgentLedSetupComplete(items, 'codex')).toBe(false);
+  });
+
+  it('null agent ("Other") gates on required items only', () => {
+    expect(isAgentLedSetupComplete(allRequiredReady, null)).toBe(true);
+    const items = [
+      ...allRequiredReady.filter((i) => i.id !== 'gh_auth'),
+      item('gh_auth', 'not_authenticated'),
+    ];
+    expect(isAgentLedSetupComplete(items, null)).toBe(false);
   });
 });
