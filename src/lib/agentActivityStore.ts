@@ -63,6 +63,12 @@ const TOOL_META: Record<string, ToolMeta> = {
     effect: { kind: 'flash', x: 0.5, y: 0.5 },
   },
   preview_status: { label: () => 'Agent is checking the preview' },
+  preview_set_viewport: {
+    label: (args) =>
+      typeof args?.preset === 'string'
+        ? `Agent is switching to the ${args.preset} viewport`
+        : 'Agent is resizing the preview',
+  },
   // The interaction tools get their cursor via agentCursorAt() once the shim
   // reports the real element position — no static effect here.
   preview_click: { label: () => 'Agent is clicking in the page' },

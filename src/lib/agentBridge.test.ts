@@ -24,6 +24,8 @@ const makeCtx = (overrides: Partial<BridgeToolContext> = {}): BridgeToolContext 
   pages: ['/', '/about'],
   navigate: vi.fn(),
   reload: vi.fn(),
+  setViewport: vi.fn(),
+  getViewportWidth: () => null,
   ...overrides,
 });
 
@@ -123,6 +125,42 @@ describe('executeBridgeTool', () => {
     );
     expect(result.isError).toBe(true);
     expect((result.content[0] as { text: string }).text).toContain('value');
+  });
+
+  it('preview_set_viewport applies presets and clamps pixel widths', async () => {
+    const ctx = makeCtx();
+    await executeBridgeTool(
+      { requestId: 30, tool: 'preview_set_viewport', arguments: { preset: 'mobile' } },
+      ctx
+    );
+    expect(ctx.setViewport).toHaveBeenCalledWith('mobile');
+    await executeBridgeTool(
+      { requestId: 31, tool: 'preview_set_viewport', arguments: { width: 50 } },
+      ctx
+    );
+    expect(ctx.setViewport).toHaveBeenCalledWith(200);
+    const bad = await executeBridgeTool(
+      { requestId: 32, tool: 'preview_set_viewport', arguments: { preset: 'watch' } },
+      ctx
+    );
+    expect(bad.isError).toBe(true);
+  });
+
+  it('screenshot captures at the preview viewport width', async () => {
+    invokeMock.mockImplementation((cmd: unknown) => {
+      if (cmd === 'capture_viewport_playwright')
+        return Promise.resolve('/proj/.shipstudio/screenshots/s.png');
+      if (cmd === 'get_screenshot_base64') return Promise.resolve('data:image/png;base64,aGVsbG8=');
+      return Promise.reject(new Error(`unexpected command ${String(cmd)}`));
+    });
+    await executeBridgeTool(
+      { requestId: 33, tool: 'preview_screenshot' },
+      makeCtx({ getViewportWidth: () => 375 })
+    );
+    expect(invokeMock).toHaveBeenCalledWith(
+      'capture_viewport_playwright',
+      expect.objectContaining({ width: 375 })
+    );
   });
 
   it('returns an isError result for unknown tools', async () => {

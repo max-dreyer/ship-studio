@@ -40,6 +40,10 @@ export interface McpToolResult {
   isError?: boolean;
 }
 
+export type ViewportPreset = 'mobile' | 'tablet' | 'laptop' | 'desktop' | 'full';
+
+export const VIEWPORT_PRESETS: ViewportPreset[] = ['mobile', 'tablet', 'laptop', 'desktop', 'full'];
+
 /** What the bridge needs from the preview to execute tools. */
 export interface BridgeToolContext {
   projectPath: string;
@@ -53,6 +57,10 @@ export interface BridgeToolContext {
   pages: string[];
   navigate: (route: string) => void;
   reload: () => void;
+  /** Resize the preview viewport (device preset or exact px width). */
+  setViewport: (value: number | ViewportPreset) => void;
+  /** Current custom viewport width in px, or null = full pane width. */
+  getViewportWidth: () => number | null;
 }
 
 export const PREVIEW_MCP_SERVER_NAME = 'shipstudio-preview';
@@ -217,6 +225,12 @@ function buildStatusReport(ctx: BridgeToolContext): string {
   } else {
     lines.push('Dev server: running, preview connected.');
     lines.push(`Current page: ${ctx.currentPath || '/'} (${ctx.getCurrentUrl() ?? 'URL unknown'})`);
+    const width = ctx.getViewportWidth();
+    lines.push(
+      width === null
+        ? 'Viewport: full pane width (use preview_set_viewport to test breakpoints).'
+        : `Viewport: ${width}px (custom — preview_set_viewport preset 'full' resets it).`
+    );
   }
   if (ctx.pages.length > 0) {
     lines.push(`Available pages (${ctx.pages.length}): ${ctx.pages.join(', ')}`);
@@ -256,7 +270,13 @@ async function captureScreenshot(
     );
   }
   const command = fullPage ? 'capture_fullpage_playwright' : 'capture_viewport_playwright';
-  const path = await invoke<string>(command, { projectPath: ctx.projectPath, url });
+  const path = await invoke<string>(command, {
+    projectPath: ctx.projectPath,
+    url,
+    // Capture at the preview's current viewport so responsive checks
+    // (preview_set_viewport → preview_screenshot) show the real layout.
+    width: ctx.getViewportWidth() ?? undefined,
+  });
   const dataUrl = await invoke<string>('get_screenshot_base64', { filePath: path });
   const base64 = dataUrl.replace(/^data:image\/png;base64,/, '');
   if (base64.length > MAX_INLINE_IMAGE_BASE64_CHARS) {
@@ -309,6 +329,26 @@ export async function executeBridgeTool(
       }
       case 'preview_screenshot': {
         return await captureScreenshot(ctx, args.full_page === true);
+      }
+      case 'preview_set_viewport': {
+        if (typeof args.width === 'number' && Number.isFinite(args.width)) {
+          const width = Math.round(Math.min(Math.max(args.width, 200), 3000));
+          ctx.setViewport(width);
+          return text(
+            `Preview viewport set to ${width}px — the page re-laid-out at that true width. Screenshots now capture at ${width}px too.`
+          );
+        }
+        if (VIEWPORT_PRESETS.includes(args.preset as ViewportPreset)) {
+          ctx.setViewport(args.preset as ViewportPreset);
+          return text(
+            args.preset === 'full'
+              ? 'Preview viewport reset to full pane width.'
+              : `Preview viewport set to the ${String(args.preset)} preset.`
+          );
+        }
+        return errorResult(
+          "preview_set_viewport needs either 'width' (px, 200-3000) or 'preset' (mobile|tablet|laptop|desktop|full)."
+        );
       }
       case 'preview_status': {
         return text(buildStatusReport(ctx));

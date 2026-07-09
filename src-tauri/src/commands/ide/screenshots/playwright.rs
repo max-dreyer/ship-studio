@@ -171,9 +171,13 @@ pub(super) fn get_playwright_env() -> Result<std::path::PathBuf, String> {
 pub async fn capture_fullpage_playwright(
     project_path: String,
     url: String,
+    width: Option<u32>,
 ) -> Result<String, CommandError> {
     let project = validate_project_path(&project_path)?;
     let screenshots_dir = project.join(".shipstudio").join("screenshots");
+    // Match the preview's current viewport when given (agent bridge responsive
+    // checks); clamp to sane bounds so a bad value can't wedge Chromium.
+    let viewport_width = width.unwrap_or(1280).clamp(200, 3000);
 
     // Ensure screenshots directory exists
     if !screenshots_dir.exists() {
@@ -203,7 +207,7 @@ const {{ chromium }} = require('playwright');
     let browser;
     try {{
         browser = await chromium.launch();
-        const page = await browser.newPage({{ viewport: {{ width: 1280, height: 800 }} }});
+        const page = await browser.newPage({{ viewport: {{ width: {viewport_width}, height: 800 }} }});
 
         await page.goto('{}', {{ waitUntil: 'networkidle', timeout: 30000 }});
 
@@ -299,9 +303,13 @@ const {{ chromium }} = require('playwright');
 pub async fn capture_viewport_playwright(
     project_path: String,
     url: String,
+    width: Option<u32>,
 ) -> Result<String, CommandError> {
     let project = validate_project_path(&project_path)?;
     let screenshots_dir = project.join(".shipstudio").join("screenshots");
+    // Match the preview's current viewport when given (agent bridge responsive
+    // checks); clamp to sane bounds so a bad value can't wedge Chromium.
+    let viewport_width = width.unwrap_or(1280).clamp(200, 3000);
 
     // Ensure screenshots directory exists
     if !screenshots_dir.exists() {
@@ -329,7 +337,7 @@ const {{ chromium }} = require('playwright');
     let browser;
     try {{
         browser = await chromium.launch();
-        const page = await browser.newPage({{ viewport: {{ width: 1280, height: 800 }} }});
+        const page = await browser.newPage({{ viewport: {{ width: {viewport_width}, height: 800 }} }});
 
         await page.goto('{}', {{ waitUntil: 'networkidle', timeout: 30000 }});
 

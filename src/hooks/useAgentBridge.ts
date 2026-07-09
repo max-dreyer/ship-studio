@@ -16,6 +16,7 @@ import {
   respondToBridgeRequest,
   setAgentBridgeAttached,
   type BridgeRequest,
+  type ViewportPreset,
 } from '../lib/agentBridge';
 import { beginAgentActivity } from '../lib/agentActivityStore';
 import { logger } from '../lib/logger';
@@ -33,6 +34,10 @@ interface UseAgentBridgeParams {
   pages: string[];
   navigate: (route: string) => void;
   reload: () => void;
+  /** Resize the preview viewport (device preset or exact px width). */
+  setViewport: (value: number | ViewportPreset) => void;
+  /** Current custom viewport width in px, or null = full pane width. */
+  getViewportWidth: () => number | null;
 }
 
 export function useAgentBridge({
@@ -43,6 +48,8 @@ export function useAgentBridge({
   pages,
   navigate,
   reload,
+  setViewport,
+  getViewportWidth,
 }: UseAgentBridgeParams) {
   // Live values for the long-lived listener — rebinding the Tauri listener on
   // every URL change would race in-flight requests.
@@ -54,9 +61,21 @@ export function useAgentBridge({
     pages,
     navigate,
     reload,
+    setViewport,
+    getViewportWidth,
   });
   useEffect(() => {
-    ctxRef.current = { projectPath, currentUrl, serverReady, currentPath, pages, navigate, reload };
+    ctxRef.current = {
+      projectPath,
+      currentUrl,
+      serverReady,
+      currentPath,
+      pages,
+      navigate,
+      reload,
+      setViewport,
+      getViewportWidth,
+    };
   });
 
   useEffect(() => {
@@ -101,6 +120,8 @@ export function useAgentBridge({
             pages: live.pages,
             navigate: live.navigate,
             reload: live.reload,
+            setViewport: live.setViewport,
+            getViewportWidth: live.getViewportWidth,
           });
           endActivity();
           void trackEvent('agent_bridge_tool_used', {

@@ -330,19 +330,6 @@ export const Preview = forwardRef<PreviewHandle, PreviewProps>(function Preview(
     onToast,
   });
 
-  // Agent preview bridge: an MCP server the workspace agent uses to read the
-  // preview's console/network/DOM, click/type/scroll in it, navigate it, and
-  // take screenshots.
-  useAgentBridge({
-    projectPath,
-    currentUrl: conn.serverReady ? conn.currentUrl : null,
-    serverReady: conn.serverReady,
-    currentPath: conn.currentPage,
-    pages: conn.filteredPages.map((p) => p.route),
-    navigate: conn.handlePageSelect,
-    reload: conn.handleRefresh,
-  });
-
   // The managed dev-server process is known-dead (the exit watcher saw it die
   // and no respawn has happened since). Static projects are excluded — they
   // serve off the per-window static server, not a PTY-managed process — and a
@@ -372,6 +359,25 @@ export const Preview = forwardRef<PreviewHandle, PreviewProps>(function Preview(
   const resize = usePreviewResize({
     iframeWrapperRef: capture.iframeWrapperRef,
     onUserResize: () => setPinnedBreakpoint(null),
+  });
+
+  // Agent preview bridge: an MCP server the workspace agent uses to read the
+  // preview's console/network/DOM, click/type/scroll in it, navigate it,
+  // resize its viewport, and take screenshots. (Below `resize` because the
+  // viewport tool drives it.)
+  useAgentBridge({
+    projectPath,
+    currentUrl: conn.serverReady ? conn.currentUrl : null,
+    serverReady: conn.serverReady,
+    currentPath: conn.currentPage,
+    pages: conn.filteredPages.map((p) => p.route),
+    navigate: conn.handlePageSelect,
+    reload: conn.handleRefresh,
+    setViewport: (value) =>
+      typeof value === 'number'
+        ? resize.previewAtWidth(value)
+        : resize.handleBreakpointClick(value),
+    getViewportWidth: () => resize.customWidth,
   });
 
   // Fullscreen: the container goes position:fixed over the window below the

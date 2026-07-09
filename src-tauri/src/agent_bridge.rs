@@ -558,6 +558,18 @@ const TOOLS: &[ToolDef] = &[
         }),
     },
     ToolDef {
+        name: "preview_set_viewport",
+        description: "Set the preview's viewport width to test responsive behavior — a device preset or an exact pixel width. The page re-lays-out at that true width, and preview_screenshot captures at it. The user sees the preview resize.",
+        timeout_secs: DEFAULT_TOOL_TIMEOUT_SECS,
+        input_schema: || json!({
+            "type": "object",
+            "properties": {
+                "preset": { "type": "string", "enum": ["mobile", "tablet", "laptop", "desktop", "full"], "description": "Device preset: mobile=375px, tablet=768px, laptop=1024px, desktop=1440px, full=fit the pane." },
+                "width": { "type": "integer", "description": "Exact viewport width in pixels (200-3000). Overrides preset." }
+            }
+        }),
+    },
+    ToolDef {
         name: "preview_screenshot",
         description: "Take a screenshot of the current preview page and return it as an image (also saved under .shipstudio/screenshots/). The first use may take a few minutes while a headless browser is installed.",
         timeout_secs: SCREENSHOT_TOOL_TIMEOUT_SECS,
