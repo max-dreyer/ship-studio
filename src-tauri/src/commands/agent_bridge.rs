@@ -23,6 +23,76 @@ pub async fn get_agent_bridge_url(
         .map_err(CommandError::from)
 }
 
+/// The "active project" MCP URL for agents with global configs (Codex,
+/// Opencode, Cursor): tool calls resolve to the focused project at call time.
+#[tauri::command]
+#[tracing::instrument(skip(app))]
+pub async fn get_agent_bridge_active_url(app: tauri::AppHandle) -> Result<String, CommandError> {
+    agent_bridge::agent_bridge_active_url(app)
+        .await
+        .map_err(CommandError::from)
+}
+
+/// Register the bridge in Cursor's MCP config. Cursor's CLI has no `mcp add`
+/// subcommand — its config is `~/.cursor/mcp.json` — so we merge our entry
+/// in directly, preserving everything else. Returns false (without touching
+/// anything) when Cursor isn't in use or its config can't be parsed: never
+/// risk destroying another tool's configuration.
+#[tauri::command]
+#[tracing::instrument]
+pub async fn register_cursor_mcp(url: String) -> Result<bool, CommandError> {
+    let Some(home) = dirs::home_dir() else {
+        return Err(("Could not determine home directory".to_string()).into());
+    };
+    let cursor_dir = home.join(".cursor");
+    if !cursor_dir.is_dir() {
+        // Cursor has never run on this machine — don't create its config.
+        return Ok(false);
+    }
+    let path = cursor_dir.join("mcp.json");
+    let mut root: serde_json::Value = if path.exists() {
+        let raw = std::fs::read_to_string(&path)
+            .map_err(|e| format!("Failed to read Cursor mcp.json: {e}"))?;
+        match serde_json::from_str(&raw) {
+            Ok(v) => v,
+            Err(e) => {
+                tracing::warn!("Cursor mcp.json is not valid JSON — leaving it untouched: {e}");
+                return Ok(false);
+            }
+        }
+    } else {
+        serde_json::json!({})
+    };
+    let Some(root_obj) = root.as_object_mut() else {
+        tracing::warn!("Cursor mcp.json root is not an object — leaving it untouched");
+        return Ok(false);
+    };
+    let servers = root_obj
+        .entry("mcpServers")
+        .or_insert_with(|| serde_json::json!({}));
+    let Some(servers_obj) = servers.as_object_mut() else {
+        tracing::warn!("Cursor mcp.json mcpServers is not an object — leaving it untouched");
+        return Ok(false);
+    };
+    let already_current = servers_obj
+        .get("shipstudio-preview")
+        .and_then(|s| s.get("url"))
+        .and_then(|u| u.as_str())
+        == Some(url.as_str());
+    if !already_current {
+        servers_obj.insert(
+            "shipstudio-preview".to_string(),
+            serde_json::json!({ "url": url }),
+        );
+        let serialized = serde_json::to_string_pretty(&root)
+            .map_err(|e| format!("Failed to serialize Cursor mcp.json: {e}"))?;
+        std::fs::write(&path, serialized)
+            .map_err(|e| format!("Failed to write Cursor mcp.json: {e}"))?;
+        tracing::info!("Registered shipstudio-preview in Cursor's mcp.json");
+    }
+    Ok(true)
+}
+
 /// Mark this project's preview bridge listener as attached (mounted and
 /// answering) or detached. Detached projects fail tool calls fast with an
 /// honest "preview isn't active" message instead of a long timeout.

@@ -99,7 +99,7 @@ export async function respondToBridgeRequest(
   return invoke('agent_bridge_respond', { requestId, result });
 }
 
-/** localStorage record of which URL each project is registered with. */
+/** localStorage record of which URL each registration target holds. */
 const REGISTRATION_CACHE_KEY = 'shipstudio.agentBridgeRegistrations';
 
 function readRegistrationCache(): Record<string, string> {
@@ -109,6 +109,17 @@ function readRegistrationCache(): Record<string, string> {
     return parsed && typeof parsed === 'object' ? (parsed as Record<string, string>) : {};
   } catch {
     return {};
+  }
+}
+
+function writeRegistrationCache(key: string, url: string): void {
+  try {
+    localStorage.setItem(
+      REGISTRATION_CACHE_KEY,
+      JSON.stringify({ ...readRegistrationCache(), [key]: url })
+    );
+  } catch {
+    // Cache is an optimization; the registration itself succeeded.
   }
 }
 
@@ -138,13 +149,64 @@ export async function registerPreviewMcpServer(url: string, projectPath: string)
     projectPath,
     agentId
   );
+  writeRegistrationCache(projectPath, url);
+}
+
+/**
+ * Register the bridge for the agents whose MCP configs are GLOBAL rather
+ * than per-project: Codex and Opencode (via their CLIs) and Cursor (via
+ * ~/.cursor/mcp.json). They all get the "active" URL, which routes each tool
+ * call to the focused Ship Studio project at call time.
+ *
+ * Best-effort per agent: an agent that isn't installed just logs and skips.
+ * The registration cache makes this a no-op after the first success.
+ */
+export async function registerSharedPreviewMcpServers(): Promise<void> {
+  let url: string;
   try {
-    localStorage.setItem(
-      REGISTRATION_CACHE_KEY,
-      JSON.stringify({ ...readRegistrationCache(), [projectPath]: url })
-    );
-  } catch {
-    // Cache is an optimization; registration itself succeeded.
+    url = await invoke<string>('get_agent_bridge_active_url');
+  } catch (err) {
+    logger.warn('[AgentBridge] Could not get active bridge URL', { error: String(err) });
+    return;
+  }
+  const cache = readRegistrationCache();
+
+  for (const agentId of ['codex', 'opencode'] as const) {
+    const key = `shared|${agentId}`;
+    if (cache[key] === url) continue;
+    try {
+      if (cache[key]) {
+        // URL changed (rare: the stable port was taken) — replace the entry.
+        // Opencode has no `mcp remove`; its add overwrites by name.
+        if (agentId === 'codex') {
+          await removeMcpServer(PREVIEW_MCP_SERVER_NAME, undefined, undefined, agentId).catch(
+            () => {}
+          );
+        }
+      }
+      await addMcpServer(`${PREVIEW_MCP_SERVER_NAME} --url ${url}`, undefined, undefined, agentId);
+      writeRegistrationCache(key, url);
+      logger.info('[AgentBridge] Registered preview MCP server', { agent: agentId });
+    } catch (err) {
+      // Agent not installed, or the entry already exists — both fine.
+      logger.info('[AgentBridge] Skipped MCP registration', {
+        agent: agentId,
+        reason: String(err),
+      });
+    }
+  }
+
+  const cursorKey = 'shared|cursor';
+  if (cache[cursorKey] !== url) {
+    try {
+      const registered = await invoke<boolean>('register_cursor_mcp', { url });
+      if (registered) {
+        writeRegistrationCache(cursorKey, url);
+        logger.info('[AgentBridge] Registered preview MCP server', { agent: 'cursor' });
+      }
+    } catch (err) {
+      logger.warn('[AgentBridge] Cursor MCP registration failed', { error: String(err) });
+    }
   }
 }
 

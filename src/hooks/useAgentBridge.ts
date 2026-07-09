@@ -13,6 +13,7 @@ import {
   executeBridgeTool,
   getAgentBridgeUrl,
   registerPreviewMcpServer,
+  registerSharedPreviewMcpServers,
   respondToBridgeRequest,
   setAgentBridgeAttached,
   type BridgeRequest,
@@ -93,9 +94,11 @@ export function useAgentBridge({
       }
       if (cancelled) return;
 
-      // Register with the agent CLI (best-effort: the agent may not be
-      // installed, and the preview works fine without the bridge). The URL is
-      // stable across runs, so this is a no-op after the first registration.
+      // Register with the agent CLIs (best-effort: an agent may not be
+      // installed, and the preview works fine without the bridge). URLs are
+      // stable across runs, so these are no-ops after the first registration:
+      // Claude Code gets a per-project entry; Codex/Opencode/Cursor have
+      // global configs and share the focused-project "active" URL.
       registerPreviewMcpServer(url, projectPath).then(
         () => logger.info('[AgentBridge] Preview MCP server registration ensured', { projectPath }),
         (err) => {
@@ -104,6 +107,7 @@ export function useAgentBridge({
           });
         }
       );
+      void registerSharedPreviewMcpServers();
 
       unlisten = await listen<BridgeRequest>('agent-bridge-request', (event) => {
         const request = event.payload;

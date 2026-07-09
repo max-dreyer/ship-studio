@@ -596,6 +596,8 @@ pub fn run() {
             commands::static_server::stop_static_server,
             // Agent Preview Bridge (MCP server for the workspace agent)
             commands::agent_bridge::get_agent_bridge_url,
+            commands::agent_bridge::get_agent_bridge_active_url,
+            commands::agent_bridge::register_cursor_mcp,
             commands::agent_bridge::agent_bridge_attach,
             commands::agent_bridge::agent_bridge_respond,
             // Project Type Detection

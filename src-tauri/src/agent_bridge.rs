@@ -151,6 +151,11 @@ fn project_bridge_url(port: u16, token: &str, canonical_project_path: &str) -> S
     format!("http://127.0.0.1:{port}/mcp/{token}/{encoded}")
 }
 
+/// URL segment for agents with GLOBAL MCP configs (Codex, Opencode, Cursor):
+/// instead of a baked-in project path, tool calls resolve to the currently
+/// focused Ship Studio project at call time.
+pub const ACTIVE_PROJECT_SEGMENT: &str = "active";
+
 fn decode_project_segment(segment: &str) -> Option<String> {
     use base64::Engine;
     let bytes = base64::engine::general_purpose::URL_SAFE_NO_PAD
@@ -268,6 +273,15 @@ pub async fn agent_bridge_url_for_project(
     Ok(project_bridge_url(port, &token, canonical_project_path))
 }
 
+/// URL for agents whose MCP config is global (Codex, Opencode, Cursor):
+/// routes to the focused Ship Studio project at call time.
+pub async fn agent_bridge_active_url(app: tauri::AppHandle) -> Result<String, String> {
+    let (port, token) = start_global_agent_bridge(app).await?;
+    Ok(format!(
+        "http://127.0.0.1:{port}/mcp/{token}/{ACTIVE_PROJECT_SEGMENT}"
+    ))
+}
+
 /// Stop the global bridge (app cleanup).
 pub fn stop_all_agent_bridges() {
     if let Ok(mut guard) = GLOBAL_BRIDGE.lock() {
@@ -343,16 +357,20 @@ async fn handle_http(
         return Ok(plain_response(StatusCode::FORBIDDEN, "Forbidden"));
     }
 
-    // Path shape: /mcp/<token>/<base64url(project path)>
+    // Path shape: /mcp/<token>/<base64url(project path)>, or the literal
+    // segment "active" for agents whose MCP config is global (Codex,
+    // Opencode, Cursor) — resolved to the focused project per tool call.
     let expected_prefix = format!("/mcp/{token}/");
-    let project_path = match req
-        .uri()
-        .path()
-        .strip_prefix(&expected_prefix)
-        .and_then(decode_project_segment)
-    {
-        Some(p) if !p.is_empty() => p,
-        _ => return Ok(plain_response(StatusCode::NOT_FOUND, "Not found")),
+    let Some(segment) = req.uri().path().strip_prefix(&expected_prefix) else {
+        return Ok(plain_response(StatusCode::NOT_FOUND, "Not found"));
+    };
+    let project_path = if segment.trim_end_matches('/') == ACTIVE_PROJECT_SEGMENT {
+        ACTIVE_PROJECT_SEGMENT.to_string()
+    } else {
+        match decode_project_segment(segment) {
+            Some(p) if !p.is_empty() => p,
+            _ => return Ok(plain_response(StatusCode::NOT_FOUND, "Not found")),
+        }
     };
 
     match *req.method() {
@@ -636,8 +654,19 @@ async fn dispatch_tool(
     tool: &ToolDef,
     arguments: Value,
 ) -> Value {
-    // Route by project: the registration URL carries the project path, and
-    // the window registry knows which window (if any) has it open.
+    // Route by project. Per-project URLs (Claude Code) carry the path; the
+    // "active" URL (global-config agents: Codex, Opencode, Cursor) resolves
+    // to the focused Ship Studio project at call time.
+    let resolved_project = if project_path == ACTIVE_PROJECT_SEGMENT {
+        match resolve_active_project(app) {
+            Ok(p) => p,
+            Err(message) => return tool_error_result(&message),
+        }
+    } else {
+        project_path.to_string()
+    };
+    let project_path = resolved_project.as_str();
+
     let Some(window_label) = crate::state::get_window_for_project(project_path) else {
         return tool_error_result(
             "This project isn't open in Ship Studio right now. Ask the user to open the project (its preview provides these tools).",
@@ -648,7 +677,7 @@ async fn dispatch_tool(
     // timeout would just stall the agent for no reason.
     if !is_project_attached(project_path) {
         return tool_error_result(
-            "The project is open in Ship Studio, but its live preview isn't active, so the preview tools can't run. Ask the user to switch to the project's workspace (the preview panel loads there).",
+            "The project is open in Ship Studio, but its web preview isn't active, so these tools can't run. If this is a web project, ask the user to switch to its workspace (the preview loads there). If it's a native mobile project (Expo / React Native / Flutter), it uses the simulator preview instead — these web-preview tools don't apply; verify through code, build output, and the user.",
         );
     }
 
@@ -704,6 +733,37 @@ async fn dispatch_tool(
             ))
         }
     }
+}
+
+/// Which project should an "active"-URL tool call act on?
+/// The focused Ship Studio window's project wins; with nothing focused
+/// (agent running while the user looks elsewhere), a single open project is
+/// unambiguous; several open projects without focus is unanswerable.
+fn resolve_active_project(app: &tauri::AppHandle) -> Result<String, String> {
+    use tauri::Manager;
+    let open = crate::state::get_open_project_windows();
+    if open.is_empty() {
+        return Err(
+            "No project is open in Ship Studio right now. Ask the user to open the project you're working on (its preview provides these tools).".to_string(),
+        );
+    }
+    for (label, window) in app.webview_windows() {
+        if window.is_focused().unwrap_or(false) {
+            if let Some((project, _)) = open.iter().find(|(_, l)| *l == label) {
+                return Ok(project.clone());
+            }
+        }
+    }
+    if open.len() == 1 {
+        return Ok(open[0].0.clone());
+    }
+    Err(format!(
+        "Several projects are open in Ship Studio ({}) and none is focused, so it's unclear which preview to use. Ask the user to focus the project you're working on.",
+        open.iter()
+            .map(|(p, _)| p.rsplit('/').next().unwrap_or(p))
+            .collect::<Vec<_>>()
+            .join(", ")
+    ))
 }
 
 fn tool_error_result(message: &str) -> Value {
