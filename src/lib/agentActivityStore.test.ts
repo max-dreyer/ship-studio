@@ -31,14 +31,28 @@ describe('agentActivityStore', () => {
     end();
   });
 
-  it('lingers after the call ends, then goes idle', () => {
+  it('lingers after the call ends, plays the exit phase, then goes idle', () => {
     const end = beginAgentActivity('preview_network', undefined);
     end();
     // Still visible (linger window), no longer busy.
     expect(agentActivityStore.getState().visible).toBe(true);
     expect(agentActivityStore.getState().busy).toBe(false);
-    vi.advanceTimersByTime(3000);
+    vi.advanceTimersByTime(2300); // past the linger, inside the exit window
     expect(agentActivityStore.getState().visible).toBe(false);
+    expect(agentActivityStore.getState().exiting).toBe(true);
+    vi.advanceTimersByTime(300);
+    expect(agentActivityStore.getState().exiting).toBe(false);
+  });
+
+  it('a call arriving mid-exit cancels the exit and shows immediately', () => {
+    const endA = beginAgentActivity('preview_console', undefined);
+    endA();
+    vi.advanceTimersByTime(2300); // into the exit window
+    expect(agentActivityStore.getState().exiting).toBe(true);
+    const endB = beginAgentActivity('preview_dom', undefined);
+    expect(agentActivityStore.getState().visible).toBe(true);
+    expect(agentActivityStore.getState().exiting).toBe(false);
+    endB();
   });
 
   it('emits a cursor effect for navigate and a flash for screenshot', () => {

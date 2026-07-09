@@ -14,10 +14,15 @@ import { agentActivityStore } from '../../lib/agentActivityStore';
 export function AgentActivityOverlay() {
   const state = useSyncExternalStore(agentActivityStore.subscribe, agentActivityStore.getState);
 
-  if (!state.visible) return null;
+  // The store keeps `exiting` true for the exit-animation window so the chip
+  // and glow shrink/fade away instead of vanishing.
+  if (!state.visible && !state.exiting) return null;
 
   return (
-    <div className="agent-activity-overlay" aria-hidden>
+    <div
+      className={`agent-activity-overlay${state.exiting ? ' agent-activity-overlay--exiting' : ''}`}
+      aria-hidden
+    >
       <div className={`agent-activity-glow${state.busy ? ' agent-activity-glow--busy' : ''}`} />
       {state.label && (
         <div className="agent-activity-chip">

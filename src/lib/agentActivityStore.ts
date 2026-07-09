@@ -24,6 +24,8 @@ export interface AgentActivityEffect {
 export interface AgentActivityState {
   /** Overlay should render (busy, or lingering just after an action). */
   visible: boolean;
+  /** Overlay is playing its exit animation (render with the exit class). */
+  exiting: boolean;
   /** A tool call is in flight right now. */
   busy: boolean;
   /** Human-readable description of the current/last action. */
@@ -36,6 +38,8 @@ export interface AgentActivityState {
 const LINGER_MS = 2200;
 /** How long a cursor/flash effect stays before clearing. */
 const EFFECT_MS = 1600;
+/** Exit-animation duration — matches agent-activity.css. */
+const EXIT_MS = 220;
 
 interface ToolMeta {
   label: (args: Record<string, unknown> | undefined) => string;
@@ -81,16 +85,24 @@ let activeCount = 0;
 let label: string | null = null;
 let effect: AgentActivityEffect | null = null;
 let visible = false;
+let exiting = false;
 let effectSeq = 0;
 let lingerTimer: ReturnType<typeof setTimeout> | null = null;
 let effectTimer: ReturnType<typeof setTimeout> | null = null;
+let exitTimer: ReturnType<typeof setTimeout> | null = null;
 
-let state: AgentActivityState = { visible: false, busy: false, label: null, effect: null };
+let state: AgentActivityState = {
+  visible: false,
+  exiting: false,
+  busy: false,
+  label: null,
+  effect: null,
+};
 
 const listeners = new Set<() => void>();
 
 const notify = () => {
-  state = { visible, busy: activeCount > 0, label, effect };
+  state = { visible, exiting, busy: activeCount > 0, label, effect };
   for (const l of Array.from(listeners)) l();
 };
 
@@ -105,10 +117,15 @@ export function beginAgentActivity(
   const meta = TOOL_META[tool];
   activeCount += 1;
   visible = true;
+  exiting = false;
   label = meta ? meta.label(args) : 'Agent is using the preview';
   if (lingerTimer) {
     clearTimeout(lingerTimer);
     lingerTimer = null;
+  }
+  if (exitTimer) {
+    clearTimeout(exitTimer);
+    exitTimer = null;
   }
   if (meta?.effect) {
     effectSeq += 1;
@@ -129,12 +146,18 @@ export function beginAgentActivity(
     activeCount = Math.max(0, activeCount - 1);
     if (activeCount === 0) {
       // Keep the glow (and the last action's label) up briefly so fast reads
-      // don't just blink.
+      // don't just blink, then play the exit animation before going idle.
       lingerTimer = setTimeout(() => {
         visible = false;
-        label = null;
+        exiting = true;
         lingerTimer = null;
         notify();
+        exitTimer = setTimeout(() => {
+          exiting = false;
+          label = null;
+          exitTimer = null;
+          notify();
+        }, EXIT_MS);
       }, LINGER_MS);
     }
     notify();
