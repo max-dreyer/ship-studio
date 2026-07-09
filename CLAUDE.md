@@ -177,7 +177,7 @@ Under mock mode the agent-led flow is fully scripted and deterministic: Phase 0 
 
 Other useful scenarios: `SHIPSTUDIO_FORCE_SETUP=auth-only` (agents installed, nothing signed in — exercises Phase 0 connect), `almost-done` (only GitHub sign-in missing — short guided phase).
 
-`SHIPSTUDIO_FORCE_ONBOARDING=1` shows the agent-led flow with **real** checks. On a fully set-up dev machine the pick phase is still shown (the fast path to celebration is deliberately skipped under this env var) so you can eyeball Phase 0 with real agent statuses; the guided phase only runs when something is actually missing, so a real end-to-end guided run needs a fresh machine/VM.
+`SHIPSTUDIO_FORCE_ONBOARDING=1` shows the agent-led flow with **real** checks and a **real agent**. On a fully set-up dev machine the pick phase shows real agent statuses, and the guided phase always runs (the fast-forwards to celebration are deliberately disabled under this env var): the agent is spawned with a verify-only prompt, checks each installed tool, and reports back — a genuine end-to-end test of the agent interaction without a fresh machine. Real *install* runs still need a machine/VM where things are actually missing.
 
 The classic wizard's two modes below work unchanged — click "Try classic onboarding" to reach them.
 

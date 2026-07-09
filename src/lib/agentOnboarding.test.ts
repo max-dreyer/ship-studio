@@ -113,6 +113,14 @@ describe('buildGuidedSetupPrompt', () => {
     expect(prompt).toContain('1) Cloudflare Wrangler CLI');
     expect(prompt).toContain('the Cloudflare Wrangler CLI (their hosting provider)');
   });
+
+  it('becomes a verify-only pass when nothing at all is missing', () => {
+    const prompt = buildGuidedSetupPrompt([], null);
+    expect(prompt).toContain('appears to be installed already');
+    expect(prompt).toContain('gh auth status');
+    expect(prompt).not.toContain('Their machine is missing');
+    expect(prompt).not.toContain('\n');
+  });
 });
 
 describe('guidedAgentSpawn', () => {

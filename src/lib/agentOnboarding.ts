@@ -192,20 +192,37 @@ export function buildGuidedSetupPrompt(
     );
   }
 
+  const intro =
+    'You are helping a brand-new Ship Studio user get their computer ready. ' +
+    'Ship Studio is a desktop app for building websites with AI agents, and you are that agent — this is their first impression of you, so be warm, brief, and clear. ' +
+    'Assume the user is not technical: before each step, say what you are about to do in one short sentence. ';
+  const outro =
+    'When everything is verified, tell the user they are all set and to look at the checklist beside this window — Ship Studio runs its own checks and will turn every item green, then show a Continue button.';
+
+  // Nothing to install: a verify-only pass. The agent confirms each tool
+  // works and reports back, instead of being told to install a blank list.
+  if (instructions.length === 0) {
+    return (
+      intro +
+      'Good news: everything Ship Studio needs appears to be installed already. ' +
+      'Quickly verify each tool yourself — run `git --version`, `gh --version`, `gh auth status`, and `node --version` — and give the user one friendly summary of what you found. ' +
+      'If something is actually broken, explain it in plain words and fix only that; do not install or change anything else. ' +
+      outro
+    );
+  }
+
   const names = nameList.join(', ');
   const steps = instructions.map((s, idx) => `${String(idx + 1)}) ${s}`).join('; ');
 
   return (
-    'You are helping a brand-new Ship Studio user get their computer ready. ' +
-    'Ship Studio is a desktop app for building websites with AI agents, and you are that agent — this is their first impression of you, so be warm, brief, and clear. ' +
-    'Assume the user is not technical: before each step, say what you are about to do in one short sentence. ' +
+    intro +
     `Their machine is missing: ${names}. ` +
     `Set these up one at a time, in this exact order, using exactly these commands: ${steps}. ` +
     'When you are asked to approve a command permission, reassure the user it is safe to approve the commands listed above. ' +
     'After each step, verify it actually worked (run the tool with --version, or `gh auth status` for the sign-in) before moving on — a clean exit is a claim, not proof. ' +
     'If a command fails, read the error, explain it in plain words, and fix it; if the user has to do something themselves (type a password, click through a browser), tell them exactly what to expect. ' +
     'Do not install or change anything beyond the tools listed above. ' +
-    'When everything is verified, tell the user they are all set and to look at the checklist beside this window — Ship Studio runs its own checks and will turn every item green, then show a Continue button.'
+    outro
   );
 }
 

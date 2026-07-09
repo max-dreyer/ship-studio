@@ -177,7 +177,11 @@ export function AgentOnboardingScreen({ onComplete }: AgentOnboardingScreenProps
       const hostNeedsSetup =
         host === 'cloudflare' ? true : host === 'vercel' ? !vercelReady : false;
 
-      if (missing.length === 0 && !hostNeedsSetup) {
+      // Under SHIPSTUDIO_FORCE_ONBOARDING the guided phase always runs, even
+      // with nothing missing — the real agent gets a verify-only prompt and
+      // confirms the installed tools. This is how the agent interaction is
+      // tested for real on a fully set-up dev machine.
+      if (missing.length === 0 && !hostNeedsSetup && !testMode.forceOnboarding) {
         fireCompleted([agentId], 'agent_led');
         setPhase('complete');
         return;
@@ -191,7 +195,7 @@ export function AgentOnboardingScreen({ onComplete }: AgentOnboardingScreenProps
       trackPageview('Onboarding - Agent Guided Setup');
       setPhase('guided');
     },
-    [chosenKey, items, fireCompleted, testMode.mock]
+    [chosenKey, items, fireCompleted, testMode.mock, testMode.forceOnboarding]
   );
 
   // Initial load: test mode + status, then route.
