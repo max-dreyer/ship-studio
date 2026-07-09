@@ -69,7 +69,76 @@ static GLOBAL_BRIDGE: LazyLock<Mutex<Option<GlobalBridge>>> = LazyLock::new(|| M
 static PENDING_REQUESTS: LazyLock<Mutex<HashMap<u64, oneshot::Sender<Value>>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
 
+/// Projects whose preview frontend currently has a live bridge listener.
+/// Lets tool calls fail fast with an honest message instead of waiting out
+/// the full timeout when the preview panel isn't mounted.
+static ATTACHED_PROJECTS: LazyLock<Mutex<std::collections::HashSet<String>>> =
+    LazyLock::new(|| Mutex::new(std::collections::HashSet::new()));
+
+/// Mark a project's preview listener as attached/detached (canonical path).
+pub fn set_project_attached(canonical_project_path: &str, attached: bool) {
+    if let Ok(mut set) = ATTACHED_PROJECTS.lock() {
+        if attached {
+            set.insert(canonical_project_path.to_string());
+        } else {
+            set.remove(canonical_project_path);
+        }
+    }
+}
+
+fn is_project_attached(canonical_project_path: &str) -> bool {
+    ATTACHED_PROJECTS
+        .lock()
+        .map(|set| set.contains(canonical_project_path))
+        .unwrap_or(false)
+}
+
 static NEXT_REQUEST_ID: AtomicU64 = AtomicU64::new(1);
+
+/// The bridge's persistent identity, stored in its OWN file (next to
+/// app_state.json). It deliberately does not live inside app_state.json:
+/// that file is read-modify-written by many commands (and by older app
+/// versions whose struct doesn't know these fields), so anything stored
+/// there can be silently clobbered by a concurrent or older writer.
+#[derive(serde::Serialize, serde::Deserialize, Default)]
+struct BridgeIdentity {
+    token: Option<String>,
+    port: Option<u16>,
+}
+
+fn identity_path() -> Option<std::path::PathBuf> {
+    crate::commands::setup::get_app_state_path()
+        .parent()
+        .map(|dir| dir.join("agent_bridge.json"))
+}
+
+fn read_identity() -> BridgeIdentity {
+    identity_path()
+        .and_then(|p| std::fs::read_to_string(p).ok())
+        .and_then(|raw| serde_json::from_str(&raw).ok())
+        .unwrap_or_default()
+}
+
+fn write_identity(identity: &BridgeIdentity) {
+    let Some(path) = identity_path() else {
+        tracing::warn!("[AgentBridge] No home dir — bridge identity will rotate next run");
+        return;
+    };
+    if let Some(dir) = path.parent() {
+        let _ = std::fs::create_dir_all(dir);
+    }
+    match serde_json::to_string_pretty(identity) {
+        Ok(json) => {
+            if let Err(e) = std::fs::write(&path, json) {
+                tracing::warn!(
+                    "[AgentBridge] Could not persist bridge identity (registrations will rotate next run): {}",
+                    e
+                );
+            }
+        }
+        Err(e) => tracing::warn!("[AgentBridge] Could not serialize bridge identity: {}", e),
+    }
+}
 
 /// Per-project MCP URL. The project path rides in the URL (base64url) so the
 /// one global server can route each tool call to the window that has that
@@ -106,15 +175,15 @@ pub async fn start_global_agent_bridge(app: tauri::AppHandle) -> Result<(u16, St
         }
     }
 
-    let mut state = crate::commands::setup::read_app_state();
-    let token = match state.agent_bridge_token.clone() {
+    let mut identity = read_identity();
+    let token = match identity.token.clone() {
         Some(t) if !t.is_empty() => t,
         _ => uuid::Uuid::new_v4().simple().to_string(),
     };
 
     // Prefer the port from the last run so registered URLs stay valid.
     let mut listener = None;
-    if let Some(stored_port) = state.agent_bridge_port {
+    if let Some(stored_port) = identity.port {
         match TcpListener::bind(("127.0.0.1", stored_port)).await {
             Ok(l) => listener = Some(l),
             Err(e) => {
@@ -138,17 +207,10 @@ pub async fn start_global_agent_bridge(app: tauri::AppHandle) -> Result<(u16, St
         .port();
 
     // Persist the stable identity for future runs.
-    if state.agent_bridge_token.as_deref() != Some(token.as_str())
-        || state.agent_bridge_port != Some(port)
-    {
-        state.agent_bridge_token = Some(token.clone());
-        state.agent_bridge_port = Some(port);
-        if let Err(e) = crate::commands::setup::write_app_state(&state) {
-            tracing::warn!(
-                "[AgentBridge] Could not persist bridge identity (registrations will rotate next run): {}",
-                e
-            );
-        }
+    if identity.token.as_deref() != Some(token.as_str()) || identity.port != Some(port) {
+        identity.token = Some(token.clone());
+        identity.port = Some(port);
+        write_identity(&identity);
     }
 
     let (shutdown_tx, mut shutdown_rx) = oneshot::channel::<()>();
@@ -569,6 +631,14 @@ async fn dispatch_tool(
             "This project isn't open in Ship Studio right now. Ask the user to open the project (its preview provides these tools).",
         );
     };
+
+    // Fail fast when the preview frontend isn't listening — waiting out the
+    // timeout would just stall the agent for no reason.
+    if !is_project_attached(project_path) {
+        return tool_error_result(
+            "The project is open in Ship Studio, but its live preview isn't active, so the preview tools can't run. Ask the user to switch to the project's workspace (the preview panel loads there).",
+        );
+    }
 
     let request_id = NEXT_REQUEST_ID.fetch_add(1, Ordering::Relaxed);
     let (tx, rx) = oneshot::channel::<Value>();

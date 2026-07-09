@@ -62,6 +62,28 @@ async fn run_capture_script(
     Ok(output)
 }
 
+/// Playwright versions below this hang forever in `playwright install` on
+/// Node >= 24.16 (yauzl stream regression during archive extraction — fixed
+/// in Playwright 1.60; see microsoft/playwright#41000). Old envs upgrade in
+/// place; new envs install this range directly.
+const MIN_PLAYWRIGHT_MINOR: u32 = 60;
+const PLAYWRIGHT_INSTALL_SPEC: &str = "playwright@^1.60.0";
+
+/// Read the installed playwright version's (major, minor) from its package.json.
+fn installed_playwright_version(playwright_dir: &std::path::Path) -> Option<(u32, u32)> {
+    let pkg = playwright_dir
+        .join("node_modules")
+        .join("playwright")
+        .join("package.json");
+    let raw = std::fs::read_to_string(pkg).ok()?;
+    let json: serde_json::Value = serde_json::from_str(&raw).ok()?;
+    let version = json.get("version")?.as_str()?;
+    let mut parts = version.split('.');
+    let major: u32 = parts.next()?.parse().ok()?;
+    let minor: u32 = parts.next()?.parse().ok()?;
+    Some((major, minor))
+}
+
 /// Get or create a shared Playwright environment directory.
 /// Installs Playwright and Chromium once, reused for all screenshots.
 pub(super) fn get_playwright_env() -> Result<std::path::PathBuf, String> {
@@ -71,6 +93,27 @@ pub(super) fn get_playwright_env() -> Result<std::path::PathBuf, String> {
     // Check if playwright is already installed
     let node_modules = playwright_dir.join("node_modules").join("playwright");
     if node_modules.exists() {
+        match installed_playwright_version(&playwright_dir) {
+            Some((1, minor)) if minor < MIN_PLAYWRIGHT_MINOR => {
+                tracing::warn!(
+                    "Playwright 1.{} is affected by the Node >= 24.16 install hang — upgrading to {}",
+                    minor,
+                    PLAYWRIGHT_INSTALL_SPEC
+                );
+                let upgrade = node_tool_command("npm")
+                    .args(["install", PLAYWRIGHT_INSTALL_SPEC])
+                    .current_dir(&playwright_dir)
+                    .output()
+                    .map_err(|e| format!("Failed to upgrade playwright: {e}"))?;
+                if !upgrade.status.success() {
+                    let stderr = String::from_utf8_lossy(&upgrade.stderr);
+                    tracing::warn!(
+                        "Playwright upgrade failed (continuing with old version): {stderr}"
+                    );
+                }
+            }
+            _ => {}
+        }
         tracing::debug!(
             "Using existing Playwright environment at {:?}",
             playwright_dir
@@ -92,7 +135,7 @@ pub(super) fn get_playwright_env() -> Result<std::path::PathBuf, String> {
     // Install playwright
     tracing::info!("Installing Playwright (this may take a moment on first run)...");
     let install_output = node_tool_command("npm")
-        .args(["install", "playwright"])
+        .args(["install", PLAYWRIGHT_INSTALL_SPEC])
         .current_dir(&playwright_dir)
         .output()
         .map_err(|e| format!("Failed to run npm install playwright: {e}"))?;

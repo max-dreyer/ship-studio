@@ -14,6 +14,7 @@ import {
   getAgentBridgeUrl,
   registerPreviewMcpServer,
   respondToBridgeRequest,
+  setAgentBridgeAttached,
   type BridgeRequest,
 } from '../lib/agentBridge';
 import { beginAgentActivity } from '../lib/agentActivityStore';
@@ -119,7 +120,12 @@ export function useAgentBridge({
       if (cancelled) {
         unlisten();
         unlisten = null;
+        return;
       }
+      // Listener is live — let tool calls route here instead of failing fast.
+      setAgentBridgeAttached(projectPath, true).catch((err: unknown) => {
+        logger.warn('[AgentBridge] Failed to mark preview attached', { error: String(err) });
+      });
     };
 
     void setUp();
@@ -127,9 +133,10 @@ export function useAgentBridge({
     return () => {
       cancelled = true;
       unlisten?.();
-      // The bridge server itself stays up for the window's lifetime (Rust
-      // stops it on window destroy) — tool calls without a listener time out
-      // with a "preview not open" message, which is the honest answer.
+      // The bridge server stays up for the app's lifetime; detaching makes
+      // tool calls fail fast with "preview isn't active" instead of waiting
+      // out the timeout.
+      setAgentBridgeAttached(projectPath, false).catch(() => {});
     };
   }, [projectPath]);
 }

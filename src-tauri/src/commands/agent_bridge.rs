@@ -23,6 +23,18 @@ pub async fn get_agent_bridge_url(
         .map_err(CommandError::from)
 }
 
+/// Mark this project's preview bridge listener as attached (mounted and
+/// answering) or detached. Detached projects fail tool calls fast with an
+/// honest "preview isn't active" message instead of a long timeout.
+#[tauri::command]
+#[tracing::instrument]
+pub async fn agent_bridge_attach(project_path: String, attached: bool) -> Result<(), CommandError> {
+    let validated = validate_project_path(&project_path)?;
+    let canonical = validated.to_string_lossy().to_string();
+    agent_bridge::set_project_attached(&canonical, attached);
+    Ok(())
+}
+
 /// Answer an in-flight bridge tool call. `result` must be a full MCP
 /// CallToolResult ({ content: [...], isError? }) — it is passed through to
 /// the agent verbatim.

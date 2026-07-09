@@ -72,6 +72,18 @@ export async function getAgentBridgeUrl(projectPath: string): Promise<string> {
   return invoke<string>('get_agent_bridge_url', { projectPath });
 }
 
+/**
+ * Tell the backend whether this project's preview listener is live. Detached
+ * projects fail tool calls instantly with an honest "preview isn't active"
+ * message instead of a long timeout.
+ */
+export async function setAgentBridgeAttached(
+  projectPath: string,
+  attached: boolean
+): Promise<void> {
+  return invoke('agent_bridge_attach', { projectPath, attached });
+}
+
 export async function respondToBridgeRequest(
   requestId: number,
   result: McpToolResult

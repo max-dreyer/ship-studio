@@ -750,13 +750,6 @@ pub struct AppState {
     /// Unique device identifier for anonymous analytics (generated on first launch)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub device_id: Option<String>,
-    /// Persistent secret for the agent preview bridge MCP URL — stable across
-    /// runs so per-project `mcp add` registrations never go stale
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub agent_bridge_token: Option<String>,
-    /// Port the agent bridge last bound; tried first on the next launch
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub agent_bridge_port: Option<u16>,
     /// Whether anonymous analytics are enabled (defaults to true)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub analytics_enabled: Option<bool>,
