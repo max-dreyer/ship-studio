@@ -42,6 +42,7 @@ pub use install::*;
 pub use state::*;
 pub use status::*;
 
+use crate::errors::CommandError;
 use crate::types::AppState;
 use std::collections::HashSet;
 use std::sync::{LazyLock, Mutex};
@@ -311,13 +312,13 @@ pub struct OnboardingTestMode {
 
 #[tauri::command]
 #[tracing::instrument]
-pub async fn get_onboarding_test_mode() -> OnboardingTestMode {
-    OnboardingTestMode {
+pub async fn get_onboarding_test_mode() -> Result<OnboardingTestMode, CommandError> {
+    Ok(OnboardingTestMode {
         mock: is_mock_mode(),
         // Raw env-var check on purpose: is_force_onboarding_mode() flips off
         // after completion, but the frontend cares about how we were launched.
         force_onboarding: std::env::var("SHIPSTUDIO_FORCE_ONBOARDING").is_ok(),
-    }
+    })
 }
 
 /// Mark a single setup item as ready in the mock state. Drives the scripted

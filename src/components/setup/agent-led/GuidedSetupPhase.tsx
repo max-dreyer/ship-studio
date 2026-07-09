@@ -68,18 +68,19 @@ export function GuidedSetupPhase({
 
   // Spawn the agent in ~/ShipStudio, never $HOME — scanning the home folder
   // trips macOS permission prompts (Photos/Desktop/Documents) attributed to
-  // Ship Studio, and the pending dialog freezes the agent mid-scan. `null`
-  // while resolving; empty string = resolution failed, spawn with the
-  // terminal's default rather than blocking the phase.
+  // Ship Studio, and the pending dialog freezes the agent mid-scan. The
+  // backend falls back to the OS temp dir on its own, so a rejection here
+  // means the IPC call itself failed — retry once rather than ever spawning
+  // in $HOME. `null` = still resolving (terminal not rendered yet).
   const [workdir, setWorkdir] = useState<string | null>(null);
   useEffect(() => {
     ensureAgentWorkdir()
+      .catch(() => ensureAgentWorkdir())
       .then(setWorkdir)
       .catch((err: unknown) => {
-        logger.warn('Failed to prepare agent workdir — falling back to home', {
+        logger.error('Could not prepare an agent working folder', {
           error: String(err),
         });
-        setWorkdir('');
       });
   }, []);
 
@@ -145,7 +146,7 @@ export function GuidedSetupPhase({
               key={session}
               command={spawn.command}
               args={spawn.args}
-              cwd={workdir || undefined}
+              cwd={workdir}
               onExit={handleAgentExit}
             />
           ) : null}

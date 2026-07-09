@@ -718,21 +718,24 @@ pub async fn quick_setup_check() -> crate::types::QuickSetupCheck {
 
     // Check ALL agents — at least one pair must be present (or the user
     // opted to bring their own agent via "Other" in agent-led onboarding)
+    let quick_account_id = app_state
+        .active_account_id
+        .clone()
+        .unwrap_or_else(|| crate::commands::accounts::DEFAULT_ACCOUNT_ID.to_string());
     let at_least_one_agent = app_state.external_agent.unwrap_or(false)
         || ALL_AGENTS.iter().any(|agent| {
             let binary_present = find_binary_by_name(agent.binary_name).is_some();
             if !binary_present {
                 return false;
             }
-            if let Some(home) = dirs::home_dir() {
-                let agent_dir = home.join(agent.auth_config_dir);
-                agent
-                    .auth_indicators
-                    .iter()
-                    .any(|indicator| agent_dir.join(indicator).exists())
-            } else {
-                false
-            }
+            // Same resolver as the full setup check — it has agent-specific
+            // directory mappings (claude/codex/opencode), so the quick and
+            // full checks can never disagree about auth state.
+            let agent_dir = agent_auth_dir(&quick_account_id, agent);
+            agent
+                .auth_indicators
+                .iter()
+                .any(|indicator| agent_dir.join(indicator).exists())
         });
 
     // For gh_auth, we trust the cached state since checking requires subprocess

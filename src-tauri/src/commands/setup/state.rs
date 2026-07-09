@@ -92,11 +92,17 @@ pub async fn set_external_agent_opt_in(enabled: bool) -> Result<(), CommandError
 #[tauri::command]
 #[tracing::instrument]
 pub async fn ensure_agent_workdir() -> Result<String, CommandError> {
-    let root = crate::utils::projects_root().map_err(|e| CommandError::Io { message: e })?;
-    std::fs::create_dir_all(&root).map_err(|e| CommandError::Io {
-        message: format!("Failed to create {}: {e}", root.display()),
-    })?;
-    Ok(root.to_string_lossy().to_string())
+    match crate::utils::projects_root() {
+        Ok(root) => match std::fs::create_dir_all(&root) {
+            Ok(()) => return Ok(root.to_string_lossy().to_string()),
+            Err(e) => tracing::warn!("Failed to create {}: {e}", root.display()),
+        },
+        Err(e) => tracing::warn!("Failed to resolve projects root: {e}"),
+    }
+    // Never fall through to $HOME: the agent scanning the home folder trips
+    // macOS TCC permission prompts (Photos/Desktop/Documents) that freeze the
+    // scanning syscall. The OS temp dir is outside every protected folder.
+    Ok(std::env::temp_dir().to_string_lossy().to_string())
 }
 
 /// Valid default-host choices. Kept in sync with the onboarding hosting step.
@@ -131,8 +137,8 @@ pub async fn set_default_host(host: String) -> Result<(), CommandError> {
 /// The persisted default hosting provider, if one was chosen.
 #[tauri::command]
 #[tracing::instrument]
-pub async fn get_default_host() -> Option<String> {
-    read_app_state().default_host
+pub async fn get_default_host() -> Result<Option<String>, CommandError> {
+    Ok(read_app_state().default_host)
 }
 
 /// Clear setup complete flag (for testing/reset)

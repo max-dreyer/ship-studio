@@ -50,7 +50,7 @@
 
 /* Wide enough for three cards per row; flex centering gives the 3 + 2 split. */
 .onboarding-content.agent-onboarding-content {
-  max-width: 600px;
+  max-width: 600px; /* css-ok: layout max, three 170px cards + gaps */
   width: 100%;
 }
 
@@ -63,6 +63,7 @@
 
 .agent-pick-card {
   position: relative;
+  /* css-ok: fixed square card size, not a spacing-scale value */
   width: 170px;
   height: 170px;
   display: flex;
@@ -83,7 +84,7 @@
 .agent-pick-card:hover:not(:disabled) {
   background: var(--bg-tertiary);
   border-color: var(--accent);
-  transform: translateY(-1px);
+  transform: translateY(-1px); /* css-ok: hover lift, not spacing */
 }
 
 .agent-pick-card:disabled {
@@ -99,6 +100,7 @@
   display: flex;
   align-items: center;
   justify-content: center;
+  /* css-ok: icon tile size */
   width: 48px;
   height: 48px;
   border-radius: var(--radius-md);
@@ -169,7 +171,7 @@
 }
 
 .agent-setup-detail-sub {
-  margin: 2px 0 0;
+  margin: 2px 0 0; /* css-ok: optical nudge under the heading */
   color: var(--text-muted);
   font-size: var(--font-size-sm);
 }
@@ -194,7 +196,7 @@
 
 /* The guided phase needs real estate for the terminal + checklist. */
 .onboarding-content.agent-guided-content {
-  max-width: 960px;
+  max-width: 960px; /* css-ok: guided layout max (terminal + sidebar) */
   width: 100%;
 }
 
@@ -204,7 +206,7 @@
 }
 
 .agent-guided-header .wizard-step-subtitle {
-  max-width: 520px;
+  max-width: 520px; /* css-ok: readable line-length cap */
   margin-left: auto;
   margin-right: auto;
 }
@@ -219,7 +221,7 @@
   position: relative;
   flex: 1;
   min-width: 0;
-  height: 420px;
+  height: 420px; /* css-ok: terminal viewport height */
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
   overflow: hidden;
@@ -229,7 +231,7 @@
 }
 
 .agent-guided-sidebar {
-  width: 260px;
+  width: 260px; /* css-ok: checklist sidebar width */
   flex-shrink: 0;
   display: flex;
   flex-direction: column;
@@ -309,6 +311,7 @@
 }
 
 .agent-setup-checklist-dot {
+  /* css-ok: checklist dot size */
   width: 16px;
   height: 16px;
   flex-shrink: 0;
@@ -352,7 +355,7 @@
 .demo-agent-line {
   margin-bottom: var(--spacing-xs);
   white-space: pre-wrap;
-  word-break: break-word;
+  overflow-wrap: anywhere;
 }
 
 .demo-agent-line-agent {
@@ -373,6 +376,7 @@
 
 .demo-agent-cursor {
   display: inline-block;
+  /* css-ok: block-cursor glyph size in the demo terminal */
   width: 8px;
   height: 14px;
   background: var(--text-secondary);
