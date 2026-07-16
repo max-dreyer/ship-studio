@@ -38,7 +38,10 @@ enum HeadlessInvocation {
     /// Codex `exec`: stdout is a session transcript (which echoes the prompt —
     /// unsafe to parse), so the final message is captured via
     /// `--output-last-message` into a temp file instead.
-    CodexExec { args: Vec<String>, output_file: PathBuf },
+    CodexExec {
+        args: Vec<String>,
+        output_file: PathBuf,
+    },
 }
 
 /// Build the headless invocation for `agent`, or `None` when the agent can't
@@ -47,7 +50,11 @@ enum HeadlessInvocation {
 /// session that dies with "stdin is not a terminal".
 fn headless_invocation(agent: &AgentConfig, prompt: &str) -> Option<HeadlessInvocation> {
     if !agent.print_mode_flags.is_empty() {
-        let mut args: Vec<String> = agent.print_mode_flags.iter().map(|f| f.to_string()).collect();
+        let mut args: Vec<String> = agent
+            .print_mode_flags
+            .iter()
+            .map(|f| f.to_string())
+            .collect();
         args.push(prompt.to_string());
         return Some(HeadlessInvocation::PrintMode(args));
     }
