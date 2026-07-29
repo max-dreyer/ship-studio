@@ -479,10 +479,15 @@ export function OnboardingTerminal({ command, args, cwd, onExit }: OnboardingTer
             return;
           }
           logger.error('[OnboardingTerminal] Still no output after respawn', { command });
+          const failure = `${command} did not respond.`;
           terminalRef.current?.write(
-            `\r\n\x1b[31m${command} did not respond.\x1b[0m\r\n` +
+            `\r\n\x1b[31m${failure}\x1b[0m\r\n` +
               `\x1b[33mMake sure "${command}" is installed and on your PATH, then close this window and try again.\x1b[0m\r\n`
           );
+          // Tell the parent the flow failed so the checklist offers a retry —
+          // without this the terminal showed the message but the wizard sat
+          // in "connecting" forever (issue #245).
+          onExitRef.current(1, failure);
         }, 10_000);
 
         // Focus the terminal
