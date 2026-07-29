@@ -113,6 +113,8 @@ export function OnboardingTerminal({ command, args, cwd, onExit }: OnboardingTer
       // a TUI agent's redraws, which makes the scrollbar jump around.
       scrollback: 5000,
       allowProposedApi: true,
+      // Keep agent TUI text readable on the dark background (#232).
+      minimumContrastRatio: 4.5,
       theme: {
         background: '#1e1e1e',
         foreground: '#cccccc',
