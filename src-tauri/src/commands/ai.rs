@@ -86,7 +86,8 @@ fn headless_invocation(agent: &AgentConfig, prompt: &str) -> Option<HeadlessInvo
 
 /// Run the active agent headlessly with `prompt` in `cwd` and return its final
 /// answer text. `extra_envs` is injected on top of the extended PATH.
-async fn run_agent_headless(
+/// Also used by studio_talk as the non-Claude fallback for cross-project asks.
+pub(crate) async fn run_agent_headless(
     agent: &AgentConfig,
     agent_path: &Path,
     prompt: &str,
