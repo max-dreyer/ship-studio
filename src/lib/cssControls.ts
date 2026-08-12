@@ -27,10 +27,17 @@ interface BaseControl {
   label: string;
   /** Only render when this returns true (e.g. flex controls when display:flex). */
   showIf?: ControlPredicate;
+  /** Pair this control with the next flagged one on a single row (Webflow puts
+   *  Min W beside Min H). Flag both halves; the pair breaks apart if one of
+   *  them is hidden by `showIf`. */
+  pair?: boolean;
 }
 
 export interface SegOption {
   value: string;
+  /** Name of a glyph in `CssControlIcons` — how Webflow fits four options in
+   *  one row. Takes precedence over `label`. */
+  icon?: string;
   /** Short text shown on the segment (omit when using `glyph`). */
   label?: string;
   /** A compact glyph (e.g. an arrow) shown instead of a label. */
@@ -43,6 +50,20 @@ export type CssControl =
   | (BaseControl & { kind: 'segmented'; options: SegOption[] })
   | (BaseControl & { kind: 'select'; options: { value: string; label: string }[] })
   | (BaseControl & { kind: 'length'; placeholder?: string })
+  /** Free text that is never numeric (font stacks, gradients) — same input as
+   *  `length` but without the scrub handle and unit menu. */
+  | (BaseControl & { kind: 'text'; placeholder?: string })
+  /** Layered shadow editor for `box-shadow` / `text-shadow`. */
+  | (BaseControl & { kind: 'shadow' })
+  /** Structured editor for the `transition` shorthand. */
+  | (BaseControl & { kind: 'transition' })
+  /** Structured editor for the `transform` shorthand. */
+  | (BaseControl & { kind: 'transform' })
+  /** Per-edge / per-corner control. `prop` names the grouped property
+   *  (`border-width`, `border-radius`, …). */
+  | (BaseControl & { kind: 'edges' })
+  /** Gradient editor for `background-image`. */
+  | (BaseControl & { kind: 'gradient' })
   | (BaseControl & { kind: 'color' });
 
 export interface CssCategory {
@@ -130,8 +151,36 @@ export const CSS_CATEGORIES: CssCategory[] = [
     ],
   },
   {
+    // Flex/grid child properties. They act on the element's own box inside its
+    // parent, so unlike the container controls above they can't be gated on
+    // this element's own `display` — the parent's is what matters, and the
+    // panel doesn't see it.
+    id: 'child',
+    label: 'Child',
+    controls: [
+      {
+        kind: 'select',
+        prop: 'align-self',
+        label: 'Align self',
+        options: [
+          { value: 'auto', label: 'Auto' },
+          { value: 'flex-start', label: 'Start' },
+          { value: 'center', label: 'Center' },
+          { value: 'flex-end', label: 'End' },
+          { value: 'stretch', label: 'Stretch' },
+        ],
+      },
+      { kind: 'length', prop: 'flex-grow', label: 'Grow', placeholder: '0' },
+      { kind: 'length', prop: 'flex-shrink', label: 'Shrink', placeholder: '1' },
+      { kind: 'length', prop: 'flex-basis', label: 'Basis', placeholder: 'auto' },
+      { kind: 'length', prop: 'order', label: 'Order', placeholder: '0' },
+    ],
+  },
+  {
     id: 'spacing',
     label: 'Spacing',
+    // Rendered by `CssSpacingBox`, not from this list — the box covers all
+    // eight sides itself. Kept as the fallback if the box is ever bypassed.
     controls: [
       { kind: 'length', prop: 'padding', label: 'Padding', placeholder: '0' },
       { kind: 'length', prop: 'margin', label: 'Margin', placeholder: '0' },
@@ -141,78 +190,123 @@ export const CSS_CATEGORIES: CssCategory[] = [
     id: 'size',
     label: 'Size',
     controls: [
-      { kind: 'length', prop: 'width', label: 'Width', placeholder: 'auto' },
-      { kind: 'length', prop: 'height', label: 'Height', placeholder: 'auto' },
-      { kind: 'length', prop: 'max-width', label: 'Max width', placeholder: 'none' },
+      // Paired the way Webflow pairs them: the two axes of one concept per row.
+      { kind: 'length', prop: 'width', label: 'Width', placeholder: 'auto', pair: true },
+      { kind: 'length', prop: 'height', label: 'Height', placeholder: 'auto', pair: true },
+      { kind: 'length', prop: 'min-width', label: 'Min W', placeholder: 'auto', pair: true },
+      { kind: 'length', prop: 'min-height', label: 'Min H', placeholder: 'auto', pair: true },
+      { kind: 'length', prop: 'max-width', label: 'Max W', placeholder: 'none', pair: true },
+      { kind: 'length', prop: 'max-height', label: 'Max H', placeholder: 'none', pair: true },
+      { kind: 'text', prop: 'aspect-ratio', label: 'Ratio', placeholder: 'auto' },
     ],
   },
   {
     id: 'typography',
     label: 'Type',
     controls: [
-      { kind: 'length', prop: 'font-size', label: 'Size', placeholder: '16px' },
+      { kind: 'text', prop: 'font-family', label: 'Font', placeholder: 'inherit' },
       {
         kind: 'select',
         prop: 'font-weight',
         label: 'Weight',
         options: [
-          { value: '300', label: 'Light' },
-          { value: '400', label: 'Normal' },
-          { value: '500', label: 'Medium' },
-          { value: '600', label: 'Semibold' },
-          { value: '700', label: 'Bold' },
-          { value: '800', label: 'Extrabold' },
+          { value: '300', label: '300 - Light' },
+          { value: '400', label: '400 - Normal' },
+          { value: '500', label: '500 - Medium' },
+          { value: '600', label: '600 - Semibold' },
+          { value: '700', label: '700 - Bold' },
+          { value: '800', label: '800 - Extrabold' },
         ],
       },
-      { kind: 'length', prop: 'line-height', label: 'Line height', placeholder: '1.5' },
+      // Size beside Height, as Webflow pairs them.
+      { kind: 'length', prop: 'font-size', label: 'Size', placeholder: '16px', pair: true },
+      { kind: 'length', prop: 'line-height', label: 'Height', placeholder: '1.5', pair: true },
+      { kind: 'color', prop: 'color', label: 'Color' },
       {
         kind: 'segmented',
         prop: 'text-align',
         label: 'Align',
         options: [
-          { value: 'left', label: 'Left' },
-          { value: 'center', label: 'Center' },
-          { value: 'right', label: 'Right' },
-          { value: 'justify', label: 'Justify' },
+          { value: 'left', icon: 'align-left', title: 'Left' },
+          { value: 'center', icon: 'align-center', title: 'Center' },
+          { value: 'right', icon: 'align-right', title: 'Right' },
+          { value: 'justify', icon: 'align-justify', title: 'Justify' },
         ],
       },
       {
-        kind: 'select',
-        prop: 'text-transform',
-        label: 'Transform',
+        kind: 'segmented',
+        prop: 'text-decoration-line',
+        label: 'Decor',
         options: [
-          { value: 'none', label: 'None' },
-          { value: 'uppercase', label: 'Uppercase' },
-          { value: 'lowercase', label: 'Lowercase' },
-          { value: 'capitalize', label: 'Capitalize' },
+          { value: 'none', icon: 'none', title: 'None' },
+          { value: 'line-through', icon: 'strikethrough', title: 'Strikethrough' },
+          { value: 'underline', icon: 'underline', title: 'Underline' },
+          { value: 'overline', icon: 'overline', title: 'Overline' },
         ],
       },
-      { kind: 'color', prop: 'color', label: 'Color' },
+      {
+        kind: 'segmented',
+        prop: 'font-style',
+        label: 'Italicize',
+        options: [
+          { value: 'normal', icon: 'roman', title: 'Regular' },
+          { value: 'italic', icon: 'italic', title: 'Italic' },
+        ],
+      },
+      {
+        kind: 'segmented',
+        prop: 'text-transform',
+        label: 'Capitalize',
+        options: [
+          { value: 'none', icon: 'none', title: 'None' },
+          { value: 'uppercase', icon: 'uppercase', title: 'ALL CAPS' },
+          { value: 'capitalize', icon: 'capitalize', title: 'Capitalize Every Word' },
+          { value: 'lowercase', icon: 'lowercase', title: 'lowercase' },
+        ],
+      },
+      { kind: 'length', prop: 'letter-spacing', label: 'Spacing', placeholder: 'normal' },
+      { kind: 'shadow', prop: 'text-shadow', label: 'Text shadows' },
     ],
   },
   {
     id: 'background',
     label: 'Background',
-    controls: [{ kind: 'color', prop: 'background-color', label: 'Background' }],
+    controls: [
+      { kind: 'color', prop: 'background-color', label: 'Color' },
+      { kind: 'gradient', prop: 'background-image', label: 'Image' },
+      { kind: 'text', prop: 'background-size', label: 'Size', placeholder: 'auto' },
+      { kind: 'text', prop: 'background-position', label: 'Position', placeholder: '0% 0%' },
+      {
+        kind: 'select',
+        prop: 'background-repeat',
+        label: 'Repeat',
+        options: [
+          { value: 'repeat', label: 'Repeat' },
+          { value: 'no-repeat', label: 'No repeat' },
+          { value: 'repeat-x', label: 'Repeat X' },
+          { value: 'repeat-y', label: 'Repeat Y' },
+        ],
+      },
+    ],
   },
   {
     id: 'border',
     label: 'Border',
     controls: [
-      { kind: 'length', prop: 'border-width', label: 'Width', placeholder: '0' },
+      { kind: 'edges', prop: 'border-width', label: 'Width' },
       {
-        kind: 'select',
+        kind: 'segmented',
         prop: 'border-style',
         label: 'Style',
         options: [
-          { value: 'none', label: 'None' },
-          { value: 'solid', label: 'Solid' },
-          { value: 'dashed', label: 'Dashed' },
-          { value: 'dotted', label: 'Dotted' },
+          { value: 'none', icon: 'none', title: 'None' },
+          { value: 'solid', icon: 'solid', title: 'Solid' },
+          { value: 'dashed', icon: 'dashed', title: 'Dashed' },
+          { value: 'dotted', icon: 'dotted', title: 'Dotted' },
         ],
       },
       { kind: 'color', prop: 'border-color', label: 'Color' },
-      { kind: 'length', prop: 'border-radius', label: 'Radius', placeholder: '0' },
+      { kind: 'edges', prop: 'border-radius', label: 'Radius' },
     ],
   },
   {
@@ -248,9 +342,9 @@ export const CSS_CATEGORIES: CssCategory[] = [
     id: 'transform',
     label: 'Transform',
     controls: [
-      { kind: 'length', prop: 'transform', label: 'Transform', placeholder: 'none' },
+      { kind: 'transform', prop: 'transform', label: 'Transform' },
       { kind: 'length', prop: 'transform-origin', label: 'Origin', placeholder: 'center' },
-      { kind: 'length', prop: 'transition', label: 'Transition', placeholder: 'none' },
+      { kind: 'transition', prop: 'transition', label: 'Transition' },
     ],
   },
   {
@@ -258,7 +352,7 @@ export const CSS_CATEGORIES: CssCategory[] = [
     label: 'Effects',
     controls: [
       { kind: 'length', prop: 'opacity', label: 'Opacity', placeholder: '1' },
-      { kind: 'length', prop: 'box-shadow', label: 'Box shadow', placeholder: 'none' },
+      { kind: 'shadow', prop: 'box-shadow', label: 'Box shadow' },
       { kind: 'length', prop: 'filter', label: 'Filter', placeholder: 'none' },
       {
         kind: 'select',

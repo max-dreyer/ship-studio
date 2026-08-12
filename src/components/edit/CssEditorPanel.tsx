@@ -457,6 +457,7 @@ export function CssEditorPanel({
                           declarations={res.declarations}
                           onPreview={onPreview}
                           onSave={onSave}
+                          onSaveMany={onSaveMany}
                           highlightProp={highlightProp}
                         />
                       </div>

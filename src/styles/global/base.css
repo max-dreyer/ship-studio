@@ -185,6 +185,12 @@
   /* Preview toolbar height — also sizes the pinned editor panel's header so
      the two bars line up. */
   --preview-toolbar-h: 47px;
+  /* Label gutter in the CSS editor's structured controls. One fixed width for
+     every row is what makes a column of unrelated controls line up (Webflow's
+     style panel does the same). */
+  --cc-label-w: 44px;
+  /* Narrower gutter inside a paired row, which has half the width. */
+  --cc-label-pair-w: 34px;
   /* Element tree (navigator) panel width — the preview's left grid column in
      edit mode. The Code (markup-edit) view widens to --tree-code-w so
      hand-editing HTML isn't cramped. */

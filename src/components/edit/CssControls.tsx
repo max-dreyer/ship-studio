@@ -24,6 +24,15 @@ import { useDismissOnOutsidePointer } from '../../hooks/useDismissOnOutsidePoint
 import { Button } from '../primitives/Button';
 import { EnumDropdown } from './EnumDropdown';
 import { ColorPicker } from './ColorPicker';
+import { CssLengthField } from './CssLengthField';
+import { CssSpacingBox } from './CssSpacingBox';
+import { CssShadowEditor } from './CssShadowEditor';
+import { CssTransitionEditor } from './CssTransitionEditor';
+import { CssTransformEditor } from './CssTransformEditor';
+import { CssEdgeControl } from './CssEdgeControl';
+import { CssGradientEditor } from './CssGradientEditor';
+import { ICONS } from './CssControlIcons';
+import type { EdgeKind } from '../../lib/cssEdges';
 import { CSS_CATEGORIES, cssValueOf, type CssControl, type SegOption } from '../../lib/cssControls';
 import type { CssDeclaration } from '../../lib/edit-css';
 
@@ -127,15 +136,20 @@ function Field({
   label,
   isSet,
   onReset,
+  block,
   children,
 }: {
   label: string;
   isSet?: boolean;
   onReset?: () => void;
+  /** Stack the control under its label instead of beside it. For controls that
+   *  need the full width (layer editors, the box model), where Webflow also
+   *  breaks out of its two-column grid. */
+  block?: boolean;
   children: ReactNode;
 }) {
   return (
-    <div className="ss-cc-field">
+    <div className={`ss-cc-field${block ? ' ss-cc-field--block' : ''}`}>
       {onReset ? (
         <ResettableCcLabel label={label} isSet={!!isSet} onReset={onReset} />
       ) : (
@@ -179,7 +193,7 @@ function Segmented({
                 onSave(prop, next);
               }}
             >
-              {o.glyph ?? o.label ?? o.value}
+              {o.icon ? ICONS[o.icon] : (o.glyph ?? o.label ?? o.value)}
             </button>
           );
         })}
@@ -222,6 +236,9 @@ function SelectControl({
   );
 }
 
+/** Numeric field. The input stays free-form (calc(), var(), keywords all go in
+ *  by hand); `CssLengthField` adds scrub / arrow-key / unit-menu on top for the
+ *  values that are plain numbers. */
 function LengthControl({
   prop,
   label,
@@ -230,13 +247,50 @@ function LengthControl({
   onPreview,
   onSave,
 }: ControlProps & { prop: string; label: string; placeholder?: string }) {
-  const [v, setV] = useState(value);
-  const valid = v.trim() === '' || cssSupports(prop, v.trim());
+  return (
+    <Field
+      label={label}
+      isSet={value.trim() !== ''}
+      onReset={() => {
+        onPreview(prop, null);
+        onSave(prop, null);
+      }}
+    >
+      <CssLengthField
+        prop={prop}
+        value={value}
+        placeholder={placeholder}
+        onPreview={onPreview}
+        onSave={onSave}
+        isValid={(v) => cssSupports(prop, v)}
+      />
+    </Field>
+  );
+}
+
+/** Free-text field for values that are never a lone number (font stacks,
+ *  gradients). Same chrome as the numeric field, minus the gestures that would
+ *  have nothing to grab onto. */
+function TextControl({
+  prop,
+  label,
+  placeholder,
+  value,
+  onPreview,
+  onSave,
+}: ControlProps & { prop: string; label: string; placeholder?: string }) {
+  const [text, setText] = useState(value);
+  const [syncedValue, setSyncedValue] = useState(value);
+  if (value !== syncedValue) {
+    setSyncedValue(value);
+    setText(value);
+  }
+  const valid = text.trim() === '' || cssSupports(prop, text.trim());
   const commit = () => {
-    const next = v.trim();
-    if (next === value) return;
+    const next = text.trim();
+    if (next === value.trim()) return;
     if (next !== '' && !valid) {
-      setV(value);
+      setText(value);
       onPreview(prop, value || null);
       return;
     }
@@ -253,11 +307,11 @@ function LengthControl({
     >
       <input
         className={`ss-cc-input${!valid ? ' is-invalid' : ''}`}
-        value={v}
+        value={text}
         placeholder={placeholder}
         spellCheck={false}
         onChange={(e) => {
-          setV(e.target.value);
+          setText(e.target.value);
           const t = e.target.value.trim();
           if (t && cssSupports(prop, t)) onPreview(prop, t);
         }}
@@ -265,7 +319,7 @@ function LengthControl({
         onKeyDown={(e) => {
           if (e.key === 'Enter') (e.target as HTMLInputElement).blur();
           else if (e.key === 'Escape') {
-            setV(value);
+            setText(value);
             onPreview(prop, value || null);
             (e.target as HTMLInputElement).blur();
           }
@@ -411,131 +465,52 @@ function ColorControl({
   );
 }
 
-/** Expand a `padding`/`margin` shorthand into its four sides (CSS rules). */
-function expandShorthand(value: string): Record<'top' | 'right' | 'bottom' | 'left', string> {
-  const p = value.trim().split(/\s+/);
-  if (p.length === 1) return { top: p[0], right: p[0], bottom: p[0], left: p[0] };
-  if (p.length === 2) return { top: p[0], right: p[1], bottom: p[0], left: p[1] };
-  if (p.length === 3) return { top: p[0], right: p[1], bottom: p[2], left: p[1] };
-  return { top: p[0], right: p[1], bottom: p[2], left: p[3] };
-}
-
-/** Effective value of one box side: an explicit longhand wins, else the side
- *  derived from the shorthand, else empty. */
-function sideValue(
-  declarations: CssDeclaration[],
-  type: 'padding' | 'margin',
-  side: string
-): string {
-  const long = cssValueOf(declarations, `${type}-${side}`);
-  if (long) return long;
-  const short = cssValueOf(declarations, type);
-  if (short) return expandShorthand(short)[side as 'top'];
-  return '';
-}
-
-/** One side input of the box-model editor. Writes the longhand (`padding-top`). */
-function BoxSide({
-  type,
-  side,
-  edge,
-  value,
-  onPreview,
-  onSave,
-}: {
-  type: 'padding' | 'margin';
-  side: string;
-  edge: string;
-  value: string;
-} & Pick<ControlProps, 'onPreview' | 'onSave'>) {
-  const prop = `${type}-${side}`;
-  const [text, setText] = useState(value);
-  const valid = text.trim() === '' || cssSupports(type, text.trim());
-  const commit = () => {
-    const next = text.trim();
-    if (next === value) return;
-    if (next !== '' && !valid) {
-      setText(value);
-      onPreview(prop, value || null);
-      return;
-    }
-    onSave(prop, next === '' ? null : next);
-  };
-  return (
-    <input
-      className={`ss-box__field ss-box__edge--${edge}${valid ? '' : ' ss-box__field--invalid'}`}
-      aria-label={`${type} ${side}`}
-      placeholder="0"
-      spellCheck={false}
-      value={text}
-      onChange={(e) => {
-        setText(e.target.value);
-        const t = e.target.value.trim();
-        if (t && cssSupports(type, t)) onPreview(prop, t);
-      }}
-      onFocus={(e) => e.target.select()}
-      onBlur={commit}
-      onKeyDown={(e) => {
-        if (e.key === 'Enter') (e.target as HTMLInputElement).blur();
-      }}
-    />
-  );
-}
-
-/** Webflow-style box-model editor (margin wrapping padding), CSS-native: each
- *  side reads its effective value (longhand or shorthand) and writes a longhand.
- *  Reuses the Tailwind editor's `ss-box` styling so the two look identical. */
-function CssSpacingBox({
-  declarations,
-  onPreview,
-  onSave,
-}: Omit<ControlProps, 'value'> & { declarations: CssDeclaration[] }) {
-  const f = (type: 'padding' | 'margin', side: string, edge: string) => {
-    const v = sideValue(declarations, type, side);
-    return (
-      <BoxSide
-        key={`${type}-${side}-${v}`}
-        type={type}
-        side={side}
-        edge={edge}
-        value={v}
-        onPreview={onPreview}
-        onSave={onSave}
-      />
-    );
-  };
-  return (
-    <div className="ss-box" data-testid="css-spacing-box">
-      <span className="ss-box__tag">MARGIN</span>
-      {f('margin', 'top', 't')}
-      {f('margin', 'bottom', 'b')}
-      {f('margin', 'left', 'l')}
-      {f('margin', 'right', 'r')}
-      <div className="ss-box__inner">
-        <span className="ss-box__tag">PADDING</span>
-        {f('padding', 'top', 't')}
-        {f('padding', 'bottom', 'b')}
-        {f('padding', 'left', 'l')}
-        {f('padding', 'right', 'r')}
-        <div className="ss-box__core" />
-      </div>
-    </div>
-  );
-}
-
 function Control({
   control,
   value,
   onPreview,
   onSave,
+  onSaveMany,
+  declarations,
   highlight,
-}: { control: CssControl; highlight?: boolean } & ControlProps) {
+}: {
+  control: CssControl;
+  highlight?: boolean;
+  /** Both only used by the edge control, which spans several properties. */
+  declarations: CssDeclaration[];
+  onSaveMany: (changes: { property: string; value: string | null }[]) => void;
+} & ControlProps) {
   const key = `${control.prop}:${value}`;
   let inner: ReactNode;
+
+  /** Every structured editor hangs in a full-width Field with the same reset. */
+  const editorField = (child: ReactNode) => (
+    <Field
+      key={key}
+      block
+      label={control.label}
+      isSet={value.trim() !== ''}
+      onReset={() => {
+        onPreview(control.prop, null);
+        onSave(control.prop, null);
+      }}
+    >
+      {child}
+    </Field>
+  );
+  const editorProps = {
+    prop: control.prop,
+    value,
+    onPreview,
+    onSave,
+    isValid: (v: string) => cssSupports(control.prop, v),
+  };
+
   switch (control.kind) {
     case 'segmented':
       inner = (
         <Segmented
+          key={key}
           prop={control.prop}
           label={control.label}
           options={control.options}
@@ -548,6 +523,7 @@ function Control({
     case 'select':
       inner = (
         <SelectControl
+          key={key}
           prop={control.prop}
           label={control.label}
           options={control.options}
@@ -567,6 +543,42 @@ function Control({
           value={value}
           onPreview={onPreview}
           onSave={onSave}
+        />
+      );
+      break;
+    case 'text':
+      inner = (
+        <TextControl
+          key={key}
+          prop={control.prop}
+          label={control.label}
+          placeholder={control.placeholder}
+          value={value}
+          onPreview={onPreview}
+          onSave={onSave}
+        />
+      );
+      break;
+    case 'shadow':
+      inner = editorField(<CssShadowEditor {...editorProps} />);
+      break;
+    case 'transition':
+      inner = editorField(<CssTransitionEditor {...editorProps} />);
+      break;
+    case 'transform':
+      inner = editorField(<CssTransformEditor {...editorProps} />);
+      break;
+    case 'gradient':
+      inner = editorField(<CssGradientEditor {...editorProps} />);
+      break;
+    case 'edges':
+      inner = editorField(
+        <CssEdgeControl
+          kind={control.prop as EdgeKind}
+          declarations={declarations}
+          onPreview={onPreview}
+          onSaveMany={onSaveMany}
+          isValid={editorProps.isValid}
         />
       );
       break;
@@ -590,9 +602,6 @@ function Control({
   );
 }
 
-/** Type any CSS property + value and add it to the rule. Always available so no
- *  property is ever out of reach of the visual editor. `onAdded` fires with the
- *  property so the panel can jump to (and highlight) its structured control. */
 export function AddProp({
   onSave,
   onAdded,
@@ -646,33 +655,61 @@ export function CssControls({
   declarations,
   onPreview,
   onSave,
+  onSaveMany,
   highlightProp,
 }: {
   category: string;
   declarations: CssDeclaration[];
   onPreview: (property: string, value: string | null) => void;
   onSave: (property: string, value: string | null) => void;
+  /** Several declarations at once — the spacing box and the edge control need
+   *  it to replace a shorthand with longhands in one write. */
+  onSaveMany: (changes: { property: string; value: string | null }[]) => void;
   highlightProp?: string | null;
 }) {
   const get = (p: string) => cssValueOf(declarations, p);
   const cat = CSS_CATEGORIES.find((c) => c.id === category);
   if (!cat) return null;
   const controls = cat.controls.filter((c) => !c.showIf || c.showIf(get));
+
+  const render = (c: CssControl) => (
+    <Control
+      key={c.prop}
+      control={c}
+      value={get(c.prop)}
+      declarations={declarations}
+      onPreview={onPreview}
+      onSave={onSave}
+      onSaveMany={onSaveMany}
+      highlight={highlightProp === c.prop}
+    />
+  );
+
+  // Walk the list, taking flagged controls two at a time onto one row. A lone
+  // survivor (its partner hidden by `showIf`) falls back to a full-width row.
+  const rows: ReactNode[] = [];
+  for (let i = 0; i < controls.length; i++) {
+    const c = controls[i];
+    const next = controls[i + 1];
+    if (c.pair && next?.pair) {
+      rows.push(
+        <div className="ss-cc-pair" key={`${c.prop}+${next.prop}`}>
+          {render(c)}
+          {render(next)}
+        </div>
+      );
+      i++;
+      continue;
+    }
+    rows.push(render(c));
+  }
+
   return (
     <div className="ss-cc">
       {category === 'spacing' ? (
-        <CssSpacingBox declarations={declarations} onPreview={onPreview} onSave={onSave} />
+        <CssSpacingBox declarations={declarations} onPreview={onPreview} onSaveMany={onSaveMany} />
       ) : (
-        controls.map((c) => (
-          <Control
-            key={c.prop}
-            control={c}
-            value={get(c.prop)}
-            onPreview={onPreview}
-            onSave={onSave}
-            highlight={highlightProp === c.prop}
-          />
-        ))
+        rows
       )}
     </div>
   );

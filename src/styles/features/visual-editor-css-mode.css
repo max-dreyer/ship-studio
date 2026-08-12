@@ -453,7 +453,7 @@
 .ss-cc {
   display: flex;
   flex-direction: column;
-  gap: var(--spacing-md);
+  gap: 4px;
 }
 /* When "add property" jumps to an existing control, briefly brighten its label
  * so the eye lands on it — no background fill. */
@@ -469,15 +469,44 @@
 .ss-cc-hl .ss-cc-label {
   animation: ss-cc-label-flash 1.4s ease;
 }
+/* Webflow's two-column grid: label left in a fixed gutter, control right. The
+   fixed gutter is what makes a column of unrelated controls read as one list
+   instead of a ragged stack. */
 .ss-cc-field {
+  display: grid;
+  grid-template-columns: var(--cc-label-w) minmax(0, 1fr);
+  align-items: center;
+  column-gap: 8px;
+  min-height: 24px;
+}
+
+/* Two related controls on one row (Width beside Height). Their labels get a
+   narrower gutter, since the pair has half the width to work with. */
+.ss-cc-pair {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.ss-cc-pair .ss-cc-field {
+  grid-template-columns: var(--cc-label-pair-w) minmax(0, 1fr);
+}
+
+/* Controls that need the whole width (layer editors, the box model). */
+.ss-cc-field--block {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  align-items: stretch;
+  gap: 5px;
 }
+
 .ss-cc-label {
   font-size: var(--font-size-xs);
-  font-weight: 600;
   color: var(--text-secondary);
+  /* Long labels truncate rather than push the control out of alignment. */
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 /* Resettable label (matches the Tailwind editor): clickable when set, with a
    small set-dot; clicking pops the shared `ss-reset-pop`. */
@@ -504,15 +533,19 @@
 }
 .ss-cc-seg {
   display: flex;
-  gap: 2px;
-  padding: 2px;
+  gap: 1px;
+  padding: 1px;
   background: var(--bg-tertiary);
-  border-radius: var(--radius-md);
+  border-radius: var(--radius-sm);
 }
 .ss-cc-seg__btn {
   flex: 1;
   min-width: 0;
-  padding: 6px 4px;
+  height: 22px;
+  padding: 0 3px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   border: none;
   background: transparent;
   color: var(--text-muted);
@@ -541,12 +574,13 @@
 .ss-cc-select,
 .ss-cc-input {
   width: 100%;
+  height: 24px;
   font-size: var(--font-size-xs);
   color: var(--text-primary);
   background: var(--bg-tertiary);
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
-  padding: 6px var(--spacing-xs);
+  padding: 0 var(--spacing-xs);
   transition: border-color var(--transition);
 }
 .ss-cc-input {
@@ -578,9 +612,10 @@
 }
 .ss-cc-color {
   display: grid;
-  grid-template-columns: 34px 1fr;
-  gap: var(--spacing-xs);
+  grid-template-columns: 24px minmax(0, 1fr);
+  gap: 5px;
   align-items: stretch;
+  height: 24px;
 }
 /* Match the swatch height to the value input beside it. */
 .ss-cc-color .ss-color-swatch {
@@ -673,4 +708,377 @@
   display: flex;
   flex-wrap: wrap;
   gap: var(--spacing-xs);
+}
+
+/* ===== Numeric fields (CssLengthField) =====
+   The input keeps its own box; the scrub handle and unit button sit inside it,
+   so padding on the input reserves their room. */
+.ss-cc-lengthwrap {
+  position: relative;
+  display: block;
+}
+
+.ss-cc-lengthwrap .ss-cc-input {
+  padding-left: 15px;
+  padding-right: 30px;
+}
+
+/* Drag handle: two short rules that read as a grip, brightening on hover. */
+.ss-cc-scrub {
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 14px;
+  cursor: ew-resize;
+  touch-action: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.ss-cc-scrub::before {
+  content: '';
+  width: 5px;
+  height: 9px;
+  border-left: 1px solid var(--text-muted);
+  border-right: 1px solid var(--text-muted);
+  opacity: 0.45;
+  transition: opacity var(--transition);
+}
+
+.ss-cc-scrub:hover::before,
+.ss-cc-scrub.is-scrubbing::before {
+  opacity: 1;
+}
+
+/* Values we can't step (calc(), var(), keywords) say so by going inert. */
+.ss-cc-scrub.is-disabled {
+  cursor: default;
+  pointer-events: none;
+}
+
+.ss-cc-scrub.is-disabled::before {
+  opacity: 0.15;
+}
+
+/* Unit suffix, doubling as the unit menu's trigger. */
+.ss-cc-unit {
+  position: absolute;
+  right: 3px;
+  top: 50%;
+  transform: translateY(-50%);
+  min-width: 26px;
+  padding: 2px 4px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-muted);
+  font-family: var(--font-mono, monospace);
+  font-size: var(--font-size-xs);
+  line-height: 1;
+  cursor: pointer;
+  transition:
+    background-color var(--transition),
+    color var(--transition);
+}
+
+.ss-cc-unit:hover,
+.ss-cc-unit[aria-expanded='true'] {
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+}
+
+.ss-cc-unitmenu {
+  position: fixed;
+  z-index: var(--z-tooltip);
+  display: flex;
+  flex-direction: column;
+  min-width: 56px;
+  padding: var(--spacing-xs);
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow-md);
+}
+
+.ss-cc-unitmenu__item {
+  padding: 3px var(--spacing-xs);
+  border: none;
+  border-radius: var(--radius-sm);
+  background: none;
+  color: var(--text-secondary);
+  font-family: var(--font-mono, monospace);
+  font-size: var(--font-size-xs);
+  text-align: left;
+  cursor: pointer;
+}
+
+.ss-cc-unitmenu__item:hover {
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+}
+
+.ss-cc-unitmenu__item.is-active {
+  color: var(--accent);
+}
+
+/* ===== Visual view (CssVisualView) =====
+   Sectioned controls as an alternative to the cascade cards. */
+.ss-cascade-views {
+  display: flex;
+  gap: 2px;
+  padding: 0 var(--spacing-md) var(--spacing-xs);
+}
+
+.ss-cascade-view {
+  flex: 1;
+  padding: 4px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-tertiary);
+  color: var(--text-secondary);
+  font-size: var(--font-size-xs);
+  cursor: pointer;
+  transition:
+    background-color var(--transition),
+    color var(--transition);
+}
+
+.ss-cascade-view:hover {
+  color: var(--text-primary);
+}
+
+.ss-cascade-view.is-active {
+  background: var(--action);
+  border-color: var(--action);
+  color: var(--bg-primary);
+}
+
+.ss-visual {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  /* A flex child defaults to a min-height of its content, which would push the
+     scrolling panel body past its own box instead of letting it scroll. */
+  min-height: 0;
+}
+
+/* Section headers carry the panel's rhythm: a bold title, a divider above, and
+   a body that sits close underneath. */
+.ss-visual .ss-edit-panel__section {
+  border-top: 1px solid var(--border);
+}
+
+.ss-visual .ss-edit-panel__section-head {
+  padding: var(--spacing-xs) var(--spacing-md);
+  cursor: pointer;
+}
+
+.ss-visual .ss-edit-panel__section-title {
+  font-size: var(--font-size-sm);
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.ss-visual .ss-edit-panel__section-body {
+  gap: 4px;
+  padding: 0 var(--spacing-md) var(--spacing-sm);
+  border-top: none;
+}
+
+/* Names the rule being edited — a vanilla-CSS element can be styled from
+   several places, so this must not be implicit. */
+.ss-visual__target {
+  display: flex;
+  align-items: baseline;
+  gap: var(--spacing-xs);
+  padding: 0 var(--spacing-md) var(--spacing-xs);
+  min-width: 0;
+}
+
+.ss-visual__empty {
+  margin: 0;
+  padding: var(--spacing-md);
+  font-size: var(--font-size-xs);
+  color: var(--text-muted);
+}
+
+/* Live strip above the gradient's controls. */
+.ss-gradient__preview {
+  height: 32px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background-color: var(--bg-tertiary);
+}
+
+/* ===== Per-edge control (CssEdgeControl) =====
+   Target row above the field it edits, joined like a segmented control. */
+.ss-edge {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.ss-edge__targets {
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: 1fr;
+  gap: 1px;
+  padding: 1px;
+  background: var(--bg-tertiary);
+  border-radius: var(--radius-sm);
+}
+
+.ss-edge__target {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 0;
+  height: 22px;
+  padding: 0;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  transition:
+    background-color var(--transition),
+    color var(--transition);
+}
+
+.ss-edge__target:hover {
+  color: var(--text-primary);
+}
+
+.ss-edge__target.is-active {
+  background: var(--tint-strong);
+  color: var(--text-primary);
+  box-shadow: inset 0 0 0 1px var(--tint);
+}
+
+/* ===== Layer editors (shadow, transition, transform, gradient) =====
+   One card per layer: a header row with colour and actions, then the numeric
+   fields in a grid below. */
+.ss-shadow {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.ss-shadow__layer {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 5px;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+}
+
+.ss-shadow__row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+/* Lets the transition editor's property dropdown take the row's free space. */
+.ss-shadow__grow {
+  flex: 1;
+  min-width: 0;
+}
+
+.ss-shadow__swatch {
+  width: 22px;
+  height: 22px;
+  flex-shrink: 0;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+
+.ss-shadow__inset {
+  padding: 3px var(--spacing-xs);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: none;
+  color: var(--text-secondary);
+  font-size: var(--font-size-xs);
+  cursor: pointer;
+  transition:
+    background-color var(--transition),
+    color var(--transition);
+}
+
+.ss-shadow__inset:hover {
+  color: var(--text-primary);
+}
+
+.ss-shadow__inset.is-active {
+  background: var(--action);
+  border-color: var(--action);
+  color: var(--bg-primary);
+}
+
+.ss-shadow__remove {
+  margin-left: auto;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: none;
+  color: var(--text-muted);
+  font-size: var(--font-size-base);
+  line-height: 1;
+  cursor: pointer;
+}
+
+.ss-shadow__remove:hover {
+  background: var(--bg-secondary);
+  color: var(--error);
+}
+
+.ss-shadow__grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 4px;
+}
+
+.ss-shadow__field {
+  display: grid;
+  grid-template-columns: var(--cc-label-pair-w) minmax(0, 1fr);
+  align-items: center;
+  column-gap: 4px;
+  min-width: 0;
+}
+
+.ss-shadow__label {
+  font-size: var(--font-size-xs);
+  color: var(--text-muted);
+}
+
+.ss-shadow__add {
+  padding: 4px;
+  border: 1px dashed var(--border);
+  border-radius: var(--radius-sm);
+  background: none;
+  color: var(--text-secondary);
+  font-size: var(--font-size-xs);
+  cursor: pointer;
+  transition:
+    border-color var(--transition),
+    color var(--transition);
+}
+
+.ss-shadow__add:hover {
+  border-color: var(--action);
+  color: var(--text-primary);
+}
+
+.ss-shadow__note {
+  margin: 0;
+  font-size: var(--font-size-xs);
+  color: var(--text-muted);
 }

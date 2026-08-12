@@ -24,6 +24,7 @@ import { useCopyToClipboard } from '../../hooks/useCopyToClipboard';
 import { useOptionalToast } from '../../contexts/ToastContext';
 import { Spinner } from '../primitives/Spinner';
 import { CascadeRuleCard } from './CascadeRuleCard';
+import { CssVisualView } from './CssVisualView';
 import { ElementSettingsPanel } from './ElementSettingsPanel';
 import { CssVariablesPanel } from './CssVariablesPanel';
 import { CssAnimationsPanel } from './CssAnimationsPanel';
@@ -40,6 +41,8 @@ import type { useCssAnimations } from '../../hooks/useCssAnimations';
 type Scope = 'element' | 'variables' | 'animations';
 
 const PANEL_WIDTH = 360;
+
+const STYLE_VIEW_KEY = 'ss:cssCascade:styleView';
 
 interface Props {
   selection: CascadeSelection | null;
@@ -105,6 +108,37 @@ export function CssCascadePanel({
   onScopeChange,
 }: Props) {
   const [tab, setTab] = useState<'style' | 'settings'>('style');
+  // Visual (sectioned controls) vs Cascade (rule cards). Persisted like the
+  // panel's other layout choices, so it survives reselection and restarts.
+  const [styleView, setStyleView] = useState<'visual' | 'cascade'>(() => {
+    try {
+      return localStorage.getItem(STYLE_VIEW_KEY) === 'cascade' ? 'cascade' : 'visual';
+    } catch {
+      return 'visual';
+    }
+  });
+  const setStyleViewMode = useCallback((next: 'visual' | 'cascade') => {
+    setStyleView(next);
+    try {
+      localStorage.setItem(STYLE_VIEW_KEY, next);
+    } catch {
+      // A blocked localStorage costs the preference, not the feature.
+    }
+  }, []);
+  // The rule the Visual view edits: the first editable one in cascade order,
+  // i.e. the one that currently wins. Drafts count — writing a property is what
+  // creates them. Inline styles don't; they're read-only here as in the cards.
+  const visualTargetRow = rows.find(
+    (r) => r.editable && r.origin !== 'inline' && bodies[rowKey(r)]
+  );
+  const visualTarget = visualTargetRow
+    ? {
+        key: rowKey(visualTargetRow),
+        selector: visualTargetRow.selector ?? '',
+        file: visualTargetRow.file ?? null,
+        body: bodies[rowKey(visualTargetRow)],
+      }
+    : null;
   const [localScope, setLocalScope] = useState<Scope>('element');
   const scope = controlledScope ?? localScope;
   const setScope = onScopeChange ?? setLocalScope;
@@ -317,6 +351,29 @@ export function CssCascadePanel({
               <ElementSettingsPanel settings={settings} />
             ) : (
               <>
+                <div className="ss-cascade-views" role="group" aria-label="Style view">
+                  <button
+                    type="button"
+                    className={`ss-cascade-view${styleView === 'visual' ? ' is-active' : ''}`}
+                    aria-pressed={styleView === 'visual'}
+                    onClick={() => setStyleViewMode('visual')}
+                  >
+                    Visual
+                  </button>
+                  <button
+                    type="button"
+                    className={`ss-cascade-view${styleView === 'cascade' ? ' is-active' : ''}`}
+                    aria-pressed={styleView === 'cascade'}
+                    onClick={() => setStyleViewMode('cascade')}
+                  >
+                    Cascade
+                  </button>
+                </div>
+
+                {styleView === 'visual' && !loading && (
+                  <CssVisualView rule={visualTarget} onChangeBody={onChangeBody} />
+                )}
+
                 <AddSelectorBar
                   onAddSelector={onAddSelector}
                   suggestions={addSelectorOptions}
@@ -327,7 +384,7 @@ export function CssCascadePanel({
                   <div className="ss-cascade-loading">
                     <Spinner size="sm" />
                   </div>
-                ) : (
+                ) : styleView === 'visual' ? null : (
                   <div className="ss-cascade-cards">
                     {rows.map((row) => {
                       const key = rowKey(row);
