@@ -25,6 +25,10 @@ interface SplitPaneProps {
   minRight?: number;
   /** Whether the right pane is collapsed */
   rightCollapsed?: boolean;
+  /** Whether the left pane is collapsed — used when its content floats free
+   *  (see `useAgentDock`), so the right pane gets the full width instead of a
+   *  dead gap. The divider goes away with it. */
+  leftCollapsed?: boolean;
 }
 
 export function SplitPane({
@@ -34,6 +38,7 @@ export function SplitPane({
   minLeft = 20,
   minRight = 20,
   rightCollapsed = false,
+  leftCollapsed = false,
 }: SplitPaneProps) {
   const [split, setSplit] = useState(defaultSplit);
   const savedSplitRef = useRef(defaultSplit);
@@ -127,15 +132,27 @@ export function SplitPane({
     <div ref={containerRef} className={`split-pane ${rightCollapsed ? 'right-collapsed' : ''}`}>
       {/* Overlay to capture mouse events during drag (prevents iframe from stealing events) */}
       {isDragging && <div className="split-pane-overlay" />}
-      <div className="split-pane-left" style={{ width: rightCollapsed ? '100%' : `${split}%` }}>
+      {/* Collapsed left keeps rendering its children — they're floating
+          elsewhere (fixed position), and unmounting them would kill live
+          terminal sessions. Only the column's width goes to zero. */}
+      <div
+        className="split-pane-left"
+        style={{ width: leftCollapsed ? '0%' : rightCollapsed ? '100%' : `${split}%` }}
+      >
         {left}
       </div>
       {!rightCollapsed && (
         <>
-          <div className="split-pane-handle" onMouseDown={handleMouseDown}>
-            <div className="split-pane-handle-bar" />
-          </div>
-          <div className="split-pane-right" style={{ width: `${100 - split}%` }}>
+          {/* Nothing to drag between when the left column is collapsed. */}
+          {!leftCollapsed && (
+            <div className="split-pane-handle" onMouseDown={handleMouseDown}>
+              <div className="split-pane-handle-bar" />
+            </div>
+          )}
+          <div
+            className="split-pane-right"
+            style={{ width: leftCollapsed ? '100%' : `${100 - split}%` }}
+          >
             {right}
           </div>
         </>

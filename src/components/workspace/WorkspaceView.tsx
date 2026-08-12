@@ -29,6 +29,7 @@ import { Preview } from '../preview/Preview';
 import type { PreviewHandle, InspectTab } from '../preview/Preview';
 import { DeviceMirror } from '../preview/DeviceMirror';
 import { SplitPane } from './SplitPane';
+import { AgentPane, AgentDockToggle } from './AgentPane';
 import { BranchIndicator } from '../branches/BranchIndicator';
 import { CodeTab } from '../code/CodeTab';
 import { BranchPRTabContainer } from './BranchPRTabContainer';
@@ -55,6 +56,7 @@ import {
   UndoIcon,
   RedoIcon,
 } from '../icons';
+import { useAgentDock } from '../../hooks/useAgentDock';
 import { useSnapshots } from '../../hooks/useSnapshots';
 import { useWorktreeWorkflow } from '../../hooks/useWorktreeWorkflow';
 import { ToolbarDropdown } from './ToolbarDropdown';
@@ -775,6 +777,8 @@ export const WorkspaceView = memo(function WorkspaceView({
     undo: undoSnapshot,
     redo: redoSnapshot,
   } = useSnapshots(currentProject.path, showToast);
+  // Agent panel: docked in the split pane, or floating over the workspace.
+  const agentDock = useAgentDock();
   // Snapshots use `git stash`, so undo/redo need a git repo — say so in the tooltip
   // when disabled, instead of the usual shortcut hint.
   const snapTitle = (verb: string, enabled: boolean, hint: string, idle: string) =>
@@ -1161,10 +1165,11 @@ export const WorkspaceView = memo(function WorkspaceView({
                   minLeft={20}
                   minRight={35}
                   rightCollapsed={isPreviewHidden}
+                  leftCollapsed={agentDock.isFloating}
                   left={
-                    <div className="terminal-pane">
+                    <AgentPane dock={agentDock}>
                       <div className="workspace-terminal-view">
-                        <div className="terminal-tabs-bar">
+                        <div className="terminal-tabs-bar" {...agentDock.headerDragProps}>
                           {/* Restart-dev-server moved to the sidebar row
                             (Commands → Dev server). "Edit dev command" and
                             "Project settings" moved to the ⌘K palette. */}
@@ -1190,6 +1195,7 @@ export const WorkspaceView = memo(function WorkspaceView({
                           </div>
                           <div style={{ flex: 1 }} />
                           <div className="terminal-tabs-bar-right">
+                            <AgentDockToggle dock={agentDock} />
                             {canSplit && (
                               <button
                                 type="button"
@@ -1434,7 +1440,7 @@ export const WorkspaceView = memo(function WorkspaceView({
                           </button>
                         </div>
                       )}
-                    </div>
+                    </AgentPane>
                   }
                   right={
                     <div className="preview-pane">

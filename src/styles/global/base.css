@@ -175,6 +175,9 @@
   --z-workspace-header: 200;
   /* Fullscreen preview overlay — above workspace chrome, below modals. */
   --z-preview-fullscreen: 900;
+  /* Floating agent panel — clears the fullscreen preview it hovers over, but
+     stays under the edit panel and every modal. */
+  --z-agent-float: 950;
   /* Visual editor panel width — shared by the panel itself (visual-editor.css)
      and the preview grid column that hosts it when pinned (preview.css).
      MUST match PANEL_WIDTH in VisualEditorPanel.tsx. */
@@ -183,8 +186,8 @@
      the two bars line up. */
   --preview-toolbar-h: 47px;
   /* Element tree (navigator) panel width — the preview's left grid column in
-     fullscreen edit mode. The Code (markup-edit) view widens to --tree-code-w
-     so hand-editing HTML isn't cramped. */
+     edit mode. The Code (markup-edit) view widens to --tree-code-w so
+     hand-editing HTML isn't cramped. */
   --tree-panel-w: 240px;
   --tree-code-w: 420px;
   /* Max width for the terminal first-run hint card. */

@@ -18,6 +18,7 @@
 @import './features/import-picker.css';
 @import './features/workspace/main.css';
 @import './features/workspace/split-pane.css';
+@import './features/workspace/agent-dock.css';
 @import './features/workspace/tabs.css';
 @import './features/workspace/terminal.css';
 @import './features/workspace/sidebar.css';

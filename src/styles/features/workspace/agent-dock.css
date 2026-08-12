@@ -1,0 +1,109 @@
+/**
+ * Floating agent panel.
+ *
+ * The docked pane keeps its own styling (`.terminal-pane` in split-pane.css);
+ * this file only adds the floating chrome. The same DOM node carries both
+ * states — see `hooks/useAgentDock.ts` for why it must never be re-parented.
+ *
+ * `position: fixed` here resolves against the viewport: nothing above
+ * `.terminal-pane` sets transform / filter / contain. If that ever changes,
+ * floating mode breaks and the panel will clip to the split pane instead.
+ */
+
+.terminal-pane--floating {
+  position: fixed;
+  /* Geometry is inline from the hook; only the chrome lives here. */
+  width: auto;
+  height: auto;
+  z-index: var(--z-agent-float);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-lg);
+  /* Round the tab bar's corners with the panel. */
+  overflow: hidden;
+}
+
+/* Toolbar toggle — accented while the panel floats, like the preview's
+   element-tree button. */
+.agent-dock-toggle.is-floating {
+  color: var(--accent);
+}
+
+/* The tab bar doubles as the drag handle while floating. Buttons inside keep
+   their own cursor, so only the empty bar reads as grabbable. */
+.terminal-pane--floating .terminal-tabs-bar {
+  cursor: grab;
+  user-select: none;
+}
+
+.terminal-pane--floating .terminal-tabs-bar button,
+.terminal-pane--floating .terminal-tabs-bar input {
+  cursor: default;
+}
+
+.terminal-pane--dragging .terminal-tabs-bar {
+  cursor: grabbing;
+}
+
+/* While a drag is live, swallow pointer events everywhere else — otherwise the
+   preview iframe eats the moves the moment the cursor crosses it. Same problem
+   `.split-pane-overlay` solves for the divider. */
+.agent-dock-drag-shield {
+  position: fixed;
+  inset: 0;
+  z-index: var(--z-agent-float);
+  cursor: grabbing;
+}
+
+/* ===== Resize grips =====
+   Invisible hit targets on the right edge, bottom edge, and corner. */
+.agent-dock-grip {
+  position: absolute;
+  z-index: 1;
+  touch-action: none;
+}
+
+.agent-dock-grip--right {
+  top: 0;
+  right: 0;
+  width: 6px;
+  height: 100%;
+  cursor: ew-resize;
+}
+
+.agent-dock-grip--bottom {
+  left: 0;
+  bottom: 0;
+  width: 100%;
+  height: 6px;
+  cursor: ns-resize;
+}
+
+.agent-dock-grip--corner {
+  right: 0;
+  bottom: 0;
+  width: 16px;
+  height: 16px;
+  /* Above the edge grips so the corner wins in the overlap. */
+  z-index: 2;
+  cursor: nwse-resize;
+}
+
+/* The only visible grip: a subtle diagonal notch in the corner. */
+.agent-dock-grip--corner::after {
+  content: '';
+  position: absolute;
+  right: 3px;
+  bottom: 3px;
+  width: 8px;
+  height: 8px;
+  border-right: 2px solid var(--text-muted);
+  border-bottom: 2px solid var(--text-muted);
+  border-bottom-right-radius: var(--radius-sm);
+  opacity: 0.5;
+  transition: opacity var(--transition);
+}
+
+.agent-dock-grip--corner:hover::after {
+  opacity: 1;
+}

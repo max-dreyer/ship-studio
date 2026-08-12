@@ -24,7 +24,12 @@
   --handle-size: 8px;
   flex: 1;
   display: grid;
-  grid-template-rows: auto 1fr 0;
+  /* minmax(0, …), not a bare 1fr: a bare `1fr` is `minmax(auto, 1fr)`, so the
+     row grows to fit its tallest child instead of bounding it. The panels that
+     live in this row (element tree, pinned editor) would then stretch past the
+     container — which clips them — instead of scrolling inside it. The inline
+     override for the inspect panel (Preview.tsx) already spells this out. */
+  grid-template-rows: auto minmax(0, 1fr) 0;
   min-height: 0;
   overflow: hidden;
   position: relative;
@@ -329,9 +334,9 @@
   grid-template-columns: minmax(0, 1fr) var(--editor-panel-w);
 }
 
-/* Element tree (navigator) on the left in fullscreen edit mode. Composes with
-   the pinned editor: tree | canvas | editor. Panels use negative column lines
-   so each works with or without the other. */
+/* Element tree (navigator) on the left in edit mode, docked or fullscreen.
+   Composes with the pinned editor: tree | canvas | editor. Panels use negative
+   column lines so each works with or without the other. */
 .preview-container--tree {
   grid-template-columns: var(--tree-panel-w) minmax(0, 1fr);
 }

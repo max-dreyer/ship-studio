@@ -59,7 +59,10 @@ echo "Components (.tsx limit 1200):"
 # Bumped again (small) for worktrees: the hook call + worktree props threaded
 # to the sidebar, Branches tab, and create modal. Pure wiring; the logic lives
 # in useWorktreeWorkflow/useWorktrees.
-check_file src/components/workspace/WorkspaceView.tsx 1660
+# Bumped by 1 for the floating agent panel: the useAgentDock call plus the
+# AgentPane wrapper and its toolbar toggle. Pure wiring — the drag/resize state
+# lives in useAgentDock and the chrome in AgentPane.
+check_file src/components/workspace/WorkspaceView.tsx 1661
 check_file src/components/dashboard/ProjectList.tsx 900
 check_file src/components/plugins/PluginManager.tsx 700
 check_file src/components/dashboard/ImportProject.tsx 500

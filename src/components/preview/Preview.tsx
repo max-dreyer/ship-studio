@@ -837,9 +837,10 @@ export const Preview = forwardRef<PreviewHandle, PreviewProps>(function Preview(
     []
   );
 
-  // Element tree (navigator) — left column in fullscreen edit mode, like
-  // Webflow's navigator: read-only, select-only. Toggleable from the toolbar;
-  // the choice persists cross-project like the editor pin.
+  // Element tree (navigator) — left column in edit mode, like Webflow's
+  // navigator: read-only, select-only. Toggleable from the toolbar in both
+  // docked and fullscreen preview; the choice persists cross-project like the
+  // editor pin.
   const [treeVisible, setTreeVisible] = useState(
     () => localStorage.getItem('elementTreeVisible') !== '0'
   );
@@ -849,7 +850,7 @@ export const Preview = forwardRef<PreviewHandle, PreviewProps>(function Preview(
       return !v;
     });
   }, []);
-  const showTree = isFullscreen && activeEditMode && treeVisible;
+  const showTree = activeEditMode && treeVisible;
   // The Elements panel's Code (markup-edit) view needs a wider column than the
   // navigator; the tree panel reports its view so we can widen the grid track.
   const [treeCodeView, setTreeCodeView] = useState(false);
@@ -1301,7 +1302,7 @@ export const Preview = forwardRef<PreviewHandle, PreviewProps>(function Preview(
           {isFullscreen ? <CompactIcon size={14} /> : <ExpandIcon size={14} />}
         </button>
 
-        {isFullscreen && activeEditMode && (
+        {activeEditMode && (
           <button
             type="button"
             className={`preview-tree-btn${treeVisible ? ' active' : ''}`}
