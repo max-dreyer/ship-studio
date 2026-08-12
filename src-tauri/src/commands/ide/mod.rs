@@ -12,6 +12,8 @@ mod screenshots;
 pub use preview::*;
 pub use screenshots::*;
 
+pub mod browsers;
+
 use crate::errors::CommandError;
 use crate::types::{BrowserInfo, IdeAvailability};
 use crate::utils::{create_command, validate_project_path};

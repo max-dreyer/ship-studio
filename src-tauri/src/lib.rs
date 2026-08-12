@@ -702,6 +702,7 @@ pub fn run() {
             commands::code::read_project_file,
             commands::code::save_project_file,
             // Assets
+            commands::ide::browsers::discover_browsers,
             commands::comments::list_preview_comments,
             commands::comments::add_preview_comment,
             commands::comments::update_preview_comment,
