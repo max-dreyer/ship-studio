@@ -24,6 +24,46 @@ Object.defineProperty(globalThis.navigator, 'userAgent', {
   configurable: true,
 });
 
+// Guarantee a working `localStorage`, whatever the runtime provides.
+//
+// Node 26 defines its own global `localStorage` which is `undefined` unless the
+// process was started with `--localstorage-file`, and it shadows the one jsdom
+// installs. Every suite that persists a preference then dies on
+// "Cannot read properties of undefined". Rather than pin a Node version, swap
+// in an in-memory store when the ambient one can't hold a value — the suite
+// only ever needs per-run state anyway.
+(() => {
+  const usable = (() => {
+    try {
+      const store = globalThis.localStorage as Storage | undefined;
+      if (!store) return false;
+      store.setItem('__probe__', '1');
+      store.removeItem('__probe__');
+      return true;
+    } catch {
+      return false;
+    }
+  })();
+  if (usable) return;
+
+  const map = new Map<string, string>();
+  const memoryStorage: Storage = {
+    get length() {
+      return map.size;
+    },
+    key: (i) => [...map.keys()][i] ?? null,
+    getItem: (k) => map.get(k) ?? null,
+    setItem: (k, v) => void map.set(k, String(v)),
+    removeItem: (k) => void map.delete(k),
+    clear: () => map.clear(),
+  };
+  Object.defineProperty(globalThis, 'localStorage', {
+    value: memoryStorage,
+    configurable: true,
+    writable: true,
+  });
+})();
+
 // Store for mock invoke responses
 type InvokeResponse = unknown;
 const invokeResponses = new Map<string, InvokeResponse>();
