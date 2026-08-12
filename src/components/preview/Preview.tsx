@@ -61,6 +61,11 @@ import {
 } from '../../lib/edit';
 import { VisualEditorPanel } from '../edit/VisualEditorPanel';
 import { ElementTreePanel } from '../edit/ElementTreePanel';
+import { CommentIcon } from '../icons';
+import { CommentPins } from './CommentPins';
+import { CommentComposer } from './CommentComposer';
+import { CommentsPanel } from './CommentsPanel';
+import { usePreviewComments } from '../../hooks/usePreviewComments';
 import { useElementTree } from '../../hooks/useElementTree';
 import { PreviewLocaleSwitcher, type PreviewLocaleConfig } from './PreviewLocaleSwitcher';
 import { CompactIcon, ExpandIcon, PanelLeftIcon, ResetIcon, UndoIcon, RedoIcon } from '../icons';
@@ -856,6 +861,27 @@ export const Preview = forwardRef<PreviewHandle, PreviewProps>(function Preview(
   const [treeCodeView, setTreeCodeView] = useState(false);
   const elementTree = useElementTree({ iframeRef, enabled: showTree });
 
+  // Comment mode: a third way to talk about the page, next to the two editors.
+  // Deliberately exclusive with them — both arm a click handler in the iframe,
+  // and two of those fighting over the same click helps nobody.
+  const [commentMode, setCommentMode] = useState(false);
+  const comments = usePreviewComments({
+    projectPath,
+    pageUrl: conn.currentPage || '/',
+    enabled: commentMode && !activeEditMode,
+    onSendToAgent: onSendToClaude
+      ? (text) => {
+          onSendToClaude(text);
+          return true;
+        }
+      : undefined,
+    onToast,
+  });
+  const [selectedNoteId, setSelectedNoteId] = useState<string | null>(null);
+  useEffect(() => {
+    comments.setIframe(iframeRef.current);
+  }, [comments]);
+
   const [iframeSize, setIframeSize] = useState<{ w: number; h: number } | null>(null);
   const iframeSizeObserverRef = useRef<ResizeObserver | null>(null);
 
@@ -1302,6 +1328,23 @@ export const Preview = forwardRef<PreviewHandle, PreviewProps>(function Preview(
           {isFullscreen ? <CompactIcon size={14} /> : <ExpandIcon size={14} />}
         </button>
 
+        <button
+          type="button"
+          className={`preview-tree-btn${commentMode ? ' active' : ''}`}
+          onClick={() => setCommentMode((v) => !v)}
+          title={
+            activeEditMode
+              ? 'Comment mode is unavailable while the editor is on'
+              : commentMode
+                ? 'Exit comment mode'
+                : 'Comment on elements (⌘⇧M)'
+          }
+          aria-pressed={commentMode}
+          disabled={activeEditMode}
+        >
+          <CommentIcon size={14} />
+        </button>
+
         {activeEditMode && (
           <button
             type="button"
@@ -1564,6 +1607,40 @@ export const Preview = forwardRef<PreviewHandle, PreviewProps>(function Preview(
         onDevServerInput={onDevServerInput}
         onDevServerResize={onDevServerResize}
       />
+      {commentMode && !activeEditMode && (
+        <>
+          <CommentPins
+            comments={comments.onThisPage}
+            positions={comments.positions}
+            selectedId={selectedNoteId}
+            onSelect={setSelectedNoteId}
+          />
+          {comments.pending && (
+            <CommentComposer
+              pending={comments.pending}
+              bounds={{
+                width: iframeRef.current?.clientWidth ?? 800,
+                height: iframeRef.current?.clientHeight ?? 600,
+              }}
+              onCommit={(text) => void comments.commitPending(text)}
+              onCancel={comments.cancelPending}
+            />
+          )}
+          <CommentsPanel
+            comments={comments.comments}
+            unsentCount={comments.unsent.length}
+            sending={comments.sending}
+            selectedId={selectedNoteId}
+            onSelect={setSelectedNoteId}
+            onEdit={(id, text) => void comments.editNote(id, text)}
+            onRemove={(id) => void comments.removeNote(id)}
+            onMove={comments.startMove}
+            onSend={() => void comments.sendToAgent()}
+            onClearSent={() => void comments.clearSent()}
+            onClose={() => setCommentMode(false)}
+          />
+        </>
+      )}
       {showTree && (
         <ElementTreePanel
           tree={elementTree.tree}

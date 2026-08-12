@@ -23,6 +23,15 @@ export interface BrowserInfo {
  * @returns List of installed browsers
  */
 export async function checkBrowserAvailability(): Promise<BrowserInfo[]> {
+  // Bundle-based discovery finds every installed browser, including ones in
+  // ~/Applications and ones nobody put on a list. It is macOS-only; elsewhere
+  // it returns nothing and the older path-checking command still applies.
+  try {
+    const discovered = await invoke<BrowserInfo[]>('discover_browsers');
+    if (discovered.length > 0) return discovered;
+  } catch {
+    // Fall through — an older backend simply doesn't have the command.
+  }
   return invoke<BrowserInfo[]>('check_browser_availability');
 }
 

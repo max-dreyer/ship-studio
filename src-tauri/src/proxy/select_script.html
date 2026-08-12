@@ -586,4 +586,90 @@ document.addEventListener('input',function(){if(txtEditing){place(hoverBox,txtEl
 document.addEventListener('selectionchange',function(){if(txtEditing)updateFmtBar();});
 window.addEventListener('scroll',reposition,true);
 window.addEventListener('resize',reposition,true);
+})();
+/* ── Comment mode ─────────────────────────────────────────────────────
+   Two jobs, deliberately narrow. Comment mode only needs to know WHAT was
+   clicked, so it reuses the same element lookup as the editors rather than
+   introducing a second notion of "the element under the cursor".
+
+   Comment pins: the host sends {id,domPath} pairs and we report where those
+   elements are right now. Only this side can do that — a dom_path means
+   nothing outside the page it was recorded in. Positions are reported on
+   scroll and resize so the pins stay glued to their elements. */
+(function(){
+var armed=false, tracked=[];
+
+/* Longest-lived handle first: a unique id, then structure. Mirrors
+   lib/comments.ts — keep the two in step. */
+function pathFor(el){
+  var parts=[], cur=el;
+  while(cur && cur.tagName && cur.tagName.toLowerCase()!=='html'){
+    var tag=cur.tagName.toLowerCase();
+    if(tag==='body'){parts.unshift('body');break;}
+    var id=cur.getAttribute&&cur.getAttribute('id');
+    /* A duplicated id is invalid HTML but common; trusting one would point
+       the note at the wrong element. */
+    if(id && document.querySelectorAll('#'+CSS.escape(id)).length===1){
+      parts.unshift('#'+CSS.escape(id));break;
+    }
+    var i=1, sib=cur.previousElementSibling;
+    while(sib){ if(sib.tagName===cur.tagName)i++; sib=sib.previousElementSibling; }
+    /* nth-of-type, not nth-child: an injected <script> must not shift every
+       note below it. */
+    parts.unshift(tag+':nth-of-type('+i+')');
+    cur=cur.parentElement;
+  }
+  return parts.join(' > ');
+}
+
+function labelFor(el){
+  var tag=el.tagName.toLowerCase();
+  var id=el.getAttribute('id');
+  if(id)return tag+'#'+id;
+  var cls=(el.getAttribute('class')||'').trim().split(/\s+/)[0];
+  return cls?tag+'.'+cls:tag;
+}
+
+function send(msg){ try{ parent.postMessage(msg,'*'); }catch(e){} }
+
+function report(){
+  if(!armed||!tracked.length)return;
+  send({type:'ss:comments:positions',positions:tracked.map(function(p){
+    var el=null;
+    try{ el=document.querySelector(p.domPath); }catch(e){}
+    if(!el)return {id:p.id,x:0,y:0,found:false};
+    var r=el.getBoundingClientRect();
+    /* Top-centre of the element, which is where the pin's tip sits. */
+    return {id:p.id,x:Math.round(r.left+r.width/2),y:Math.round(r.top),found:true};
+  })});
+}
+
+window.addEventListener('message',function(e){
+  var d=e.data;
+  if(!d||typeof d!=='object')return;
+  if(d.type==='ss:comments:arm'){
+    armed=!!d.armed;
+    if(!armed)tracked=[];
+    else report();
+  } else if(d.type==='ss:comments:track'){
+    tracked=Array.isArray(d.pins)?d.pins:[];
+    report();
+  }
+});
+
+/* Capture phase, and swallow the click: in comment mode a click means "talk
+   about this", never "follow this link". */
+document.addEventListener('click',function(e){
+  if(!armed)return;
+  var el=e.target;
+  if(!el||el.nodeType!==1)return;
+  e.preventDefault(); e.stopPropagation();
+  var path=pathFor(el), matches=0;
+  try{ matches=document.querySelectorAll(path).length; }catch(err){}
+  send({type:'ss:comments:clicked',domPath:path,label:labelFor(el),
+        ambiguous:matches!==1,x:Math.round(e.clientX),y:Math.round(e.clientY)});
+},true);
+
+window.addEventListener('scroll',report,true);
+window.addEventListener('resize',report,true);
 })()</script>

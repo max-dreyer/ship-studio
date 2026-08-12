@@ -1,0 +1,394 @@
+/**
+ * Comment mode — pins over the preview, the composer, and the notes panel.
+ *
+ * The pins float above the preview iframe, which in WebKit means fixed/absolute
+ * layers in the host document; the pin layer itself is click-through so only
+ * the pins themselves take the pointer.
+ */
+
+/* ── Pins ─────────────────────────────────────────────────────────── */
+
+.ss-pins {
+  position: absolute;
+  inset: 0;
+  /* The layer must never eat clicks meant for the page underneath. */
+  pointer-events: none;
+  z-index: var(--z-dropdown);
+}
+
+.ss-pin {
+  position: absolute;
+  pointer-events: auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  /* Anchored by its bottom-left corner, like a map pin. */
+  transform: translate(-50%, -100%);
+  border: 1px solid var(--bg-primary);
+  border-radius: var(--radius-pill);
+  background: var(--action);
+  color: var(--action-text);
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+  line-height: 1;
+  cursor: pointer;
+  box-shadow: var(--shadow-sm);
+  transition:
+    transform var(--transition),
+    background-color var(--transition);
+}
+
+.ss-pin:hover,
+.ss-pin.is-selected {
+  transform: translate(-50%, -100%) scale(1.15);
+}
+
+/* Already handed to the agent: still there, no longer asking for attention. */
+.ss-pin.is-sent {
+  background: var(--bg-tertiary);
+  color: var(--text-secondary);
+}
+
+/* The element is gone from the page. Shown rather than hidden, so a note never
+   disappears without explanation. */
+.ss-pin.is-detached {
+  background: var(--warning);
+  color: var(--action-text);
+  border-style: dashed;
+}
+
+/* ── Composer ─────────────────────────────────────────────────────── */
+
+.ss-composer {
+  position: absolute;
+  z-index: var(--z-dropdown);
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-lg);
+  overflow: hidden;
+}
+
+.ss-composer__head {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-xs);
+  padding: 6px var(--spacing-sm);
+  background: var(--bg-tertiary);
+  border-bottom: 1px solid var(--border);
+  cursor: grab;
+  user-select: none;
+}
+
+.ss-composer__head:active {
+  cursor: grabbing;
+}
+
+.ss-composer__target {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--font-mono, monospace);
+  font-size: var(--font-size-xs);
+  color: var(--accent);
+}
+
+.ss-composer__close {
+  border: none;
+  background: none;
+  color: var(--text-muted);
+  font-size: var(--font-size-md);
+  line-height: 1;
+  cursor: pointer;
+}
+
+.ss-composer__close:hover {
+  color: var(--text-primary);
+}
+
+.ss-composer__warn {
+  margin: 0;
+  padding: 6px var(--spacing-sm);
+  background: rgba(var(--warning-rgb), 0.12);
+  color: var(--warning);
+  font-size: var(--font-size-xs);
+  line-height: 1.4;
+}
+
+.ss-composer__text {
+  min-height: 64px;
+  padding: var(--spacing-sm);
+  border: none;
+  background: transparent;
+  color: var(--text-primary);
+  font-family: inherit;
+  font-size: var(--font-size-sm);
+  line-height: 1.5;
+  resize: none;
+  outline: none;
+}
+
+.ss-composer__foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--spacing-sm);
+  padding: 6px var(--spacing-sm);
+  border-top: 1px solid var(--border);
+}
+
+.ss-composer__hint {
+  font-size: var(--font-size-xs);
+  color: var(--text-muted);
+}
+
+.ss-composer__save {
+  padding: 4px var(--spacing-md);
+  border: none;
+  border-radius: var(--radius-sm);
+  background: var(--action);
+  color: var(--action-text);
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.ss-composer__save:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+/* ── Notes panel ──────────────────────────────────────────────────── */
+
+.ss-notes {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  background: var(--bg-secondary);
+  border-left: 1px solid var(--border);
+}
+
+.ss-notes__head {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-xs);
+  height: var(--preview-toolbar-h);
+  flex-shrink: 0;
+  padding: 0 var(--spacing-md);
+  border-bottom: 1px solid var(--border);
+}
+
+.ss-notes__title {
+  font-weight: 600;
+  color: var(--text-primary);
+  font-size: var(--font-size-md);
+}
+
+.ss-notes__count {
+  padding: 1px 6px;
+  border-radius: var(--radius-pill);
+  background: var(--bg-tertiary);
+  color: var(--text-secondary);
+  font-size: var(--font-size-xs);
+}
+
+.ss-notes__close {
+  margin-left: auto;
+  border: none;
+  background: none;
+  color: var(--text-muted);
+  font-size: var(--font-size-md);
+  line-height: 1;
+  cursor: pointer;
+}
+
+.ss-notes__close:hover {
+  color: var(--text-primary);
+}
+
+/* Block flow, not a flex column: the list is prose-like content of varying
+   height, and flex children were collapsing their own scroll. */
+.ss-notes__list {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: var(--spacing-sm);
+}
+
+.ss-notes__group + .ss-notes__group {
+  margin-top: var(--spacing-md);
+}
+
+.ss-notes__page {
+  margin: 0 0 var(--spacing-xs);
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.ss-note {
+  padding: var(--spacing-sm);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-tertiary);
+  cursor: pointer;
+}
+
+.ss-note + .ss-note {
+  margin-top: var(--spacing-xs);
+}
+
+.ss-note.is-selected {
+  border-color: var(--action);
+}
+
+.ss-note.is-sent {
+  opacity: 0.6;
+}
+
+.ss-note__head {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-xs);
+  margin-bottom: 4px;
+}
+
+.ss-note__label {
+  font-family: var(--font-mono, monospace);
+  font-size: var(--font-size-xs);
+  color: var(--accent);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ss-note__badge {
+  margin-left: auto;
+  padding: 0 5px;
+  border-radius: var(--radius-pill);
+  background: var(--bg-secondary);
+  color: var(--text-muted);
+  font-size: var(--font-size-xs);
+}
+
+.ss-note__text {
+  margin: 0;
+  font-size: var(--font-size-sm);
+  line-height: 1.45;
+  color: var(--text-primary);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.ss-note__edit {
+  width: 100%;
+  min-height: 52px;
+  padding: 4px;
+  border: 1px solid var(--action);
+  border-radius: var(--radius-sm);
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  font-family: inherit;
+  font-size: var(--font-size-sm);
+  resize: vertical;
+  outline: none;
+}
+
+/* Row actions stay quiet until the note is hovered — the text is the content,
+   not the buttons. */
+.ss-note__actions {
+  display: flex;
+  gap: var(--spacing-sm);
+  margin-top: 6px;
+  opacity: 0;
+  transition: opacity var(--transition);
+}
+
+.ss-note:hover .ss-note__actions,
+.ss-note.is-selected .ss-note__actions {
+  opacity: 1;
+}
+
+.ss-note__actions button {
+  border: none;
+  background: none;
+  padding: 0;
+  color: var(--text-muted);
+  font-size: var(--font-size-xs);
+  cursor: pointer;
+}
+
+.ss-note__actions button:hover {
+  color: var(--text-primary);
+}
+
+.ss-notes__empty {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: var(--spacing-xs);
+  padding: var(--spacing-lg);
+  text-align: center;
+}
+
+.ss-notes__empty-lead {
+  margin: 0;
+  font-size: var(--font-size-sm);
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+
+.ss-notes__empty-hint {
+  margin: 0;
+  font-size: var(--font-size-xs);
+  line-height: 1.5;
+  color: var(--text-muted);
+}
+
+.ss-notes__foot {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-sm);
+  flex-shrink: 0;
+  padding: var(--spacing-sm);
+  border-top: 1px solid var(--border);
+}
+
+.ss-notes__send {
+  flex: 1;
+  padding: 6px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: var(--action);
+  color: var(--action-text);
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.ss-notes__send:disabled {
+  background: var(--bg-tertiary);
+  color: var(--text-muted);
+  cursor: not-allowed;
+}
+
+.ss-notes__clear {
+  border: none;
+  background: none;
+  color: var(--text-muted);
+  font-size: var(--font-size-xs);
+  cursor: pointer;
+}
+
+.ss-notes__clear:hover {
+  color: var(--text-primary);
+}

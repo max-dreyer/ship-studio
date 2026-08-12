@@ -214,3 +214,21 @@ export function ListIcon({ size = 14 }: IconProps) {
     </svg>
   );
 }
+
+/** Speech bubble — comment mode. */
+export function CommentIcon({ size = 16 }: IconProps) {
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 16 16"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.4"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <path d="M3 3h10a1 1 0 0 1 1 1v6a1 1 0 0 1-1 1H7l-3.5 2.5V11H3a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1Z" />
+    </svg>
+  );
+}
