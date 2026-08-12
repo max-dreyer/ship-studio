@@ -1,5 +1,27 @@
 /* Code browser styles */
 
+/*
+ * File-type hues for the tree icons, the trick that makes a long file list
+ * scannable in VS Code. Feature-local on purpose: these are identity colours
+ * for file types, not semantic app state, so they don't belong in the global
+ * palette. Kinds come from `lib/fileIcons.ts`.
+ */
+:root {
+  --fi-ts: #4a9eff;
+  --fi-js: #e5c04b;
+  --fi-style: #56b6f0;
+  --fi-markup: #e8834a;
+  --fi-data: #d4b652;
+  --fi-doc: #9aa3ad;
+  --fi-image: #b57edc;
+  --fi-media: #d178b8;
+  --fi-font: #7fb99a;
+  --fi-config: #8d96a0;
+  --fi-lock: #6d7681;
+  --fi-rust: #d4854a;
+  --fi-shell: #7cc47f;
+}
+
 .code-tab {
   display: flex;
   flex: 1;
@@ -199,6 +221,48 @@
 
 .file-tree-item.selected .file-tree-icon {
   color: var(--accent);
+}
+
+/* Type tints. The selected row keeps its accent (above) so the selection stays
+   the strongest signal in the tree. */
+.file-tree-icon--ts {
+  color: var(--fi-ts);
+}
+.file-tree-icon--js {
+  color: var(--fi-js);
+}
+.file-tree-icon--style {
+  color: var(--fi-style);
+}
+.file-tree-icon--markup {
+  color: var(--fi-markup);
+}
+.file-tree-icon--data {
+  color: var(--fi-data);
+}
+.file-tree-icon--doc {
+  color: var(--fi-doc);
+}
+.file-tree-icon--image {
+  color: var(--fi-image);
+}
+.file-tree-icon--media {
+  color: var(--fi-media);
+}
+.file-tree-icon--font {
+  color: var(--fi-font);
+}
+.file-tree-icon--config {
+  color: var(--fi-config);
+}
+.file-tree-icon--lock {
+  color: var(--fi-lock);
+}
+.file-tree-icon--rust {
+  color: var(--fi-rust);
+}
+.file-tree-icon--shell {
+  color: var(--fi-shell);
 }
 
 .file-tree-name {

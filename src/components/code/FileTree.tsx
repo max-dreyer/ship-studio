@@ -7,6 +7,7 @@
 
 import type { FileTreeNode } from '../../lib/code';
 import { ChevronRightIcon, FileIcon, FolderIcon } from '../icons';
+import { fileKind } from '../../lib/fileIcons';
 
 interface FileTreeProps {
   nodes: FileTreeNode[];
@@ -86,7 +87,13 @@ function FileTreeItem({
             <ChevronRightIcon size={12} />
           </span>
         )}
-        <span className="file-tree-icon">
+        {/* Tinted by file type, the way VS Code makes a long list scannable.
+            The hue lives in CSS (`--fi-*`), keyed off this class. */}
+        <span
+          className={`file-tree-icon${
+            node.isDirectory ? '' : ` file-tree-icon--${fileKind(node.name)}`
+          }`}
+        >
           {node.isDirectory ? <FolderIcon size={14} /> : <FileIcon size={14} />}
         </span>
         <span className="file-tree-name">{node.name}</span>

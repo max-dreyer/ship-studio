@@ -121,12 +121,15 @@ export const codeTabEditorTheme = EditorView.theme({
   // Larger, readable code text on a transparent surface so the code area shows
   // the panel background.
   '&': {
-    fontSize: 'var(--font-size-xl)',
+    // Set by `useCodeZoom` on the Code tab's root; the old constant stays as
+    // the fallback so any other mount of this theme is unaffected.
+    fontSize: 'var(--code-font-size, var(--font-size-xl))',
     backgroundColor: 'transparent',
   },
   '.cm-scroller': {
     fontFamily: 'var(--font-mono, monospace)',
-    lineHeight: '24px',
+    // Grows with the font rather than staying pinned at 24px.
+    lineHeight: 'calc(var(--code-font-size, var(--font-size-xl)) * 1.5)',
   },
   '.cm-content': { paddingTop: '12px' },
   // Clearly visible, contiguous selection (drawSelection paints full-line-height

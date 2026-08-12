@@ -7,6 +7,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useFileTree } from '../../hooks/useFileTree';
+import { useCodeZoom } from '../../hooks/useCodeZoom';
 import { FileTree } from './FileTree';
 import { CodeViewer } from './CodeViewer';
 import { ProjectActionConfirmModal } from '../dashboard/ProjectActionConfirmModal';
@@ -94,6 +95,8 @@ export function CodeTab({ projectPath, onSendToAgent, revealTarget }: CodeTabPro
 
   const [sidebarWidth, setSidebarWidth] = useState(250);
   const [searchQuery, setSearchQuery] = useState('');
+  // Editor font size, with Cmd +/-/0 and an app-wide preference.
+  const codeZoom = useCodeZoom();
   const containerRef = useRef<HTMLDivElement>(null);
   const isDragging = useRef(false);
 
@@ -148,7 +151,7 @@ export function CodeTab({ projectPath, onSendToAgent, revealTarget }: CodeTabPro
   }, []);
 
   return (
-    <div className="code-tab" ref={containerRef}>
+    <div className="code-tab" ref={containerRef} style={codeZoom.style}>
       <div className="code-tab-sidebar" style={{ width: sidebarWidth }}>
         <div className="code-tab-sidebar-header">
           <span className="code-tab-sidebar-title">Files</span>
