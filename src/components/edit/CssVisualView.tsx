@@ -21,12 +21,17 @@ import { useState } from 'react';
 import { CssControls } from './CssControls';
 import { CSS_CATEGORIES } from '../../lib/cssControls';
 import { declarations, type RuleBody } from '../../lib/cssBody';
+import { effectiveValues } from '../../lib/cssEffective';
+import { rowKey, type CascadeRow } from '../../lib/cssCascade';
 import { setBodyProperties, setBodyProperty } from '../../lib/cssBodyEdit';
 import type { CssDeclaration } from '../../lib/edit-css';
 
 interface Props {
   /** The rule being edited, already resolved by the panel. */
   rule: { key: string; selector: string; file?: string | null; body: RuleBody } | null;
+  /** The element's full cascade — used to show what it currently has, even for
+   *  properties this rule doesn't set. */
+  rows: CascadeRow[];
   onChangeBody: (key: string, body: RuleBody) => void;
 }
 
@@ -35,7 +40,7 @@ function defaultOpen(id: string): boolean {
   return !['child', 'position', 'transform', 'effects'].includes(id);
 }
 
-export function CssVisualView({ rule, onChangeBody }: Props) {
+export function CssVisualView({ rule, rows, onChangeBody }: Props) {
   const [open, setOpen] = useState<Record<string, boolean>>({});
 
   if (!rule) {
@@ -59,6 +64,10 @@ export function CssVisualView({ rule, onChangeBody }: Props) {
 
   const writeMany = (changes: { property: string; value: string | null }[]) =>
     onChangeBody(rule.key, setBodyProperties(rule.body, changes));
+
+  // What the element actually has right now, so controls this rule leaves
+  // alone still show the truth rather than looking unset.
+  const effective = effectiveValues(rows, rowKey, rule.key);
 
   return (
     <div className="ss-visual">
@@ -92,6 +101,7 @@ export function CssVisualView({ rule, onChangeBody }: Props) {
               onPreview={write}
               onSave={write}
               onSaveMany={writeMany}
+              effective={effective}
             />
           </div>
         </details>

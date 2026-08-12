@@ -1082,3 +1082,23 @@
   font-size: var(--font-size-xs);
   color: var(--text-muted);
 }
+
+/* A row showing what the element has from ANOTHER rule, not from the one being
+   edited. Muted rather than hidden: the panel should reflect reality, and the
+   tooltip names the source. Typing in the field makes it the rule's own. */
+.ss-cc-field.is-inherited .ss-cc-label,
+.ss-cc-field.is-inherited .ss-cc-labelbtn {
+  color: var(--text-muted);
+  font-style: italic;
+}
+
+.ss-cc-field.is-inherited .ss-cc-input::placeholder {
+  color: var(--text-secondary);
+  font-style: italic;
+}
+
+/* Segmented and dropdown controls can't use a placeholder, so the inherited
+   choice is shown selected but dimmed. */
+.ss-cc-field.is-inherited .ss-cc-seg__btn.is-active {
+  opacity: 0.6;
+}

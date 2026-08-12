@@ -371,7 +371,7 @@ export function CssCascadePanel({
                 </div>
 
                 {styleView === 'visual' && !loading && (
-                  <CssVisualView rule={visualTarget} onChangeBody={onChangeBody} />
+                  <CssVisualView rule={visualTarget} rows={rows} onChangeBody={onChangeBody} />
                 )}
 
                 <AddSelectorBar

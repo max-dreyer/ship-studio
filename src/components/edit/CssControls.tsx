@@ -33,6 +33,7 @@ import { CssEdgeControl } from './CssEdgeControl';
 import { CssGradientEditor } from './CssGradientEditor';
 import { ICONS } from './CssControlIcons';
 import type { EdgeKind } from '../../lib/cssEdges';
+import { inheritedValue, type EffectiveValue } from '../../lib/cssEffective';
 import { CSS_CATEGORIES, cssValueOf, type CssControl, type SegOption } from '../../lib/cssControls';
 import type { CssDeclaration } from '../../lib/edit-css';
 
@@ -54,6 +55,9 @@ interface ControlProps {
   value: string;
   onPreview: (property: string, value: string | null) => void;
   onSave: (property: string, value: string | null) => void;
+  /** What the element actually has when this rule doesn't set the property —
+   *  shown as a placeholder so the panel reflects reality, not just this rule. */
+  inherited?: EffectiveValue | null;
 }
 
 /** A control label that doubles as a Reset affordance — same behavior as the
@@ -135,12 +139,16 @@ function ResettableCcLabel({
 function Field({
   label,
   isSet,
+  inherited,
   onReset,
   block,
   children,
 }: {
   label: string;
   isSet?: boolean;
+  /** Set when the value on screen comes from another rule — the row is muted
+   *  and the label says where it came from. */
+  inherited?: EffectiveValue | null;
   onReset?: () => void;
   /** Stack the control under its label instead of beside it. For controls that
    *  need the full width (layer editors, the box model), where Webflow also
@@ -148,8 +156,14 @@ function Field({
   block?: boolean;
   children: ReactNode;
 }) {
+  const showsInherited = !isSet && !!inherited;
   return (
-    <div className={`ss-cc-field${block ? ' ss-cc-field--block' : ''}`}>
+    <div
+      className={`ss-cc-field${block ? ' ss-cc-field--block' : ''}${
+        showsInherited ? ' is-inherited' : ''
+      }`}
+      title={showsInherited ? `From ${inherited.source}` : undefined}
+    >
       {onReset ? (
         <ResettableCcLabel label={label} isSet={!!isSet} onReset={onReset} />
       ) : (
@@ -167,11 +181,15 @@ function Segmented({
   value,
   onPreview,
   onSave,
+  inherited,
 }: ControlProps & { prop: string; label: string; options: SegOption[] }) {
+  // With nothing set here, highlight what the element actually has, muted.
+  const shown = value.trim() !== '' ? value : (inherited?.value ?? '');
   return (
     <Field
       label={label}
       isSet={value.trim() !== ''}
+      inherited={inherited}
       onReset={() => {
         onPreview(prop, null);
         onSave(prop, null);
@@ -179,7 +197,7 @@ function Segmented({
     >
       <div className="ss-cc-seg" role="group" aria-label={label}>
         {options.map((o) => {
-          const active = value === o.value;
+          const active = shown === o.value;
           return (
             <button
               key={o.value}
@@ -209,11 +227,13 @@ function SelectControl({
   value,
   onPreview,
   onSave,
+  inherited,
 }: ControlProps & { prop: string; label: string; options: { value: string; label: string }[] }) {
   return (
     <Field
       label={label}
       isSet={value.trim() !== ''}
+      inherited={inherited}
       onReset={() => {
         onPreview(prop, null);
         onSave(prop, null);
@@ -221,7 +241,7 @@ function SelectControl({
     >
       <EnumDropdown
         label={label}
-        value={value || null}
+        value={value || inherited?.value || null}
         options={[
           { label: '—', token: '' },
           ...options.map((o) => ({ label: o.label, token: o.value })),
@@ -246,11 +266,13 @@ function LengthControl({
   value,
   onPreview,
   onSave,
+  inherited,
 }: ControlProps & { prop: string; label: string; placeholder?: string }) {
   return (
     <Field
       label={label}
       isSet={value.trim() !== ''}
+      inherited={inherited}
       onReset={() => {
         onPreview(prop, null);
         onSave(prop, null);
@@ -259,7 +281,7 @@ function LengthControl({
       <CssLengthField
         prop={prop}
         value={value}
-        placeholder={placeholder}
+        placeholder={inherited?.value ?? placeholder}
         onPreview={onPreview}
         onSave={onSave}
         isValid={(v) => cssSupports(prop, v)}
@@ -278,6 +300,7 @@ function TextControl({
   value,
   onPreview,
   onSave,
+  inherited,
 }: ControlProps & { prop: string; label: string; placeholder?: string }) {
   const [text, setText] = useState(value);
   const [syncedValue, setSyncedValue] = useState(value);
@@ -300,6 +323,7 @@ function TextControl({
     <Field
       label={label}
       isSet={value.trim() !== ''}
+      inherited={inherited}
       onReset={() => {
         onPreview(prop, null);
         onSave(prop, null);
@@ -308,7 +332,7 @@ function TextControl({
       <input
         className={`ss-cc-input${!valid ? ' is-invalid' : ''}`}
         value={text}
-        placeholder={placeholder}
+        placeholder={inherited?.value ?? placeholder}
         spellCheck={false}
         onChange={(e) => {
           setText(e.target.value);
@@ -472,6 +496,7 @@ function Control({
   onSave,
   onSaveMany,
   declarations,
+  inherited,
   highlight,
 }: {
   control: CssControl;
@@ -513,6 +538,7 @@ function Control({
           key={key}
           prop={control.prop}
           label={control.label}
+          inherited={inherited}
           options={control.options}
           value={value}
           onPreview={onPreview}
@@ -526,6 +552,7 @@ function Control({
           key={key}
           prop={control.prop}
           label={control.label}
+          inherited={inherited}
           options={control.options}
           value={value}
           onPreview={onPreview}
@@ -539,6 +566,7 @@ function Control({
           key={key}
           prop={control.prop}
           label={control.label}
+          inherited={inherited}
           placeholder={control.placeholder}
           value={value}
           onPreview={onPreview}
@@ -552,6 +580,7 @@ function Control({
           key={key}
           prop={control.prop}
           label={control.label}
+          inherited={inherited}
           placeholder={control.placeholder}
           value={value}
           onPreview={onPreview}
@@ -656,6 +685,7 @@ export function CssControls({
   onPreview,
   onSave,
   onSaveMany,
+  effective,
   highlightProp,
 }: {
   category: string;
@@ -665,6 +695,9 @@ export function CssControls({
   /** Several declarations at once — the spacing box and the edge control need
    *  it to replace a shorthand with longhands in one write. */
   onSaveMany: (changes: { property: string; value: string | null }[]) => void;
+  /** What the element currently has, per property, across the whole cascade.
+   *  Controls the rule doesn't set show it as a muted placeholder. */
+  effective?: Map<string, EffectiveValue>;
   highlightProp?: string | null;
 }) {
   const get = (p: string) => cssValueOf(declarations, p);
@@ -678,6 +711,7 @@ export function CssControls({
       control={c}
       value={get(c.prop)}
       declarations={declarations}
+      inherited={inheritedValue(effective, c.prop)}
       onPreview={onPreview}
       onSave={onSave}
       onSaveMany={onSaveMany}
