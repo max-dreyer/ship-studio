@@ -702,6 +702,13 @@ pub fn run() {
             commands::code::read_project_file,
             commands::code::save_project_file,
             // Assets
+            commands::comments::list_preview_comments,
+            commands::comments::add_preview_comment,
+            commands::comments::update_preview_comment,
+            commands::comments::delete_preview_comment,
+            commands::comments::reanchor_preview_comment,
+            commands::comments::mark_preview_comments_sent,
+            commands::comments::clear_sent_preview_comments,
             commands::assets::get_assets_root,
             commands::assets::set_assets_root,
             commands::assets::list_assets,

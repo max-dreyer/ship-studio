@@ -11,6 +11,7 @@ pub mod attached_libraries;
 pub mod claude;
 pub mod clipboard;
 pub mod code;
+pub mod comments;
 pub mod conflicts;
 pub mod custom_classes;
 pub mod edit;
