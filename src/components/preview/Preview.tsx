@@ -1642,25 +1642,32 @@ export const Preview = forwardRef<PreviewHandle, PreviewProps>(function Preview(
         </>
       )}
       {showTree && (
-        <ElementTreePanel
-          tree={elementTree.tree}
-          truncated={elementTree.truncated}
-          selectedId={elementTree.selectedId}
-          onSelect={elementTree.selectNode}
-          onHover={elementTree.hoverNode}
-          projectPath={projectPath}
-          selectedSignature={
-            (editorMode === 'css' ? cssEditor.selection?.signature : editor.selection?.signature) ??
-            null
-          }
-          onViewChange={(v) => setTreeCodeView(v === 'code')}
-          structure={{
-            selectAndRun: structure.selectAndRun,
-            insert: (position, kind) => void structure.insert(position, kind),
-            duplicate: () => void structure.duplicate(),
-            remove: () => void structure.remove(),
-          }}
-        />
+        // Same dock trick as the pinned editor below: a relative cell with the
+        // panel absolutely positioned inside. In-flow, the panel grew its own
+        // grid track past the viewport in WebKit, so its body had nothing to
+        // scroll and the tree just ran off the bottom.
+        <div className="ss-tree-panel-dock">
+          <ElementTreePanel
+            tree={elementTree.tree}
+            truncated={elementTree.truncated}
+            selectedId={elementTree.selectedId}
+            onSelect={elementTree.selectNode}
+            onHover={elementTree.hoverNode}
+            projectPath={projectPath}
+            selectedSignature={
+              (editorMode === 'css'
+                ? cssEditor.selection?.signature
+                : editor.selection?.signature) ?? null
+            }
+            onViewChange={(v) => setTreeCodeView(v === 'code')}
+            structure={{
+              selectAndRun: structure.selectAndRun,
+              insert: (position, kind) => void structure.insert(position, kind),
+              duplicate: () => void structure.duplicate(),
+              remove: () => void structure.remove(),
+            }}
+          />
+        </div>
       )}
       {editor.editMode &&
         (() => {
