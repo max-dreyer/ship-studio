@@ -751,7 +751,12 @@ document.addEventListener('click',function(e){
   e.preventDefault(); e.stopPropagation();
   var path=pathFor(el), matches=0;
   try{ matches=document.querySelectorAll(path).length; }catch(err){}
+  /* A snippet of what the element says. A path locates it; the words are how
+     a person recognises it — "the footer block that reads Kontakt" beats
+     "body > footer > div > div" when the note is read back later. */
+  var own=(el.innerText||el.textContent||'').replace(/\s+/g,' ').trim();
   send({type:'ss:comments:clicked',domPath:path,label:labelFor(el),
+        elementText:own.slice(0,120),
         ambiguous:matches!==1,x:Math.round(e.clientX),y:Math.round(e.clientY)});
 },true);
 

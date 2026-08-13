@@ -117,8 +117,54 @@ describe('buildAgentMessage', () => {
 
   it('names the element for each note so the agent can find it', () => {
     const msg = buildAgentMessage([comment({ label: 'h1.hero', text: 'bigger' })]);
-    expect(msg).toContain('h1.hero: bigger');
+    expect(msg).toContain('h1.hero');
+    expect(msg).toContain('bigger');
     expect(msg).toContain('A note from the preview:');
+  });
+
+  it('locates a note whose element has no class of its own', () => {
+    // The case that made notes unusable: every one of these read "- div: …",
+    // and nothing in the message said which div was meant.
+    const msg = buildAgentMessage([
+      comment({
+        label: 'div',
+        dom_path: 'body > footer:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(2)',
+        text: 'Termin-Icon ergänzen',
+      }),
+    ]);
+    expect(msg).toContain('body › footer › div › div (2)');
+    expect(msg).toContain('Termin-Icon ergänzen');
+  });
+
+  it("quotes the element's own text, which is what makes it recognisable", () => {
+    const msg = buildAgentMessage([
+      comment({
+        label: 'div',
+        element_text: 'Kontakt Impressum Datenschutz',
+        text: 'Termin-Icon ergänzen',
+      }),
+    ]);
+    expect(msg).toContain('text: "Kontakt Impressum Datenschutz"');
+  });
+
+  it('omits the quote for notes that never captured one', () => {
+    // Notes from before the field existed: no invented quote, just the path.
+    const msg = buildAgentMessage([comment({ label: 'div', element_text: '' })]);
+    expect(msg).not.toContain('text: ""');
+  });
+
+  it('reads the older index path format too', () => {
+    const msg = buildAgentMessage([
+      comment({ label: 'h1', dom_path: 'body:1>main:0>h1:1', text: 'umbenennen' }),
+    ]);
+    expect(msg).toContain('body (1) › main › h1 (1)');
+  });
+
+  it('keeps a descriptive label and adds the location behind it', () => {
+    const msg = buildAgentMessage([
+      comment({ label: 'a.btn-primary', dom_path: 'body > nav:nth-of-type(1) > a:nth-of-type(3)' }),
+    ]);
+    expect(msg).toContain('a.btn-primary — body › nav › a (3)');
   });
 
   it('groups several notes by page and counts them', () => {

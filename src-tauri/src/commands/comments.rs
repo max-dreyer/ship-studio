@@ -36,6 +36,11 @@ pub struct PreviewComment {
     /// Short human label for the element (`h1.hero`), for the list.
     #[serde(default)]
     pub label: String,
+    /// A snippet of the element's own text, captured when the note was made.
+    /// Empty for notes written before this was recorded — the agent message
+    /// simply omits the quote rather than inventing one.
+    #[serde(default)]
+    pub element_text: String,
     pub text: String,
     /// Unix millis. Ordering in the panel is by this.
     pub added_at: i64,
@@ -112,6 +117,8 @@ impl From<LegacyComment> for PreviewComment {
                 old.route
             },
             label,
+            // The old format never stored this.
+            element_text: String::new(),
             text: old.body,
             added_at: old.created_at,
             sent: old.sent_at.is_some(),
@@ -401,6 +408,7 @@ mod tests {
             dom_path: "body>main>h1".into(),
             url: "/".into(),
             label: "h1".into(),
+            element_text: String::new(),
             text: "make this bigger".into(),
             added_at: at,
             sent: false,

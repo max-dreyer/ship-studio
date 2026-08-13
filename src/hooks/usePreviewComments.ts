@@ -42,6 +42,8 @@ export interface PinPosition {
 export interface PendingNote {
   domPath: string;
   label: string;
+  /** A snippet of the element's own text, for recognising it later. */
+  elementText?: string;
   /** True when the path also matches siblings — the note may drift. */
   ambiguous: boolean;
   /** Where the composer opens, in iframe coordinates. */
@@ -136,6 +138,7 @@ export function usePreviewComments({
             type: 'ss:comments:clicked';
             domPath: string;
             label: string;
+            elementText?: string;
             ambiguous?: boolean;
             x: number;
             y: number;
@@ -148,6 +151,7 @@ export function usePreviewComments({
         setPending({
           domPath: data.domPath,
           label: data.label,
+          elementText: data.elementText,
           ambiguous: !!data.ambiguous,
           x: data.x,
           y: data.y,
@@ -186,6 +190,7 @@ export function usePreviewComments({
             dom_path: pending.domPath,
             url: pageUrl || '/',
             label: pending.label,
+            element_text: pending.elementText ?? '',
             text: trimmed,
             added_at: Date.now(),
             sent: false,

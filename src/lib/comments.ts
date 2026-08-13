@@ -23,6 +23,9 @@ export interface PreviewComment {
   id: string;
   /** Opaque to everything but the injected script that resolves it. */
   dom_path: string;
+  /** A snippet of the element's own text, captured when the note was made.
+   *  Empty for notes from before this was recorded, and for empty elements. */
+  element_text?: string;
   /** Page the note was left on, for grouping. */
   url: string;
   /** Short human label for the element (`h1.hero`). */
@@ -174,11 +177,39 @@ export function groupByPage(
 }
 
 /**
+ * Turn a stored dom_path into something a person can read.
+ *
+ * `body > footer:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(1)`
+ * says "in the footer" once the noise is gone, and an index like `:2` is worth
+ * keeping because it's the part that distinguishes siblings. The older index
+ * format (`body:1>main:0>h1:1`) gets the same treatment.
+ */
+function readablePath(domPath: string): string {
+  if (!domPath) return '';
+  const separator = domPath.includes('>') ? '>' : ' ';
+  return domPath
+    .split(separator)
+    .map((step) => step.trim())
+    .filter(Boolean)
+    .map((step) =>
+      step
+        // A first-of-type index carries no information; later ones do.
+        .replace(/:nth-of-type\(1\)$/, '')
+        .replace(/:nth-of-type\((\d+)\)$/, ' ($1)')
+        .replace(/:0$/, '')
+        .replace(/:(\d+)$/, ' ($1)')
+    )
+    .join(' › ');
+}
+
+/**
  * The message handed to the agent.
  *
- * Grouped by page and labelled by element, because the agent needs to find the
- * thing being talked about in the source, and "make this bigger" alone can't
- * be acted on.
+ * Grouped by page, and each note says where on the page it is. The label alone
+ * was not enough: an element with no class comes through as bare `div`, and a
+ * list of "div: move this up" is unactionable — the agent has no way to tell
+ * which div, and neither does a person reading it back. The path is what makes
+ * a note findable in the source, so it goes in even when it's long.
  */
 export function buildAgentMessage(comments: PreviewComment[]): string {
   if (comments.length === 0) return '';
@@ -190,7 +221,20 @@ export function buildAgentMessage(comments: PreviewComment[]): string {
   for (const group of groupByPage(comments)) {
     lines.push('', `Page ${group.url}`);
     for (const c of group.comments) {
-      lines.push(`- ${c.label}: ${c.text}`);
+      const where = readablePath(c.dom_path);
+      // Label first when it identifies the element on its own (it carries a
+      // class); otherwise the path is doing that work and the label is noise.
+      const heading = c.label.includes('.')
+        ? where
+          ? `${c.label} — ${where}`
+          : c.label
+        : where || c.label;
+      lines.push(`- ${heading}`);
+      // What the element says, when we captured it. This is usually what makes
+      // the note recognisable — the path says where, the text says which.
+      const quote = (c.element_text ?? '').trim();
+      if (quote) lines.push(`  text: "${quote}"`);
+      lines.push(`  ${c.text}`);
     }
   }
   return lines.join('\n');
