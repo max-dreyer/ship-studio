@@ -1041,7 +1041,28 @@ export function useProjectLifecycle({
       const wasOff = await getDevServerDisabled(path);
       await setDevServerDisabled(path, !wasOff);
       if (wasOff) {
-        await restartDevServer(path);
+        // The full start path, not restartDevServer: stopping drops the
+        // project's state entry, so a restart finds no project type and none
+        // of its branches fire — it returns having started nothing. This is
+        // the same call the open-project flow makes, port reservation and
+        // detection included.
+        let preferred = preferredPortForProject(path);
+        try {
+          const saved = await invoke<number | null>('get_dev_server_port', { projectPath: path });
+          if (saved && saved >= 1 && saved <= 65535) preferred = saved;
+        } catch {
+          /* no saved preference; the computed default stands */
+        }
+        let port = preferred;
+        try {
+          port = await findAndReservePort(path, preferred);
+        } catch (err) {
+          logger.warn('[ToggleDevServer] Port reservation failed, using preferred', {
+            error: err instanceof Error ? err.message : String(err),
+          });
+        }
+        setDevServerPort(port);
+        await startServerForProject(path, currentProject.name, port, getWindowLabel());
         showToast('Dev server on for this project', 'success');
       } else {
         await stopServer(path);

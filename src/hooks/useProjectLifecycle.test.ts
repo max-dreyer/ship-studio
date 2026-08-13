@@ -20,6 +20,8 @@ vi.mock('../lib/project', () => ({
   detectWorkspaces: vi.fn().mockResolvedValue([]),
   getWorkspaceSubpath: vi.fn().mockResolvedValue(''),
   setWorkspaceSubpath: vi.fn().mockResolvedValue(undefined),
+  getDevServerDisabled: vi.fn().mockResolvedValue(false),
+  setDevServerDisabled: vi.fn().mockResolvedValue(undefined),
 }));
 vi.mock('../lib/github', () => ({
   getProjectGitHubStatus: vi.fn().mockResolvedValue(null),
@@ -232,5 +234,52 @@ describe('handleSelectProject — folder-gone toast routing (#640)', () => {
     const [message, type] = vi.mocked(params.showToast).mock.calls[0];
     expect(message).toContain("isn't a recognized project location");
     expect(type).toBe('error');
+  });
+});
+
+describe('handleToggleDevServer', () => {
+  const project = { path: '/p/site', name: 'site' } as UseProjectLifecycleParams['currentProject'];
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('stops the running server when switching off', async () => {
+    const { getDevServerDisabled, setDevServerDisabled } = await import('../lib/project');
+    vi.mocked(getDevServerDisabled).mockResolvedValue(false);
+    const params = createParams({ currentProject: project });
+
+    const { result } = renderHook(() => useProjectLifecycle(params));
+    await act(async () => {
+      await result.current.handleToggleDevServer();
+    });
+
+    expect(setDevServerDisabled).toHaveBeenCalledWith('/p/site', true);
+    expect(params.stopServer).toHaveBeenCalledWith('/p/site');
+    expect(params.startServerForProject).not.toHaveBeenCalled();
+  });
+
+  it('runs the full start path when switching back on', async () => {
+    // Not restartDevServer: stopping drops the project's state entry, so a
+    // restart finds no project type, takes none of its branches, and returns
+    // having started nothing — the preview then stays empty.
+    const { getDevServerDisabled, setDevServerDisabled } = await import('../lib/project');
+    vi.mocked(getDevServerDisabled).mockResolvedValue(true);
+    const params = createParams({ currentProject: project });
+
+    const { result } = renderHook(() => useProjectLifecycle(params));
+    await act(async () => {
+      await result.current.handleToggleDevServer();
+    });
+
+    expect(setDevServerDisabled).toHaveBeenCalledWith('/p/site', false);
+    // Path and name are what matter here; the port comes from helpers this
+    // suite mocks away, so asserting its type would test the mock.
+    const call = vi.mocked(params.startServerForProject).mock.calls[0];
+    expect(call[0]).toBe('/p/site');
+    expect(call[1]).toBe('site');
+    expect(params.restartDevServer).not.toHaveBeenCalled();
+    // The preview reads the port from here; without it the pane has no target.
+    expect(params.setDevServerPort).toHaveBeenCalled();
   });
 });
