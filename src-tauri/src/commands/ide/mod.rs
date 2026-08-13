@@ -30,6 +30,11 @@ const MACOS_BROWSERS: &[(&str, &str, &str)] = &[
     ("arc", "Arc", "/Applications/Arc.app"),
     ("brave", "Brave", "/Applications/Brave Browser.app"),
     ("edge", "Microsoft Edge", "/Applications/Microsoft Edge.app"),
+    ("helium", "Helium", "/Applications/Helium.app"),
+    ("zen", "Zen", "/Applications/Zen.app"),
+    ("orion", "Orion", "/Applications/Orion.app"),
+    ("vivaldi", "Vivaldi", "/Applications/Vivaldi.app"),
+    ("opera", "Opera", "/Applications/Opera.app"),
 ];
 
 /// Browser configurations for Windows
@@ -350,4 +355,48 @@ pub async fn open_studio_window(
         .map_err(|e| format!("Failed to create studio window: {e}"))?;
 
     Ok(())
+}
+
+#[cfg(all(test, target_os = "macos"))]
+mod browser_tests {
+    use super::MACOS_BROWSERS;
+
+    /// Every entry must carry an app name `open -a` can resolve and a path
+    /// `check_browser_availability` can test. A typo in either half fails
+    /// silently at runtime: the browser is missing from the dropdown, or it is
+    /// listed and does nothing when clicked. Helium shipped as the second case.
+    #[test]
+    fn entries_are_well_formed() {
+        for (id, name, path) in MACOS_BROWSERS {
+            assert!(!id.is_empty(), "empty id");
+            assert!(!name.is_empty(), "{id} has no app name");
+            assert!(
+                path.starts_with("/Applications/") && path.ends_with(".app"),
+                "{id}: path should be an /Applications bundle, got {path}"
+            );
+            // `open -a <name>` launches it and the bundle at the end of the
+            // path decides whether it's offered at all, so the two have to
+            // describe the same app. Not character-identical: `open -a Brave`
+            // resolves "Brave Browser.app" and that entry is correct as it
+            // stands. A prefix either way still catches a typo.
+            let bundle = path
+                .trim_start_matches("/Applications/")
+                .trim_end_matches(".app");
+            assert!(
+                bundle.starts_with(*name) || name.starts_with(bundle),
+                "{id}: app name {name:?} and bundle {bundle:?} are unrelated"
+            );
+        }
+    }
+
+    #[test]
+    fn ids_are_unique() {
+        // A duplicate id makes `find` return the first match, so the second
+        // browser would silently open the first one.
+        let mut ids: Vec<&str> = MACOS_BROWSERS.iter().map(|(id, _, _)| *id).collect();
+        ids.sort_unstable();
+        let count = ids.len();
+        ids.dedup();
+        assert_eq!(count, ids.len(), "duplicate browser id");
+    }
 }

@@ -36,6 +36,10 @@ export interface PinPosition {
   y: number;
   /** False when the iframe could no longer find the element. */
   found: boolean;
+  /** False when the element exists but something is drawn over it — a sticky
+   *  footer behind the page content, an open overlay. The note is fine; there
+   *  is just nothing on screen to point at right now. Absent means visible. */
+  visible?: boolean;
 }
 
 /** A click on an element while comment mode is armed. */

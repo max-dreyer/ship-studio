@@ -723,8 +723,22 @@ function report(){
        note it can't place, instead of pinning it to the top-left corner. */
     if(!el)return {id:p.id,x:0,y:0,found:false};
     var r=el.getBoundingClientRect();
+    /* Nothing to point at. A collapsed element would put the pin at whatever
+       corner its empty box happens to occupy. */
+    if(r.width===0&&r.height===0)return {id:p.id,x:0,y:0,found:false};
     /* Top-centre of the element, which is where the pin's tip sits. */
-    return {id:p.id,x:Math.round(r.left+r.width/2),y:Math.round(r.top),found:true};
+    var cx=Math.round(r.left+r.width/2), cy=Math.round(r.top);
+    /* Found isn't the same as on screen. A sticky footer revealed from behind
+       the page content sits at a fixed spot the whole time, covered by the
+       content in front of it — the element is there, you just can't see it, so
+       a pin over it floats in empty space and never moves while you scroll.
+       Ask the page what is actually at that point and let the host skip the
+       pin until the element is the thing you'd click. */
+    var vw=window.innerWidth||1, vh=window.innerHeight||1;
+    var px=Math.min(Math.max(cx,1),vw-1), py=Math.min(Math.max(cy+2,1),vh-1);
+    var hit=null; try{ hit=document.elementFromPoint(px,py); }catch(e){}
+    var shown=!hit||hit===el||el.contains(hit)||hit.contains(el);
+    return {id:p.id,x:cx,y:cy,found:true,visible:shown};
   })});
 }
 

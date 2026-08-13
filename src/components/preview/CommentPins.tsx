@@ -4,11 +4,20 @@
  * Positions come from the iframe (only it can resolve a `dom_path`), so this
  * component just paints.
  *
- * A note whose element the page no longer has gets no pin. It used to get one
- * at (0, 0) — the iframe's placeholder for "not found" — which put a pin in
- * the top-left corner that stayed there while the page scrolled, looking like
- * a real marker on the wrong element. An invented position is worse than no
- * position; the notes list is where an unplaceable note stays visible.
+ * Two cases get no pin at all.
+ *
+ * A note whose element the page no longer has: it used to get one at (0, 0) —
+ * the iframe's placeholder for "not found" — which put a pin in the corner
+ * that stayed there while the page scrolled, looking like a real marker on the
+ * wrong element. An invented position is worse than no position.
+ *
+ * And an element that exists but is covered by something else. A sticky footer
+ * revealed from behind the page content is the case that surfaced this: it
+ * holds one spot the whole time, hidden under the content, so its pin floated
+ * in the middle of blank space and never moved. The pin comes back when you
+ * scroll far enough for the element to actually be there.
+ *
+ * The notes list is where a note nobody can point at stays visible.
  *
  * @module components/preview/CommentPins
  */
@@ -35,8 +44,8 @@ export function CommentPins({ comments, positions, scale = 1, selectedId, onSele
     <div className="ss-pins" aria-hidden={comments.length === 0}>
       {comments.map((comment, index) => {
         const at = byId.get(comment.id);
-        // No position yet, or no element to point at: draw nothing.
-        if (!at || !at.found) return null;
+        // No position yet, no element, or the element is behind something.
+        if (!at || !at.found || at.visible === false) return null;
         return (
           <button
             key={comment.id}

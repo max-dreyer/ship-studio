@@ -54,6 +54,33 @@ describe('CommentPins', () => {
     expect(screen.queryByRole('button')).toBeNull();
   });
 
+  it('draws nothing while the element is hidden behind other content', () => {
+    // The sticky-footer case: found, but covered, so its pin would sit in
+    // blank space and stay there while the page scrolls past.
+    render(
+      <CommentPins
+        comments={[note('1')]}
+        positions={[{ id: '1', x: 200, y: 400, found: true, visible: false }]}
+        selectedId={null}
+        onSelect={vi.fn()}
+      />
+    );
+    expect(screen.queryByRole('button')).toBeNull();
+  });
+
+  it('draws a pin when the iframe says nothing about visibility', () => {
+    // Absent means visible — an older script build must not blank every pin.
+    render(
+      <CommentPins
+        comments={[note('1')]}
+        positions={[{ id: '1', x: 200, y: 400, found: true }]}
+        selectedId={null}
+        onSelect={vi.fn()}
+      />
+    );
+    expect(screen.getByRole('button', { name: '1' })).toBeTruthy();
+  });
+
   it('keeps the numbering aligned with the notes list', () => {
     // Note 2 can't be placed. The others keep their own numbers, so a pin and
     // its row in the list still agree.
