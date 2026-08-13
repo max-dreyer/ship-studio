@@ -607,16 +607,16 @@ window.addEventListener('resize',reposition,true);
 var armed=false, tracked=[];
 
 /* Hover feedback. Its own overlay rather than the edit mode's: that IIFE is
-   closed, and the amber matches the pins so it reads as "leaving a note" and
-   not as "editing this". */
+   closed. Ship Studio green (--action), matching the pins, so the highlight
+   reads as "leaving a note" and not as the edit mode's blue "editing this". */
 var hoverBox=null, hoverEl=null;
-var HOVER_COLOR='rgba(245,158,11,.9)';
+var HOVER_COLOR='rgba(84,227,110,.9)';
 
 function hoverOverlay(){
   if(!hoverBox){
     hoverBox=document.createElement('div');
     hoverBox.style.cssText='position:fixed;pointer-events:none;z-index:2147483645;'+
-      'border:2px solid '+HOVER_COLOR+';background:rgba(245,158,11,.08);'+
+      'border:2px solid '+HOVER_COLOR+';background:rgba(84,227,110,.10);'+
       'box-sizing:border-box;border-radius:2px;display:none';
     hoverBox.setAttribute('data-ss-overlay','1');
     document.body.appendChild(hoverBox);

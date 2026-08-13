@@ -10,8 +10,9 @@
  */
 
 import type { Extension } from '@codemirror/state';
-import { Prec } from '@codemirror/state';
-import { EditorView } from '@codemirror/view';
+import { Prec, RangeSetBuilder } from '@codemirror/state';
+import { Decoration, ViewPlugin, EditorView } from '@codemirror/view';
+import type { DecorationSet, ViewUpdate } from '@codemirror/view';
 import { syntaxHighlighting, HighlightStyle } from '@codemirror/language';
 import { tags as t } from '@lezer/highlight';
 import { css } from '@codemirror/lang-css';
@@ -39,6 +40,24 @@ export const ghDarkHighlight = HighlightStyle.define([
   { tag: [t.tagName], color: '#7ee787' },
   { tag: [t.attributeName], color: '#79c0ff' },
   { tag: [t.invalid], color: '#f85149' },
+  /* Markdown. Without these a .md file renders as one flat colour, which is
+     exactly when structure matters most — prose has no braces to orient by.
+     Headings carry weight as well as colour so the outline is scannable. */
+  { tag: [t.heading1], color: '#79c0ff', fontWeight: '700' },
+  { tag: [t.heading2], color: '#79c0ff', fontWeight: '700' },
+  { tag: [t.heading3, t.heading4, t.heading5, t.heading6], color: '#79c0ff', fontWeight: '600' },
+  { tag: [t.strong], color: '#e6edf3', fontWeight: '700' },
+  { tag: [t.emphasis], color: '#e6edf3', fontStyle: 'italic' },
+  { tag: [t.strikethrough], textDecoration: 'line-through' },
+  { tag: [t.link], color: '#a5d6ff', textDecoration: 'underline' },
+  { tag: [t.url], color: '#79c0ff' },
+  { tag: [t.monospace], color: '#a5d6ff' },
+  { tag: [t.quote], color: '#8b949e', fontStyle: 'italic' },
+  { tag: [t.list], color: '#7ee787' },
+  { tag: [t.contentSeparator], color: '#8b949e' },
+  /* The syntax characters themselves (#, *, -, backticks). Dimmed: they are
+     scaffolding, and at full strength they compete with the words. */
+  { tag: [t.processingInstruction], color: '#6e7681' },
 ]);
 
 /* Editor chrome, themed with our tokens so it matches the panel surface. */
@@ -98,6 +117,82 @@ export const ssEditorTheme = EditorView.theme(
 );
 
 export const ghDarkExtension: Extension = syntaxHighlighting(ghDarkHighlight);
+
+/* ── YAML front matter in Markdown ──────────────────────────────────────────
+   The Markdown grammar has no notion of front matter: the whole `---` block
+   arrives as plain paragraph text, so a file that is mostly configuration —
+   a design token sheet, a content entry — reads as one grey wall.
+
+   Highlighting it properly would mean a second grammar nested into the first.
+   This does the small, honest version instead: inside the leading `---` fence,
+   colour the key and the value on each `key: value` line. Line-based, so it
+   can't mis-parse; it just does less. */
+const fmKey = Decoration.mark({ class: 'cm-fm-key' });
+const fmValue = Decoration.mark({ class: 'cm-fm-value' });
+const fmFence = Decoration.mark({ class: 'cm-fm-fence' });
+
+function frontMatterDecorations(view: EditorView): DecorationSet {
+  const builder = new RangeSetBuilder<Decoration>();
+  const doc = view.state.doc;
+  // Front matter is only front matter on line 1. Anywhere else `---` is a rule.
+  if (doc.lines === 0 || doc.line(1).text.trim() !== '---') return builder.finish();
+
+  let end = 0;
+  for (let n = 2; n <= doc.lines; n++) {
+    if (doc.line(n).text.trim() === '---') {
+      end = n;
+      break;
+    }
+  }
+  // An unclosed fence is someone mid-edit, not front matter.
+  if (end === 0) return builder.finish();
+
+  builder.add(doc.line(1).from, doc.line(1).to, fmFence);
+  for (let n = 2; n < end; n++) {
+    const line = doc.line(n);
+    const text = line.text;
+    // Skip comments and blank lines; find the key separator on the rest.
+    const trimmed = text.trimStart();
+    if (!trimmed || trimmed.startsWith('#')) continue;
+    const colon = text.indexOf(':');
+    if (colon === -1) continue;
+
+    const keyStart = line.from + (text.length - trimmed.length);
+    const keyEnd = line.from + colon;
+    if (keyEnd > keyStart) builder.add(keyStart, keyEnd, fmKey);
+
+    // The value, if the line has one (`parent:` alone is a nesting header).
+    const rest = text.slice(colon + 1);
+    const lead = rest.length - rest.trimStart().length;
+    const valueStart = line.from + colon + 1 + lead;
+    const valueEnd = line.to;
+    if (valueEnd > valueStart) builder.add(valueStart, valueEnd, fmValue);
+  }
+  builder.add(doc.line(end).from, doc.line(end).to, fmFence);
+  return builder.finish();
+}
+
+const frontMatterPlugin = ViewPlugin.fromClass(
+  class {
+    decorations: DecorationSet;
+    constructor(view: EditorView) {
+      this.decorations = frontMatterDecorations(view);
+    }
+    update(u: ViewUpdate) {
+      if (u.docChanged) this.decorations = frontMatterDecorations(u.view);
+    }
+  },
+  { decorations: (v) => v.decorations }
+);
+
+const frontMatterTheme = EditorView.theme({
+  '.cm-fm-key': { color: '#7ee787' },
+  '.cm-fm-value': { color: '#a5d6ff' },
+  '.cm-fm-fence': { color: '#6e7681' },
+});
+
+/** Front-matter colouring. Markdown files only — elsewhere `---` means nothing. */
+export const markdownFrontMatter: Extension = [frontMatterPlugin, frontMatterTheme];
 
 /**
  * Render syntax-error tokens as ordinary text instead of red. The Code tab is a
@@ -185,7 +280,7 @@ export function codeLanguageExtension(language: string): Extension {
     case 'less':
       return css();
     case 'markdown':
-      return markdown();
+      return [markdown(), markdownFrontMatter];
     default:
       return [];
   }

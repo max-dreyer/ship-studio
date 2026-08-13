@@ -334,6 +334,32 @@
   grid-template-columns: minmax(0, 1fr) var(--editor-panel-w);
 }
 
+/* Comment mode's notes list, as a sidebar on the right. Comment mode and the
+   editors are mutually exclusive, so this never has to compose with the pinned
+   editor's column — but it uses the same negative line so it would. */
+.preview-container--notes {
+  grid-template-columns: minmax(0, 1fr) var(--notes-panel-w);
+}
+
+.preview-container--tree.preview-container--notes {
+  grid-template-columns: var(--tree-panel-w) minmax(0, 1fr) var(--notes-panel-w);
+}
+
+/* Same dock trick as the editor panel: the cell is bounded by the canvas row,
+   and the absolutely positioned panel inside can't grow it. */
+.ss-notes-dock {
+  grid-area: 2 / -2 / -1 / -1;
+  position: relative;
+  min-height: 0;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.ss-notes-dock .ss-notes {
+  position: absolute;
+  inset: 0;
+}
+
 /* Element tree (navigator) on the left in edit mode, docked or fullscreen.
    Composes with the pinned editor: tree | canvas | editor. Panels use negative
    column lines so each works with or without the other. */

@@ -1113,7 +1113,7 @@ export const Preview = forwardRef<PreviewHandle, PreviewProps>(function Preview(
         activeEditMode && editorPinned ? ' preview-container--editor-pinned' : ''
       }${showTree ? ' preview-container--tree' : ''}${
         showTree && treeCodeView ? ' preview-container--tree-code' : ''
-      }`}
+      }${commentMode && !activeEditMode ? ' preview-container--notes' : ''}`}
       data-logs={showLogs ? 'open' : 'closed'}
       style={{
         ...(showLogs && inspectPanelHeight !== null
@@ -1564,6 +1564,34 @@ export const Preview = forwardRef<PreviewHandle, PreviewProps>(function Preview(
                 )}
               </div>
             )}
+            {/* Comment overlays belong inside the wrapper. The iframe reports
+                positions in its own coordinate space; anywhere else the
+                toolbar and the side panels shift every pin off its element.
+                Scale maps them onto the shrunk canvas without shrinking the
+                pins themselves — a marker you can't read is no marker. */}
+            {commentMode && !activeEditMode && (
+              <>
+                <CommentPins
+                  comments={comments.onThisPage}
+                  positions={comments.positions}
+                  scale={resize.previewScale}
+                  selectedId={selectedNoteId}
+                  onSelect={setSelectedNoteId}
+                />
+                {comments.pending && (
+                  <CommentComposer
+                    pending={comments.pending}
+                    scale={resize.previewScale}
+                    bounds={{
+                      width: iframeRef.current?.clientWidth ?? 800,
+                      height: iframeRef.current?.clientHeight ?? 600,
+                    }}
+                    onCommit={(text) => void comments.commitPending(text)}
+                    onCancel={comments.cancelPending}
+                  />
+                )}
+              </>
+            )}
           </div>
           {/* Right (horizontal) resize handle — height tracks iframe via grid */}
           <div className="preview-resize-handle" onMouseDown={resize.handleResizeStart}>
@@ -1608,24 +1636,9 @@ export const Preview = forwardRef<PreviewHandle, PreviewProps>(function Preview(
         onDevServerResize={onDevServerResize}
       />
       {commentMode && !activeEditMode && (
-        <>
-          <CommentPins
-            comments={comments.onThisPage}
-            positions={comments.positions}
-            selectedId={selectedNoteId}
-            onSelect={setSelectedNoteId}
-          />
-          {comments.pending && (
-            <CommentComposer
-              pending={comments.pending}
-              bounds={{
-                width: iframeRef.current?.clientWidth ?? 800,
-                height: iframeRef.current?.clientHeight ?? 600,
-              }}
-              onCommit={(text) => void comments.commitPending(text)}
-              onCancel={comments.cancelPending}
-            />
-          )}
+        // Its own grid cell, like the pinned editor: the notes list is a
+        // sidebar beside the canvas, not a bar wedged under it.
+        <div className="ss-notes-dock">
           <CommentsPanel
             comments={comments.comments}
             unsentCount={comments.unsent.length}
@@ -1639,7 +1652,7 @@ export const Preview = forwardRef<PreviewHandle, PreviewProps>(function Preview(
             onClearSent={() => void comments.clearSent()}
             onClose={() => setCommentMode(false)}
           />
-        </>
+        </div>
       )}
       {showTree && (
         // Same dock trick as the pinned editor below: a relative cell with the

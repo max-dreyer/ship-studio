@@ -6,7 +6,8 @@
  */
 
 import type { FileTreeNode } from '../../lib/code';
-import { ChevronRightIcon, FileIcon, FolderIcon } from '../icons';
+import { ChevronRightIcon, FolderIcon } from '../icons';
+import { FileKindIcon } from '../icons/fileKinds';
 import { fileKind } from '../../lib/fileIcons';
 
 interface FileTreeProps {
@@ -94,7 +95,11 @@ function FileTreeItem({
             node.isDirectory ? '' : ` file-tree-icon--${fileKind(node.name)}`
           }`}
         >
-          {node.isDirectory ? <FolderIcon size={14} /> : <FileIcon size={14} />}
+          {node.isDirectory ? (
+            <FolderIcon size={14} />
+          ) : (
+            <FileKindIcon kind={fileKind(node.name)} />
+          )}
         </span>
         <span className="file-tree-name">{node.name}</span>
       </button>

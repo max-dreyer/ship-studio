@@ -6,6 +6,7 @@
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { OpenFileTabs } from './OpenFileTabs';
 import { useFileTree } from '../../hooks/useFileTree';
 import { useCodeZoom } from '../../hooks/useCodeZoom';
 import { FileTree } from './FileTree';
@@ -53,14 +54,40 @@ export function CodeTab({ projectPath, onSendToAgent, revealTarget }: CodeTabPro
     cancelPendingAction,
   } = useFileTree(projectPath);
 
+  // Open files, oldest first. The viewer still shows one at a time; this is
+  // the list of what stays reachable without going back to the tree.
+  const [openPaths, setOpenPaths] = useState<string[]>([]);
+
   const selectFile = useCallback(
     (path: string) => {
       void trackEvent('code_file_opened', {
         file_extension: fileExtensionForAnalytics(path),
       });
+      // Add the tab here rather than reacting to the selection changing: the
+      // switch can stall on the unsaved-changes prompt, and a tab that only
+      // appears after you confirm reads as a lost click.
+      setOpenPaths((prev) => (prev.includes(path) ? prev : [...prev, path]));
       selectFileRaw(path);
     },
     [selectFileRaw]
+  );
+
+  // Closing the active tab moves to its neighbour — the one on the right, or
+  // the left when it was last. Closing an inactive tab leaves the view alone.
+  const closeFile = useCallback(
+    (path: string) => {
+      setOpenPaths((prev) => {
+        const index = prev.indexOf(path);
+        if (index === -1) return prev;
+        const next = prev.filter((p) => p !== path);
+        if (path === selectedFilePath) {
+          const neighbour = next[index] ?? next[index - 1] ?? null;
+          if (neighbour) selectFile(neighbour);
+        }
+        return next;
+      });
+    },
+    [selectFile, selectedFilePath]
   );
 
   const refreshTree = useCallback(() => {
@@ -205,6 +232,13 @@ export function CodeTab({ projectPath, onSendToAgent, revealTarget }: CodeTabPro
       </div>
       <div className="code-tab-divider" onMouseDown={handleMouseDown} />
       <div className="code-tab-viewer">
+        <OpenFileTabs
+          paths={openPaths}
+          activePath={selectedFilePath}
+          activeDirty={isDirty}
+          onSelect={selectFile}
+          onClose={closeFile}
+        />
         <CodeViewer
           projectPath={projectPath}
           filePath={selectedFilePath}

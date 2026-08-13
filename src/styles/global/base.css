@@ -182,6 +182,9 @@
      and the preview grid column that hosts it when pinned (preview.css).
      MUST match PANEL_WIDTH in VisualEditorPanel.tsx. */
   --editor-panel-w: 264px;
+  /* Notes sidebar in comment mode. Wider than the editor panel: these hold
+     sentences, not values. */
+  --notes-panel-w: 300px;
   /* Preview toolbar height — also sizes the pinned editor panel's header so
      the two bars line up. */
   --preview-toolbar-h: 47px;

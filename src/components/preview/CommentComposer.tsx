@@ -25,6 +25,9 @@ interface Props {
   pending: PendingNote;
   /** Size of the area the composer must stay inside. */
   bounds: { width: number; height: number };
+  /** Scale-to-fit factor of the canvas — the click arrives in the iframe's
+   *  own pixels, so the box needs the same factor to open at the element. */
+  scale?: number;
   onCommit: (text: string) => void;
   onCancel: () => void;
 }
@@ -38,12 +41,15 @@ function clamp(value: number, max: number): number {
   return Math.max(MARGIN, Math.min(value, Math.max(MARGIN, max)));
 }
 
-export function CommentComposer({ pending, bounds, onCommit, onCancel }: Props) {
+export function CommentComposer({ pending, bounds, scale = 1, onCommit, onCancel }: Props) {
   const [text, setText] = useState('');
-  const [pos, setPos] = useState(() => ({
-    left: clamp(pending.x + 12, bounds.width - WIDTH - MARGIN),
-    top: clamp(pending.y + 12, bounds.height - HEIGHT - MARGIN),
-  }));
+  const [pos, setPos] = useState(() => {
+    const factor = scale > 0 ? scale : 1;
+    return {
+      left: clamp(pending.x * factor + 12, bounds.width - WIDTH - MARGIN),
+      top: clamp(pending.y * factor + 12, bounds.height - HEIGHT - MARGIN),
+    };
+  });
   const dragRef = useRef<{ dx: number; dy: number } | null>(null);
   const areaRef = useRef<HTMLTextAreaElement>(null);
 
