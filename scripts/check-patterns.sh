@@ -110,6 +110,52 @@ else
 fi
 echo
 
+# 3d. Preview grid: a variant that adds a second column must also span the
+# toolbar across it. The container's children are mostly auto-placed, so a new
+# column without the matching `grid-column: 1 / -1` on .preview-toolbar sends
+# the canvas into the leftover cell beside the toolbar, where it shrinks to a
+# sliver. It reads as "the preview broke", not as "a column was added" — which
+# is exactly how it shipped once with the notes sidebar.
+echo "Checking preview grid variants span the toolbar…"
+# Pair each `grid-template-columns` with the selector that opened its block,
+# and keep only the ones declaring more than one track.
+COL_VARIANTS=$(awk '
+  /\{[[:space:]]*$/ { sel = $0; sub(/[[:space:]]*\{.*/, "", sel); next }
+  /grid-template-columns:/ {
+    v = $0
+    sub(/.*grid-template-columns:[[:space:]]*/, "", v)
+    sub(/;.*/, "", v)
+    gsub(/\([^)]*\)/, "()", v)
+    n = split(v, track, /[[:space:]]+/)
+    if (n >= 2 && sel ~ /preview-container--/) print sel
+  }
+' src/styles/features/preview.css 2>/dev/null |
+  grep -oE '\.preview-container--[a-zA-Z0-9-]+(\.preview-container--[a-zA-Z0-9-]+)*' |
+  sort -u)
+# The one rule that spans the toolbar, as a single line of selectors.
+SPANNING=$(awk '/grid-column:[[:space:]]*1[[:space:]]*\/[[:space:]]*-1/{found=1} {buf=buf" "$0}
+  END{print buf}' src/styles/features/preview.css |
+  grep -oE '\.preview-container--[a-zA-Z0-9-]+ \.preview-toolbar' |
+  grep -oE '\.preview-container--[a-zA-Z0-9-]+' | sort -u)
+MISSING_SPAN=""
+for v in $COL_VARIANTS; do
+  # A compound selector is covered if any of its classes spans the toolbar.
+  covered=0
+  for c in $(echo "$v" | tr '.' '\n' | sed 's/^/./' | grep -v '^\.$'); do
+    if echo "$SPANNING" | grep -qx -- "$c"; then covered=1; fi
+  done
+  [ "$covered" -eq 0 ] && MISSING_SPAN="$MISSING_SPAN $v"
+done
+if [ -n "$MISSING_SPAN" ]; then
+  echo "  These add a grid column but don't span .preview-toolbar across it:"
+  for v in $MISSING_SPAN; do echo "    $v"; done
+  echo "  Add the class to the '.preview-container--… .preview-toolbar' rule."
+  rule "preview grid toolbar span" 1
+else
+  rule "preview grid toolbar span" 0
+fi
+echo
+
 # 4. New onToast?: prop interface introductions (the prop-drilling pattern we killed in Block 5.6)
 echo "Checking for new onToast?: prop interfaces…"
 TOAST_PROPS=$(grep -rn 'onToast?:' src/components/ 2>/dev/null || true)

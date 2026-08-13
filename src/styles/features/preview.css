@@ -380,8 +380,12 @@
   grid-template-columns: var(--tree-code-w) minmax(0, 1fr) var(--editor-panel-w);
 }
 
+/* Any layout with a second column has to say so here. Without this the
+   toolbar only claims column 1, and the canvas — which is auto-placed —
+   lands in the leftover cell beside it, squeezed into the toolbar's row. */
 .preview-container--editor-pinned .preview-toolbar,
-.preview-container--tree .preview-toolbar {
+.preview-container--tree .preview-toolbar,
+.preview-container--notes .preview-toolbar {
   grid-column: 1 / -1;
 }
 
