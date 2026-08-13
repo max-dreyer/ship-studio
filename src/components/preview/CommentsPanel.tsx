@@ -18,6 +18,11 @@ interface Props {
   /** Notes whose element the current page doesn't have. They get no pin on the
    *  canvas, so the list is the only place their state can be seen. */
   unplaceableIds?: ReadonlySet<string>;
+  /** The page the preview is showing, so its group can say so. */
+  currentUrl?: string;
+  /** Jump the preview to another page. Without it, notes left elsewhere are
+   *  readable but not reachable. */
+  onNavigate?: (url: string) => void;
   unsentCount: number;
   sending: boolean;
   selectedId: string | null;
@@ -33,6 +38,8 @@ interface Props {
 export function CommentsPanel({
   comments,
   unplaceableIds,
+  currentUrl,
+  onNavigate,
   unsentCount,
   sending,
   selectedId,
@@ -82,65 +89,84 @@ export function CommentsPanel({
         </div>
       ) : (
         <div className="ss-notes__list">
-          {groupByPage(comments).map((group) => (
-            <section className="ss-notes__group" key={group.url}>
-              <h3 className="ss-notes__page">{group.url}</h3>
-              {group.comments.map((comment) => (
-                <article
-                  key={comment.id}
-                  className={`ss-note${comment.sent ? ' is-sent' : ''}${
-                    selectedId === comment.id ? ' is-selected' : ''
-                  }`}
-                  onClick={() => onSelect(comment.id)}
-                >
-                  <div className="ss-note__head">
-                    <code className="ss-note__label">{comment.label}</code>
-                    {comment.sent && <span className="ss-note__badge">sent</span>}
-                    {unplaceableIds?.has(comment.id) && (
-                      <span
-                        className="ss-note__badge ss-note__badge--orphan"
-                        title="This element isn't on the page right now, so the note has no pin. It may be on another page, or it may have changed."
-                      >
-                        no pin
-                      </span>
-                    )}
-                  </div>
-
-                  {editingId === comment.id ? (
-                    <textarea
-                      className="ss-note__edit"
-                      value={draft}
-                      autoFocus
-                      onChange={(e) => setDraft(e.target.value)}
-                      onBlur={commitEdit}
-                      onKeyDown={(e) => {
-                        if (e.key === 'Escape') setEditingId(null);
-                        else if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) commitEdit();
-                      }}
-                    />
+          {groupByPage(comments).map((group) => {
+            const isCurrent = (group.url || '/') === (currentUrl || '/');
+            return (
+              <section className="ss-notes__group" key={group.url}>
+                {/* Notes on another page have no pin here, and without a way to
+                  get there they quietly rot. The heading is the way there. */}
+                <h3 className={`ss-notes__page${isCurrent ? ' is-current' : ''}`}>
+                  {isCurrent || !onNavigate ? (
+                    <span>{group.url}</span>
                   ) : (
-                    <p className="ss-note__text">{comment.text}</p>
-                  )}
-
-                  <div className="ss-note__actions">
-                    {!comment.sent && (
-                      <>
-                        <button type="button" onClick={() => beginEdit(comment)}>
-                          Edit
-                        </button>
-                        <button type="button" onClick={() => onMove(comment.id)}>
-                          Move
-                        </button>
-                      </>
-                    )}
-                    <button type="button" onClick={() => onRemove(comment.id)}>
-                      Delete
+                    <button
+                      type="button"
+                      className="ss-notes__page-link"
+                      onClick={() => onNavigate(group.url)}
+                      title={`Show ${group.url} in the preview`}
+                    >
+                      {group.url}
+                      <span className="ss-notes__page-count">{group.comments.length}</span>
                     </button>
-                  </div>
-                </article>
-              ))}
-            </section>
-          ))}
+                  )}
+                </h3>
+                {group.comments.map((comment) => (
+                  <article
+                    key={comment.id}
+                    className={`ss-note${comment.sent ? ' is-sent' : ''}${
+                      selectedId === comment.id ? ' is-selected' : ''
+                    }`}
+                    onClick={() => onSelect(comment.id)}
+                  >
+                    <div className="ss-note__head">
+                      <code className="ss-note__label">{comment.label}</code>
+                      {comment.sent && <span className="ss-note__badge">sent</span>}
+                      {unplaceableIds?.has(comment.id) && (
+                        <span
+                          className="ss-note__badge ss-note__badge--orphan"
+                          title="This element isn't on the page right now, so the note has no pin. It may be on another page, or it may have changed."
+                        >
+                          no pin
+                        </span>
+                      )}
+                    </div>
+
+                    {editingId === comment.id ? (
+                      <textarea
+                        className="ss-note__edit"
+                        value={draft}
+                        autoFocus
+                        onChange={(e) => setDraft(e.target.value)}
+                        onBlur={commitEdit}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Escape') setEditingId(null);
+                          else if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) commitEdit();
+                        }}
+                      />
+                    ) : (
+                      <p className="ss-note__text">{comment.text}</p>
+                    )}
+
+                    <div className="ss-note__actions">
+                      {!comment.sent && (
+                        <>
+                          <button type="button" onClick={() => beginEdit(comment)}>
+                            Edit
+                          </button>
+                          <button type="button" onClick={() => onMove(comment.id)}>
+                            Move
+                          </button>
+                        </>
+                      )}
+                      <button type="button" onClick={() => onRemove(comment.id)}>
+                        Delete
+                      </button>
+                    </div>
+                  </article>
+                ))}
+              </section>
+            );
+          })}
         </div>
       )}
 

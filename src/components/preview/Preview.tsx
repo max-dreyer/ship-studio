@@ -221,6 +221,10 @@ interface PreviewProps {
    *  installed. Render an install CTA in the preview pane instead of the
    *  "Starting dev server..." spinner. */
   needsInstall?: { packageManager: string } | null;
+  /** True when the dev server is switched off for this project. */
+  devServerOff?: boolean;
+  /** Switch it back on (and start it) from the empty state. */
+  onEnableDevServer?: () => void;
   /** Set when the managed dev-server process died without Ship Studio
    *  stopping it (crash, or an external kill — e.g. an agent in the terminal
    *  freeing the port). Switches the status card to a "Dev server stopped"
@@ -305,6 +309,8 @@ export const Preview = forwardRef<PreviewHandle, PreviewProps>(function Preview(
     healthPanelRef,
     onHealthOutput,
     needsInstall,
+    devServerOff,
+    onEnableDevServer,
     devServerUnexpectedExit,
     onRestartDevServer,
     onRunInstall,
@@ -1062,6 +1068,40 @@ export const Preview = forwardRef<PreviewHandle, PreviewProps>(function Preview(
     devServerUnexpectedExit,
   ]);
 
+  // Switched off on purpose. Without this the pane is just blank and looks
+  // like a server that failed to come up — which is exactly how it read when
+  // the setting first shipped.
+  if (devServerOff) {
+    return (
+      <div className="preview-install-prompt">
+        <div className="preview-install-icon" aria-hidden>
+          <svg
+            width="32"
+            height="32"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          >
+            <path d="M18.36 6.64A9 9 0 1 1 5.64 6.64" />
+            <line x1="12" y1="2" x2="12" y2="12" />
+          </svg>
+        </div>
+        <h3>Dev server is off for this project</h3>
+        <p className="hint">
+          Nothing is running and no port is claimed. The terminal, code and git all work as usual.
+        </p>
+        {onEnableDevServer && (
+          <Button variant="primary" onClick={onEnableDevServer}>
+            Turn it on
+          </Button>
+        )}
+      </div>
+    );
+  }
+
   if (needsInstall) {
     return (
       <div className="preview-install-prompt">
@@ -1652,6 +1692,8 @@ export const Preview = forwardRef<PreviewHandle, PreviewProps>(function Preview(
           <CommentsPanel
             comments={comments.comments}
             unplaceableIds={unplaceableNoteIds}
+            currentUrl={conn.currentPage || '/'}
+            onNavigate={conn.handlePageSelect}
             unsentCount={comments.unsent.length}
             sending={comments.sending}
             selectedId={selectedNoteId}

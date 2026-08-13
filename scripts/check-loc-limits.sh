@@ -49,7 +49,11 @@ echo "Components (.tsx limit 1200):"
 # Bumped by a hair for the Windows-compat pass: platform-aware shortcut labels
 # (kbd() import + two undo/redo hint lines). Bumped by a hair again for the
 # dead-pin unpin wiring (issue #366): onUnpinProject threaded through to the
-# sidebar. TerminalPanes extraction still owed.
+# sidebar. TerminalPanes extraction still owed. Bumped once more for the
+# dev-server opt-out: two props (devServerOff, onEnableDevServer) threaded from
+# App through WorkspaceView to Preview so a switched-off server shows an
+# explanation instead of a blank pane. Pass-through only — no new logic in
+# either file; the handler itself lives in useProjectLifecycle.
 # Bumped again (small) for plugin failure surfacing (#165): pluginFailures and
 # the hosting-plugin count threaded into PluginsDropdown, usePlugins onError
 # wired to showToast. Pure wiring; the logic lives in usePlugins/PluginsDropdown.
@@ -62,11 +66,11 @@ echo "Components (.tsx limit 1200):"
 # Bumped by 1 for the floating agent panel: the useAgentDock call plus the
 # AgentPane wrapper and its toolbar toggle. Pure wiring — the drag/resize state
 # lives in useAgentDock and the chrome in AgentPane.
-check_file src/components/workspace/WorkspaceView.tsx 1661
+check_file src/components/workspace/WorkspaceView.tsx 1670
 check_file src/components/dashboard/ProjectList.tsx 900
 check_file src/components/plugins/PluginManager.tsx 700
 check_file src/components/dashboard/ImportProject.tsx 500
-check_file src/App.tsx 1295
+check_file src/App.tsx 1302
 echo
 echo "CSS (limit 1200 per file):"
 # The visual editor stylesheet carries every control's styling (box model,

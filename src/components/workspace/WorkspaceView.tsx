@@ -139,6 +139,9 @@ interface DevServerProps {
   healthOutputVersion: number;
   handleHealthOutput: (data: string) => void;
   needsInstall: { packageManager: string } | null;
+  /** Dev server switched off for this project — the preview says so. */
+  devServerOff?: boolean;
+  onEnableDevServer?: () => void;
   /** Set when the dev-server process died without Ship Studio stopping it
    *  (crash / external kill). Lets the Preview offer a real process restart. */
   devServerUnexpectedExit: DevServerUnexpectedExit | null;
@@ -468,6 +471,8 @@ export const WorkspaceView = memo(function WorkspaceView({
     healthOutputVersion,
     handleHealthOutput,
     needsInstall,
+    devServerOff,
+    onEnableDevServer,
     devServerUnexpectedExit,
     onRunInstall,
     onRunInstallFor,
@@ -1489,6 +1494,8 @@ export const WorkspaceView = memo(function WorkspaceView({
                             healthPanelRef={healthPanelRef}
                             onHealthOutput={handleHealthOutput}
                             needsInstall={needsInstall}
+                            devServerOff={devServerOff}
+                            onEnableDevServer={onEnableDevServer}
                             devServerUnexpectedExit={devServerUnexpectedExit}
                             onRestartDevServer={() => void handleRestartDevServer()}
                             onRunInstall={onRunInstall}
