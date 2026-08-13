@@ -15,18 +15,39 @@
  * scrolls to and briefly highlights a line (jump-to-code).
  */
 
-import { useEffect, useRef } from 'react';
+import { useCallback, useEffect, useRef } from 'react';
 import {
   EditorView,
   keymap,
   lineNumbers,
   drawSelection,
+  highlightActiveLine,
+  highlightActiveLineGutter,
   Decoration,
   type DecorationSet,
 } from '@codemirror/view';
 import { EditorState, StateEffect, StateField, Compartment } from '@codemirror/state';
-import { defaultKeymap, history, historyKeymap, indentWithTab } from '@codemirror/commands';
-import { indentUnit, bracketMatching } from '@codemirror/language';
+import {
+  defaultKeymap,
+  history,
+  historyKeymap,
+  indentWithTab,
+  toggleComment,
+} from '@codemirror/commands';
+import {
+  indentUnit,
+  bracketMatching,
+  foldGutter,
+  foldKeymap,
+  indentOnInput,
+} from '@codemirror/language';
+import { search, searchKeymap, highlightSelectionMatches } from '@codemirror/search';
+import {
+  autocompletion,
+  completionKeymap,
+  closeBrackets,
+  closeBracketsKeymap,
+} from '@codemirror/autocomplete';
 import {
   ghDarkExtension,
   neutralizeInvalidHighlight,
@@ -34,6 +55,47 @@ import {
   codeTabEditorTheme,
   codeLanguageExtension,
 } from '../../lib/codemirror';
+
+/**
+ * Editor font size, in px. Persisted rather than per-file: a size you picked
+ * because of your eyes or your screen shouldn't reset when you open the next
+ * file.
+ */
+const FONT_SIZE_KEY = 'shipstudio.codeFontSize';
+const FONT_SIZE_MIN = 9;
+const FONT_SIZE_MAX = 28;
+const FONT_SIZE_DEFAULT = 13;
+
+function clampFontSize(px: number): number {
+  return Math.min(FONT_SIZE_MAX, Math.max(FONT_SIZE_MIN, Math.round(px)));
+}
+
+/** Read the stored size, falling back when storage is empty or unusable. */
+export function readStoredFontSize(): number {
+  try {
+    const raw = Number(localStorage.getItem(FONT_SIZE_KEY));
+    return Number.isFinite(raw) && raw > 0 ? clampFontSize(raw) : FONT_SIZE_DEFAULT;
+  } catch {
+    // Private-mode storage denial is not worth failing the editor over.
+    return FONT_SIZE_DEFAULT;
+  }
+}
+
+function storeFontSize(px: number): void {
+  try {
+    localStorage.setItem(FONT_SIZE_KEY, String(px));
+  } catch {
+    // Same as above: the size still applies for this session.
+  }
+}
+
+/** Gutter included, so line numbers scale with the text instead of drifting. */
+function fontSizeTheme(px: number) {
+  return EditorView.theme({
+    '&': { fontSize: `${px}px` },
+    '.cm-gutters': { fontSize: `${px}px` },
+  });
+}
 
 export interface EditorSelectionInfo {
   text: string;
@@ -98,6 +160,26 @@ export function CodeFileEditor({
   const editableRef = useRef(editable);
   editableRef.current = editable;
   const editableComp = useRef(new Compartment());
+  const fontSizeComp = useRef(new Compartment());
+  const fontSizeRef = useRef(readStoredFontSize());
+
+  const applyFontSize = useCallback((view: EditorView, px: number) => {
+    const next = clampFontSize(px);
+    fontSizeRef.current = next;
+    storeFontSize(next);
+    view.dispatch({ effects: fontSizeComp.current.reconfigure(fontSizeTheme(next)) });
+    return true;
+  }, []);
+
+  const zoomBy = useCallback(
+    (view: EditorView, delta: number) => applyFontSize(view, fontSizeRef.current + delta),
+    [applyFontSize]
+  );
+
+  const zoomTo = useCallback(
+    (view: EditorView, px: number) => applyFontSize(view, px),
+    [applyFontSize]
+  );
   // The last doc string we emitted via onChange. Lets the value-sync effect skip
   // re-stringifying the whole document on every keystroke (our own echo).
   const lastReportedRef = useRef(value);
@@ -111,12 +193,22 @@ export function CodeFileEditor({
       doc: value,
       extensions: [
         lineNumbers(),
+        highlightActiveLineGutter(),
+        foldGutter(),
         drawSelection(),
+        highlightActiveLine(),
         history(),
         bracketMatching(),
+        closeBrackets(),
+        indentOnInput(),
+        autocompletion(),
+        // Find/replace panel. `top` keeps it out of the way of the status row.
+        search({ top: true }),
+        highlightSelectionMatches(),
         indentUnit.of('  '),
         EditorState.tabSize.of(2),
         revealLineField,
+        fontSizeComp.current.of(fontSizeTheme(fontSizeRef.current)),
         keymap.of([
           {
             key: 'Mod-s',
@@ -127,6 +219,17 @@ export function CodeFileEditor({
               return true;
             },
           },
+          // Zoom. Both '=' and the shifted '+' are bound, because which one the
+          // keyboard reports depends on the layout.
+          { key: 'Mod-=', run: (v) => zoomBy(v, 1) },
+          { key: 'Mod-Shift-=', run: (v) => zoomBy(v, 1) },
+          { key: 'Mod--', run: (v) => zoomBy(v, -1) },
+          { key: 'Mod-0', run: (v) => zoomTo(v, FONT_SIZE_DEFAULT) },
+          { key: 'Mod-/', run: toggleComment },
+          ...closeBracketsKeymap,
+          ...searchKeymap,
+          ...foldKeymap,
+          ...completionKeymap,
           ...defaultKeymap,
           ...historyKeymap,
           indentWithTab,
