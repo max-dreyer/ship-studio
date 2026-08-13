@@ -26,6 +26,7 @@ import {
   updatePreviewComment,
   type PreviewComment,
 } from '../lib/comments';
+import { asCommandError, formatCommandError } from '../lib/errors';
 import { logger } from '../lib/logger';
 
 /** Where a pin sits in the preview, in iframe coordinates. */
@@ -92,7 +93,9 @@ export function usePreviewComments({
     try {
       setComments(await listPreviewComments(projectPath));
     } catch (err) {
-      logger.warn('[comments] could not load notes', { error: String(err) });
+      logger.warn('[comments] could not load notes', {
+        error: formatCommandError(asCommandError(err)),
+      });
     }
   }, [projectPath]);
 
@@ -191,7 +194,7 @@ export function usePreviewComments({
         setPending(null);
         await refresh();
       } catch (err) {
-        onToast?.(String(err), 'error');
+        onToast?.(formatCommandError(asCommandError(err)), 'error');
       }
     },
     [onToast, pageUrl, pending, projectPath, refresh]
@@ -203,7 +206,7 @@ export function usePreviewComments({
         await updatePreviewComment(projectPath, id, text);
         await refresh();
       } catch (err) {
-        onToast?.(String(err), 'error');
+        onToast?.(formatCommandError(asCommandError(err)), 'error');
       }
     },
     [onToast, projectPath, refresh]
@@ -215,7 +218,7 @@ export function usePreviewComments({
         await deletePreviewComment(projectPath, id);
         await refresh();
       } catch (err) {
-        onToast?.(String(err), 'error');
+        onToast?.(formatCommandError(asCommandError(err)), 'error');
       }
     },
     [onToast, projectPath, refresh]
@@ -269,7 +272,7 @@ export function usePreviewComments({
       await refresh();
       onToast?.(unsent.length === 1 ? 'Note sent' : `${unsent.length} notes sent`, 'success');
     } catch (err) {
-      onToast?.(String(err), 'error');
+      onToast?.(formatCommandError(asCommandError(err)), 'error');
     } finally {
       setSending(false);
     }
@@ -280,7 +283,7 @@ export function usePreviewComments({
       await clearSentPreviewComments(projectPath);
       await refresh();
     } catch (err) {
-      onToast?.(String(err), 'error');
+      onToast?.(formatCommandError(asCommandError(err)), 'error');
     }
   }, [onToast, projectPath, refresh]);
 

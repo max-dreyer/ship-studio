@@ -201,6 +201,35 @@ export const CSS_CATEGORIES: CssCategory[] = [
     ],
   },
   {
+    id: 'position',
+    label: 'Position',
+    controls: [
+      {
+        kind: 'select',
+        prop: 'position',
+        label: 'Position',
+        options: [
+          { value: 'static', label: 'Static' },
+          { value: 'relative', label: 'Relative' },
+          { value: 'absolute', label: 'Absolute' },
+          { value: 'fixed', label: 'Fixed' },
+          { value: 'sticky', label: 'Sticky' },
+        ],
+      },
+      { kind: 'length', prop: 'top', label: 'Top', placeholder: 'auto', showIf: isPositioned },
+      { kind: 'length', prop: 'right', label: 'Right', placeholder: 'auto', showIf: isPositioned },
+      {
+        kind: 'length',
+        prop: 'bottom',
+        label: 'Bottom',
+        placeholder: 'auto',
+        showIf: isPositioned,
+      },
+      { kind: 'length', prop: 'left', label: 'Left', placeholder: 'auto', showIf: isPositioned },
+      { kind: 'length', prop: 'z-index', label: 'Z-index', placeholder: 'auto' },
+    ],
+  },
+  {
     id: 'typography',
     label: 'Type',
     controls: [
@@ -307,35 +336,6 @@ export const CSS_CATEGORIES: CssCategory[] = [
       },
       { kind: 'color', prop: 'border-color', label: 'Color' },
       { kind: 'edges', prop: 'border-radius', label: 'Radius' },
-    ],
-  },
-  {
-    id: 'position',
-    label: 'Position',
-    controls: [
-      {
-        kind: 'select',
-        prop: 'position',
-        label: 'Position',
-        options: [
-          { value: 'static', label: 'Static' },
-          { value: 'relative', label: 'Relative' },
-          { value: 'absolute', label: 'Absolute' },
-          { value: 'fixed', label: 'Fixed' },
-          { value: 'sticky', label: 'Sticky' },
-        ],
-      },
-      { kind: 'length', prop: 'top', label: 'Top', placeholder: 'auto', showIf: isPositioned },
-      { kind: 'length', prop: 'right', label: 'Right', placeholder: 'auto', showIf: isPositioned },
-      {
-        kind: 'length',
-        prop: 'bottom',
-        label: 'Bottom',
-        placeholder: 'auto',
-        showIf: isPositioned,
-      },
-      { kind: 'length', prop: 'left', label: 'Left', placeholder: 'auto', showIf: isPositioned },
-      { kind: 'length', prop: 'z-index', label: 'Z-index', placeholder: 'auto' },
     ],
   },
   {
