@@ -21,7 +21,7 @@ import { useState } from 'react';
 import { CssControls } from './CssControls';
 import { CSS_CATEGORIES } from '../../lib/cssControls';
 import { declarations, type RuleBody } from '../../lib/cssBody';
-import { effectiveValues } from '../../lib/cssEffective';
+import { effectiveValues, withComputedFallback } from '../../lib/cssEffective';
 import { rowKey, type CascadeRow } from '../../lib/cssCascade';
 import { setBodyProperties, setBodyProperty } from '../../lib/cssBodyEdit';
 import type { CssDeclaration } from '../../lib/edit-css';
@@ -32,6 +32,9 @@ interface Props {
   /** The element's full cascade — used to show what it currently has, even for
    *  properties this rule doesn't set. */
   rows: CascadeRow[];
+  /** What the browser actually renders for this element, per property. Fills
+   *  the controls the cascade says nothing about (inherited, UA default). */
+  computed?: Record<string, string>;
   onChangeBody: (key: string, body: RuleBody) => void;
 }
 
@@ -40,7 +43,7 @@ function defaultOpen(id: string): boolean {
   return !['child', 'position', 'transform', 'effects'].includes(id);
 }
 
-export function CssVisualView({ rule, rows, onChangeBody }: Props) {
+export function CssVisualView({ rule, rows, computed, onChangeBody }: Props) {
   const [open, setOpen] = useState<Record<string, boolean>>({});
 
   if (!rule) {
@@ -67,7 +70,7 @@ export function CssVisualView({ rule, rows, onChangeBody }: Props) {
 
   // What the element actually has right now, so controls this rule leaves
   // alone still show the truth rather than looking unset.
-  const effective = effectiveValues(rows, rowKey, rule.key);
+  const effective = withComputedFallback(effectiveValues(rows, rowKey, rule.key), computed);
 
   return (
     <div className="ss-visual">

@@ -59,6 +59,66 @@ impl Default for CommentsFile {
     }
 }
 
+/// The shape an earlier implementation of comment mode wrote.
+///
+/// Different names for the same things (`body`/`text`, `route`/`url`,
+/// `created_at`/`added_at`), a timestamp where we keep a flag, and a richer
+/// element description we no longer need in full. It also claims
+/// `schema_version: 1`, so the version can't tell the two apart — reading is
+/// try-new-then-this. Read-only: the next save writes the current shape.
+#[derive(Debug, Deserialize)]
+struct LegacyComment {
+    id: String,
+    dom_path: String,
+    #[serde(default)]
+    route: String,
+    #[serde(default)]
+    tag_name: String,
+    #[serde(default)]
+    class_name: String,
+    body: String,
+    created_at: i64,
+    /// When it went to the agent, or null. We only keep whether it did.
+    #[serde(default)]
+    sent_at: Option<i64>,
+}
+
+#[derive(Debug, Deserialize)]
+struct LegacyFile {
+    comments: Vec<LegacyComment>,
+}
+
+impl From<LegacyComment> for PreviewComment {
+    fn from(old: LegacyComment) -> Self {
+        // Rebuild the short label from the parts that used to be stored
+        // separately: `p.hero`, or just `p` for an unclassed element.
+        let first_class = old
+            .class_name
+            .split_whitespace()
+            .next()
+            .unwrap_or_default()
+            .to_string();
+        let label = match (old.tag_name.as_str(), first_class.as_str()) {
+            ("", _) => String::new(),
+            (tag, "") => tag.to_string(),
+            (tag, cls) => format!("{tag}.{cls}"),
+        };
+        PreviewComment {
+            id: old.id,
+            dom_path: old.dom_path,
+            url: if old.route.is_empty() {
+                "/".to_string()
+            } else {
+                old.route
+            },
+            label,
+            text: old.body,
+            added_at: old.created_at,
+            sent: old.sent_at.is_some(),
+        }
+    }
+}
+
 fn comments_path(project_path: &str) -> Result<PathBuf, CommandError> {
     let root = validate_project_path(project_path)?;
     Ok(root.join(".shipstudio").join("comments.json"))
@@ -76,12 +136,25 @@ fn load(project_path: &str) -> Result<CommentsFile, CommandError> {
     let contents = std::fs::read_to_string(&path).map_err(|e| CommandError::Io {
         message: format!("Failed to read preview comments: {e}"),
     })?;
-    serde_json::from_str(&contents).map_err(|e| CommandError::Io {
-        message: format!(
-            "\"{}\" is not readable as comment data ({e})",
-            path.display()
-        ),
-    })
+    let current = match serde_json::from_str::<CommentsFile>(&contents) {
+        Ok(file) => return Ok(file),
+        Err(e) => e,
+    };
+    // Try the older shape before giving up. Only if that fails too is the file
+    // genuinely unreadable, and the error names the current-format failure —
+    // the legacy one would just be confusing.
+    match serde_json::from_str::<LegacyFile>(&contents) {
+        Ok(old) => Ok(CommentsFile {
+            schema_version: COMMENTS_SCHEMA_VERSION,
+            comments: old.comments.into_iter().map(Into::into).collect(),
+        }),
+        Err(_) => Err(CommandError::Io {
+            message: format!(
+                "\"{}\" is not readable as comment data ({current})",
+                path.display()
+            ),
+        }),
+    }
 }
 
 fn save(project_path: &str, file: &CommentsFile) -> Result<(), CommandError> {
@@ -257,6 +330,70 @@ pub async fn clear_sent_preview_comments(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A file written by the earlier implementation, field for field as found
+    /// on disk. Anything less faithful wouldn't prove the migration works.
+    const LEGACY_FILE: &str = r#"{
+      "schema_version": 1,
+      "comments": [
+        {
+          "id": "29fb8612-72fa-4aaa-b7f8-571b9add3143",
+          "route": "/kontakt",
+          "dom_path": "body:1>div:4>main:4>p:1",
+          "tag_name": "p",
+          "class_name": "seiten-inhalt gross",
+          "text_snippet": "Ich bin Max.",
+          "attr_src": null,
+          "ancestor_classes": ["seiten-inhalt"],
+          "body": "Test 123",
+          "created_at": 1786604696000,
+          "sent_at": null,
+          "source_file": null,
+          "source_line": null,
+          "confidence": null,
+          "ambiguous_count": null,
+          "rect": { "top": 386.0, "left": 361.1, "width": 658.6, "height": 84.0 }
+        }
+      ]
+    }"#;
+
+    #[test]
+    fn reads_the_previous_on_disk_format() {
+        let file: LegacyFile = serde_json::from_str(LEGACY_FILE).expect("legacy file parses");
+        let migrated: Vec<PreviewComment> = file
+            .comments
+            .into_iter()
+            .map(Into::into)
+            .collect::<Vec<_>>();
+
+        assert_eq!(migrated.len(), 1);
+        let c = &migrated[0];
+        // The note itself is what matters — losing it would be the real bug.
+        assert_eq!(c.text, "Test 123");
+        assert_eq!(c.id, "29fb8612-72fa-4aaa-b7f8-571b9add3143");
+        assert_eq!(c.url, "/kontakt");
+        assert_eq!(c.added_at, 1786604696000);
+        // Label is rebuilt from the separately stored tag and first class.
+        assert_eq!(c.label, "p.seiten-inhalt");
+        // A null sent_at means it never reached the agent.
+        assert!(!c.sent);
+    }
+
+    #[test]
+    fn a_legacy_note_already_sent_stays_sent() {
+        let json = LEGACY_FILE.replace("\"sent_at\": null", "\"sent_at\": 1786604700000");
+        let file: LegacyFile = serde_json::from_str(&json).expect("parses");
+        let migrated: PreviewComment = file.comments.into_iter().next().unwrap().into();
+        assert!(migrated.sent);
+    }
+
+    #[test]
+    fn an_unclassed_legacy_element_keeps_a_bare_tag_label() {
+        let json = LEGACY_FILE.replace("\"seiten-inhalt gross\"", "\"\"");
+        let file: LegacyFile = serde_json::from_str(&json).expect("parses");
+        let migrated: PreviewComment = file.comments.into_iter().next().unwrap().into();
+        assert_eq!(migrated.label, "p");
+    }
 
     fn comment(id: &str, at: i64) -> PreviewComment {
         PreviewComment {

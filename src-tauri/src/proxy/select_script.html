@@ -215,7 +215,14 @@ function clearRulePreview(key){
    Two siblings with the SAME tag+class still differ here, so the editor never aliases
    one onto the other; it's also stable across an HMR reload of the same tree. */
 function ssDomPath(el){var parts=[],e=el;while(e&&e!==document.documentElement){var p=e.parentElement;if(!p)break;var idx=0,sib=p.firstElementChild;while(sib&&sib!==e){idx++;sib=sib.nextElementSibling;}parts.unshift((e.tagName||'').toLowerCase()+':'+idx);e=p;}return parts.join('>');}
-function sig(el){var anc=[],p=el.parentElement,n=0;while(p&&p!==document.body&&n<8){var c=p.getAttribute('class');if(c&&c.trim()){anc.push(c);n++;}p=p.parentElement;}var r=el.getBoundingClientRect();var cs=getComputedStyle(el);return{className:el.getAttribute('class')||'',tagName:(el.tagName||'').toLowerCase(),text:(el.innerText||el.textContent||'').trim().slice(0,SS_TEXT_CAP),domPath:ssDomPath(el),ancestorClasses:anc,rect:{top:r.top,left:r.left,width:r.width,height:r.height},computedColor:cs.color,computedBackgroundColor:cs.backgroundColor,unlayeredProps:uLayered(el),attrSrc:el.getAttribute('src'),currentSrc:(el.tagName==='IMG'&&el.currentSrc)||null};}
+/* Every property the CSS panel has a control for. The cascade only knows what
+   some rule declares; most of what an element actually looks like comes from
+   inheritance or the UA default, and a panel that shows those as blank is
+   telling the user the element has no padding when it plainly does. Keep in
+   step with CSS_CATEGORIES in src/lib/cssControls.ts. */
+var SS_PANEL_PROPS=['align-items','align-self','aspect-ratio','background-color','background-image','background-position','background-repeat','background-size','border-color','border-radius','border-style','border-width','bottom','box-shadow','color','cursor','display','filter','flex-basis','flex-direction','flex-grow','flex-shrink','flex-wrap','font-family','font-size','font-style','font-weight','gap','height','justify-content','left','letter-spacing','line-height','margin','max-height','max-width','min-height','min-width','opacity','order','overflow','padding','position','right','text-align','text-decoration-line','text-shadow','text-transform','top','transform','transform-origin','transition','width','z-index'];
+function computedFor(cs){var o={};for(var i=0;i<SS_PANEL_PROPS.length;i++){var k=SS_PANEL_PROPS[i];try{var v=cs.getPropertyValue(k);if(v&&v!=='')o[k]=v;}catch(e){}}return o;}
+function sig(el){var anc=[],p=el.parentElement,n=0;while(p&&p!==document.body&&n<8){var c=p.getAttribute('class');if(c&&c.trim()){anc.push(c);n++;}p=p.parentElement;}var r=el.getBoundingClientRect();var cs=getComputedStyle(el);return{className:el.getAttribute('class')||'',tagName:(el.tagName||'').toLowerCase(),text:(el.innerText||el.textContent||'').trim().slice(0,SS_TEXT_CAP),domPath:ssDomPath(el),ancestorClasses:anc,rect:{top:r.top,left:r.left,width:r.width,height:r.height},computedColor:cs.color,computedBackgroundColor:cs.backgroundColor,computedStyles:computedFor(cs),unlayeredProps:uLayered(el),attrSrc:el.getAttribute('src'),currentSrc:(el.tagName==='IMG'&&el.currentSrc)||null};}
 function ensureStyle(){if(!styleEl){styleEl=document.createElement('style');styleEl.id='ss-preview';document.head.appendChild(styleEl);}return styleEl;}
 /* Build the preview CSS for one selection from its accumulated decls: base (minPx 0)
    as a bare rule, variants wrapped in @media, emitted ascending by minPx so a larger
@@ -599,6 +606,62 @@ window.addEventListener('resize',reposition,true);
 (function(){
 var armed=false, tracked=[];
 
+/* Hover feedback. Its own overlay rather than the edit mode's: that IIFE is
+   closed, and the amber matches the pins so it reads as "leaving a note" and
+   not as "editing this". */
+var hoverBox=null, hoverEl=null;
+var HOVER_COLOR='rgba(245,158,11,.9)';
+
+function hoverOverlay(){
+  if(!hoverBox){
+    hoverBox=document.createElement('div');
+    hoverBox.style.cssText='position:fixed;pointer-events:none;z-index:2147483645;'+
+      'border:2px solid '+HOVER_COLOR+';background:rgba(245,158,11,.08);'+
+      'box-sizing:border-box;border-radius:2px;display:none';
+    hoverBox.setAttribute('data-ss-overlay','1');
+    document.body.appendChild(hoverBox);
+  }
+  return hoverBox;
+}
+
+function placeHover(el){
+  var box=hoverOverlay();
+  if(!el){box.style.display='none';return;}
+  var r=el.getBoundingClientRect();
+  box.style.display='block';
+  box.style.top=r.top+'px';
+  box.style.left=r.left+'px';
+  box.style.width=r.width+'px';
+  box.style.height=r.height+'px';
+}
+
+function onHoverMove(e){
+  if(!armed)return;
+  var el=e.target;
+  if(!el||el.nodeType!==1||el.getAttribute('data-ss-overlay'))return;
+  if(el===hoverEl)return;
+  hoverEl=el;
+  placeHover(el);
+}
+
+/* Cursor and overlay belong together: both say "this click leaves a note". */
+function setArmedChrome(on){
+  var de=document.documentElement;
+  if(on){
+    de.style.cursor='crosshair';
+    document.addEventListener('mousemove',onHoverMove,true);
+  } else {
+    de.style.cursor='';
+    document.removeEventListener('mousemove',onHoverMove,true);
+    hoverEl=null;
+    placeHover(null);
+  }
+}
+
+/* The box is positioned in viewport coords, so it drifts off its element on
+   scroll unless it follows or hides. */
+function refreshHover(){ if(armed&&hoverEl)placeHover(hoverEl); }
+
 /* Longest-lived handle first: a unique id, then structure. Mirrors
    lib/comments.ts — keep the two in step. */
 function pathFor(el){
@@ -649,6 +712,7 @@ window.addEventListener('message',function(e){
   if(!d||typeof d!=='object')return;
   if(d.type==='ss:comments:arm'){
     armed=!!d.armed;
+    setArmedChrome(armed);
     if(!armed)tracked=[];
     else report();
   } else if(d.type==='ss:comments:track'){
@@ -670,6 +734,6 @@ document.addEventListener('click',function(e){
         ambiguous:matches!==1,x:Math.round(e.clientX),y:Math.round(e.clientY)});
 },true);
 
-window.addEventListener('scroll',report,true);
-window.addEventListener('resize',report,true);
+window.addEventListener('scroll',function(){report();refreshHover();},true);
+window.addEventListener('resize',function(){report();refreshHover();},true);
 })()</script>

@@ -21,6 +21,11 @@ export interface ElementSignature {
    *  inheritance (not an arbitrary `text-[#…]`). */
   computedColor?: string;
   computedBackgroundColor?: string;
+  /** What the element is actually worth for every property the CSS panel can
+   *  edit, keyed by property name. The cascade only carries what some rule
+   *  declares; this covers inheritance and UA defaults so controls show the
+   *  truth instead of looking unset. */
+  computedStyles?: Record<string, string>;
   /** CSS properties this element gets from UNLAYERED rules (custom CSS that beats
    *  Tailwind utilities). Edits touching these need the important modifier to win. */
   unlayeredProps?: string[];

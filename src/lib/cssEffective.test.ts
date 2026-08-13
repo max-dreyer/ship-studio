@@ -8,7 +8,7 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { effectiveValues, inheritedValue } from './cssEffective';
+import { effectiveValues, inheritedValue, withComputedFallback } from './cssEffective';
 import type { CascadeRow } from './cssCascade';
 
 type DeclInit = { prop: string; value: string; active?: boolean };
@@ -112,5 +112,48 @@ describe('inheritedValue', () => {
   it('returns null for a property nothing sets', () => {
     expect(inheritedValue(eff, 'margin')).toBeNull();
     expect(inheritedValue(undefined, 'margin')).toBeNull();
+  });
+});
+
+describe('withComputedFallback', () => {
+  const rows = [
+    row('.mine', [{ prop: 'color', value: 'red' }]),
+    row('.other', [{ prop: 'display', value: 'flex' }]),
+  ];
+  const eff = effectiveValues(rows, keyOf, '.mine');
+  const computed = {
+    color: 'rgb(0, 0, 0)',
+    display: 'block',
+    'font-size': '16px',
+    padding: '8px 12px',
+  };
+
+  it('fills in properties no rule declares', () => {
+    // The whole point: an element with visible padding shouldn't read as unset
+    // just because the padding comes from a UA default or inheritance.
+    const merged = withComputedFallback(eff, computed);
+    expect(merged.get('font-size')?.value).toBe('16px');
+    expect(merged.get('padding')?.value).toBe('8px 12px');
+    expect(merged.get('font-size')?.source).toBe('computed');
+  });
+
+  it('never overrides a declared value', () => {
+    // `.other` sets display:flex; the rendered value must not replace it, or
+    // the panel would credit the wrong source.
+    const merged = withComputedFallback(eff, computed);
+    expect(merged.get('display')?.value).toBe('flex');
+    expect(merged.get('display')?.source).toBe('.other');
+    expect(merged.get('color')?.value).toBe('red');
+  });
+
+  it('leaves the map alone when the element reported nothing', () => {
+    expect(withComputedFallback(eff, undefined)).toBe(eff);
+  });
+
+  it('a filled-in value still counts as coming from elsewhere', () => {
+    // inheritedValue is what the controls call, so the fallback has to survive
+    // that hop to actually show up.
+    const merged = withComputedFallback(eff, computed);
+    expect(inheritedValue(merged, 'font-size')?.value).toBe('16px');
   });
 });
