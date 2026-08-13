@@ -2,9 +2,13 @@
  * The numbered pins drawn over the preview.
  *
  * Positions come from the iframe (only it can resolve a `dom_path`), so this
- * component just paints. A pin whose element the page no longer has is drawn
- * detached rather than hidden: the note still exists, and silently dropping
- * its marker would leave the user wondering where it went.
+ * component just paints.
+ *
+ * A note whose element the page no longer has gets no pin. It used to get one
+ * at (0, 0) — the iframe's placeholder for "not found" — which put a pin in
+ * the top-left corner that stayed there while the page scrolled, looking like
+ * a real marker on the wrong element. An invented position is worse than no
+ * position; the notes list is where an unplaceable note stays visible.
  *
  * @module components/preview/CommentPins
  */
@@ -31,21 +35,18 @@ export function CommentPins({ comments, positions, scale = 1, selectedId, onSele
     <div className="ss-pins" aria-hidden={comments.length === 0}>
       {comments.map((comment, index) => {
         const at = byId.get(comment.id);
-        if (!at) return null;
+        // No position yet, or no element to point at: draw nothing.
+        if (!at || !at.found) return null;
         return (
           <button
             key={comment.id}
             type="button"
             className={`ss-pin${comment.sent ? ' is-sent' : ''}${
-              at.found ? '' : ' is-detached'
-            }${selectedId === comment.id ? ' is-selected' : ''}`}
+              selectedId === comment.id ? ' is-selected' : ''
+            }`}
             style={{ left: at.x * factor, top: at.y * factor }}
             onClick={() => onSelect(comment.id)}
-            title={
-              at.found
-                ? `${comment.label}: ${comment.text}`
-                : `${comment.label} is no longer on the page — ${comment.text}`
-            }
+            title={`${comment.label}: ${comment.text}`}
           >
             {index + 1}
           </button>

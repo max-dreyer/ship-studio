@@ -882,6 +882,16 @@ export const Preview = forwardRef<PreviewHandle, PreviewProps>(function Preview(
     comments.setIframe(iframeRef.current);
   }, [comments]);
 
+  // Notes on this page whose element the iframe couldn't find. They get no pin,
+  // so the list has to say why. Notes belonging to other pages aren't in here —
+  // they're absent, not unplaceable.
+  const unplaceableNoteIds = useMemo(() => {
+    const reported = new Map(comments.positions.map((p) => [p.id, p.found]));
+    return new Set(
+      comments.onThisPage.filter((c) => reported.get(c.id) === false).map((c) => c.id)
+    );
+  }, [comments.positions, comments.onThisPage]);
+
   const [iframeSize, setIframeSize] = useState<{ w: number; h: number } | null>(null);
   const iframeSizeObserverRef = useRef<ResizeObserver | null>(null);
 
@@ -1641,6 +1651,7 @@ export const Preview = forwardRef<PreviewHandle, PreviewProps>(function Preview(
         <div className="ss-notes-dock">
           <CommentsPanel
             comments={comments.comments}
+            unplaceableIds={unplaceableNoteIds}
             unsentCount={comments.unsent.length}
             sending={comments.sending}
             selectedId={selectedNoteId}

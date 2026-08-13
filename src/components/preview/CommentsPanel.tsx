@@ -15,6 +15,9 @@ import { groupByPage, type PreviewComment } from '../../lib/comments';
 
 interface Props {
   comments: PreviewComment[];
+  /** Notes whose element the current page doesn't have. They get no pin on the
+   *  canvas, so the list is the only place their state can be seen. */
+  unplaceableIds?: ReadonlySet<string>;
   unsentCount: number;
   sending: boolean;
   selectedId: string | null;
@@ -29,6 +32,7 @@ interface Props {
 
 export function CommentsPanel({
   comments,
+  unplaceableIds,
   unsentCount,
   sending,
   selectedId,
@@ -92,6 +96,14 @@ export function CommentsPanel({
                   <div className="ss-note__head">
                     <code className="ss-note__label">{comment.label}</code>
                     {comment.sent && <span className="ss-note__badge">sent</span>}
+                    {unplaceableIds?.has(comment.id) && (
+                      <span
+                        className="ss-note__badge ss-note__badge--orphan"
+                        title="This element isn't on the page right now, so the note has no pin. It may be on another page, or it may have changed."
+                      >
+                        no pin
+                      </span>
+                    )}
                   </div>
 
                   {editingId === comment.id ? (

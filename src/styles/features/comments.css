@@ -279,6 +279,18 @@
   font-size: var(--font-size-xs);
 }
 
+/* The note is fine, we just can't point at it. Warning-toned, not error-toned:
+   nothing is broken and nothing was lost. Two badges can sit side by side
+   (sent + no pin), so only the first one pushes off the label. */
+.ss-note__badge--orphan {
+  margin-left: var(--spacing-xs);
+  background: rgba(var(--warning-rgb), 0.12);
+  color: var(--warning);
+}
+.ss-note__badge--orphan:first-of-type {
+  margin-left: auto;
+}
+
 .ss-note__text {
   margin: 0;
   font-size: var(--font-size-sm);

@@ -695,11 +695,32 @@ function labelFor(el){
 
 function send(msg){ try{ parent.postMessage(msg,'*'); }catch(e){} }
 
+/* Two path formats reach us. Comment mode writes a CSS selector, but notes
+   stored by other code paths use an index path (`body:1>div:0>h1:1`, child
+   position rather than nth-of-type) that querySelector cannot parse — it
+   throws, the note counts as lost, and its pin lands in the corner. Walk that
+   form by hand instead of declaring the element gone. */
+function resolveNote(path){
+  if(!path)return null;
+  try{ var byCss=document.querySelector(path); if(byCss)return byCss; }catch(e){}
+  if(path.indexOf('>')===-1||!/:\d+(>|$)/.test(path))return null;
+  var parts=path.split('>'), node=document.documentElement;
+  for(var i=0;i<parts.length;i++){
+    var m=/^([a-z0-9-]+):(\d+)$/i.exec(parts[i].replace(/\s+/g,''));
+    if(!m||!node)return null;
+    var kid=node.children[Number(m[2])];
+    if(!kid||(kid.tagName||'').toLowerCase()!==m[1].toLowerCase())return null;
+    node=kid;
+  }
+  return node;
+}
+
 function report(){
   if(!armed||!tracked.length)return;
   send({type:'ss:comments:positions',positions:tracked.map(function(p){
-    var el=null;
-    try{ el=document.querySelector(p.domPath); }catch(e){}
+    var el=resolveNote(p.domPath);
+    /* No coordinates rather than invented ones: the host draws nothing for a
+       note it can't place, instead of pinning it to the top-left corner. */
     if(!el)return {id:p.id,x:0,y:0,found:false};
     var r=el.getBoundingClientRect();
     /* Top-centre of the element, which is where the pin's tip sits. */
