@@ -44,6 +44,7 @@ import {
   resolveWorkspacePath,
   checkDependenciesInstalled,
   getForceStaticServe,
+  getDevServerDisabled,
 } from '../lib/project';
 import { detectPackageManager } from '../lib/github';
 
@@ -120,6 +121,10 @@ interface ProjectServerState {
    *  intentionally not started; the Preview pane renders an install CTA
    *  instead. Null means deps are fine (or there's nothing to install). */
   needsInstall: { packageManager: string } | null;
+  /** True when the user switched the dev server off for this project. The
+   *  spawn is skipped and the Preview pane says so, rather than sitting on a
+   *  spinner waiting for a server that was never going to start. */
+  devServerOff: boolean;
   /** Carry-over of an incomplete trailing line between PTY chunks so the
    *  probe-line filter can match patterns split across chunk boundaries
    *  (the PTY emits chunks of arbitrary size — they are not line-aligned). */
@@ -182,6 +187,7 @@ function makeState(): ProjectServerState {
     healthPending: false,
     suppressed: false,
     needsInstall: null,
+    devServerOff: false,
     pendingOutputLine: '',
     shopifyLoginDetector: null,
     shopifyLoginNudgePending: false,
@@ -292,6 +298,7 @@ export function useDevServer(currentProjectPath: string | null) {
   const projectType = activeState?.type ?? 'unknown';
   const customDevCommand = activeState?.customCommand ?? null;
   const needsInstall = activeState?.needsInstall ?? null;
+  const devServerOff = activeState?.devServerOff ?? false;
   const devServerOutputVersion = activeState?.outputVersion ?? 0;
   const healthOutputVersion = activeState?.healthVersion ?? 0;
   const devServerUnexpectedExit = activeState?.unexpectedExit ?? null;
@@ -554,6 +561,29 @@ export function useDevServer(currentProjectPath: string | null) {
   const startServerForProject = useCallback(
     async (projectPath: string, projectName: string, port: number, windowLabel: string) => {
       const s = getOrCreateState(projectPath);
+
+      // Switched off for this project: don't spawn, and say so. Checked before
+      // anything else so no port is claimed and no output stream is opened.
+      let switchedOff = false;
+      try {
+        switchedOff = await getDevServerDisabled(projectPath);
+      } catch {
+        /* Unreadable setting: start the server, the old behaviour. */
+      }
+      s.devServerOff = switchedOff;
+      if (switchedOff) {
+        logger.info('[OpenProject] Dev server is switched off for this project', { projectPath });
+        // Project type still matters: the Preview pane and the code tools read
+        // it, and it says nothing about whether a server is running.
+        try {
+          s.type = await detectProjectType(projectPath);
+        } catch {
+          /* leave whatever detection last found */
+        }
+        bump();
+        return s.type;
+      }
+
       // Re-enable output handling for the (possibly new) server on this path.
       s.suppressed = false;
       s.port = port;
@@ -1134,6 +1164,7 @@ export function useDevServer(currentProjectPath: string | null) {
     devServerOutputVersion,
     healthOutputVersion,
     needsInstall,
+    devServerOff,
     devServerUnexpectedExit,
 
     // Handlers

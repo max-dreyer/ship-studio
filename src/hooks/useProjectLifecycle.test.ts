@@ -94,6 +94,7 @@ function createParams(overrides?: Partial<UseProjectLifecycleParams>): UseProjec
     startServerForProject: vi.fn().mockResolvedValue('nextjs'),
     isServerRunning: vi.fn(() => false),
     restartDevServer: vi.fn().mockResolvedValue(undefined),
+    stopServer: vi.fn().mockResolvedValue(undefined),
     clearNeedsInstall: vi.fn(),
     pasteToActiveTerminal: vi.fn(),
     terminalTabs: [],

@@ -11,6 +11,7 @@ vi.mock('../lib/project', () => ({
   getCustomDevCommand: vi.fn().mockResolvedValue(null),
   setCustomDevCommand: vi.fn().mockResolvedValue(undefined),
   getForceStaticServe: vi.fn().mockResolvedValue(false),
+  getDevServerDisabled: vi.fn().mockResolvedValue(false),
   getWorkspaceSubpath: vi.fn().mockResolvedValue(null),
   resolveWorkspacePath: (path: string, subpath: string | null) =>
     subpath ? `${path}/${subpath}` : path,
@@ -265,6 +266,53 @@ describe('useDevServer', () => {
       expect(result.current.projectType).toBe('statichtml');
       expect(result.current.devServerPort).toBe(9090);
       expect(startStaticServer).toHaveBeenCalledWith('main', '/path/to/project');
+    });
+
+    it('starts nothing when the dev server is switched off for the project', async () => {
+      // Some work needs no preview. The spawn is skipped entirely — no port
+      // claimed, no output stream — but detection still runs, because the
+      // Preview pane and the code tools read the project type regardless.
+      const { getDevServerDisabled, startDevServer } = await import('../lib/project');
+      const { detectProjectType } = await import('../lib/static-server');
+      vi.mocked(getDevServerDisabled).mockResolvedValue(true);
+      vi.mocked(detectProjectType).mockResolvedValue('nextjs');
+
+      const { result } = renderHook(() => useDevServer('/path/to/project'));
+      await act(async () => {
+        await result.current.startServerForProject('/path/to/project', 'my-project', 3000, 'main');
+      });
+
+      expect(startDevServer).not.toHaveBeenCalled();
+      expect(result.current.devServerOff).toBe(true);
+      // The type is still reported, so the rest of the workspace behaves.
+      expect(result.current.projectType).toBe('nextjs');
+    });
+
+    it('starts the server again once the switch is turned back on', async () => {
+      const { getDevServerDisabled, startDevServer } = await import('../lib/project');
+      vi.mocked(getDevServerDisabled).mockResolvedValue(false);
+
+      const { result } = renderHook(() => useDevServer('/path/to/project'));
+      await act(async () => {
+        await result.current.startServerForProject('/path/to/project', 'my-project', 3000, 'main');
+      });
+
+      expect(startDevServer).toHaveBeenCalled();
+      expect(result.current.devServerOff).toBe(false);
+    });
+
+    it('starts the server when the setting cannot be read', async () => {
+      // A backend that doesn't know the command yet must not leave the user
+      // with no preview and no explanation.
+      const { getDevServerDisabled, startDevServer } = await import('../lib/project');
+      vi.mocked(getDevServerDisabled).mockRejectedValue(new Error('unknown command'));
+
+      const { result } = renderHook(() => useDevServer('/path/to/project'));
+      await act(async () => {
+        await result.current.startServerForProject('/path/to/project', 'my-project', 3000, 'main');
+      });
+
+      expect(startDevServer).toHaveBeenCalled();
     });
 
     it('serves a generic project statically when force_static_serve is set', async () => {

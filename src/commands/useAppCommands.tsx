@@ -57,6 +57,8 @@ export interface UseAppCommandsParams {
   handleImportLocalFolder: () => void | Promise<void>;
   handleGitHubConnect: () => void | Promise<void>;
   handleRestartDevServer: () => Promise<void> | void;
+  /** Switch the dev server off/on for the current project (takes effect now). */
+  handleToggleDevServer: () => Promise<void> | void;
   /** Current education-mode state, so the command can read "Enter" vs "Exit". */
   isEducationMode: boolean;
   setIsEducationMode: (mode: boolean) => void;
@@ -73,6 +75,7 @@ export function useAppCommands({
   handleImportLocalFolder,
   handleGitHubConnect,
   handleRestartDevServer,
+  handleToggleDevServer,
   isEducationMode,
   setIsEducationMode,
   showToast,
@@ -317,6 +320,18 @@ export function useAppCommands({
         category: 'navigation' as const,
         when: 'project' as const,
         run: handleBackToProjects,
+      },
+      {
+        id: 'devserver.toggle',
+        // The title can't name the direction: the setting lives on disk and
+        // reading it per keystroke to relabel a palette row isn't worth it.
+        // The toast afterwards says which way it went.
+        title: 'Turn the dev server off or on',
+        icon: <RestartGlyph />,
+        category: 'action' as const,
+        when: 'project' as const,
+        keywords: ['dev', 'server', 'disable', 'enable', 'off', 'on', 'preview', 'stop'],
+        run: () => void handleToggleDevServer(),
       },
       {
         id: 'devserver.restart',

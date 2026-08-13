@@ -101,6 +101,55 @@ pub async fn set_force_static_serve(project_path: String, force: bool) -> Result
     super::metadata::save_project_metadata(&project, &metadata)
 }
 
+/// Gets whether the dev server is switched off for this project.
+/// Returns `false` when unset — the default is to start it.
+#[tauri::command]
+#[tracing::instrument(fields(project = %project_path))]
+pub async fn get_dev_server_disabled(project_path: String) -> Result<bool, CommandError> {
+    let project = validate_project_path(&project_path)?;
+    let metadata_path = project.join(".shipstudio").join("project.json");
+
+    if !metadata_path.exists() {
+        return Ok(false);
+    }
+
+    let metadata = std::fs::read_to_string(&metadata_path)
+        .ok()
+        .and_then(|contents| serde_json::from_str::<ProjectMetadata>(&contents).ok())
+        .unwrap_or_default();
+
+    Ok(metadata.dev_server_disabled.unwrap_or(false))
+}
+
+/// Switches the dev server off (or back on) for this project. Stores `None`
+/// (field omitted) when switched on, so the JSON stays clean and the default
+/// stays the default.
+#[tauri::command]
+#[tracing::instrument(fields(project = %project_path))]
+pub async fn set_dev_server_disabled(
+    project_path: String,
+    disabled: bool,
+) -> Result<(), CommandError> {
+    let project = validate_project_path(&project_path)?;
+    let shipstudio_dir = project.join(".shipstudio");
+    let metadata_path = shipstudio_dir.join("project.json");
+
+    let mut metadata = if metadata_path.exists() {
+        std::fs::read_to_string(&metadata_path)
+            .ok()
+            .and_then(|contents| serde_json::from_str::<ProjectMetadata>(&contents).ok())
+            .unwrap_or_default()
+    } else {
+        ProjectMetadata::default()
+    };
+
+    metadata.dev_server_disabled = if disabled { Some(true) } else { None };
+
+    // classify_fs_error routing: TCC/access-denied/read-only failures
+    // classify Expected instead of paging telemetry (issue #625).
+    super::metadata::save_project_metadata(&project, &metadata)
+}
+
 /// Gets the dev server port for a project (returns None if not configured, meaning use default 3000)
 #[tauri::command]
 #[tracing::instrument(fields(project = %project_path))]

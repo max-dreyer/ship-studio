@@ -735,6 +735,21 @@ export async function setForceStaticServe(projectPath: string, force: boolean): 
   return invoke<void>('set_force_static_serve', { projectPath, force });
 }
 
+/**
+ * Whether the dev server is switched off for this project.
+ *
+ * False unless the user turned it off — a project that has never been
+ * configured starts its server as before.
+ */
+export async function getDevServerDisabled(projectPath: string): Promise<boolean> {
+  return invoke<boolean>('get_dev_server_disabled', { projectPath });
+}
+
+/** Switch the dev server off (or back on) for this project. */
+export async function setDevServerDisabled(projectPath: string, disabled: boolean): Promise<void> {
+  return invoke<void>('set_dev_server_disabled', { projectPath, disabled });
+}
+
 /** A runnable app discovered inside a monorepo at import time. */
 export interface WorkspaceInfo {
   /** Package name from the workspace's `package.json`. */

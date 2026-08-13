@@ -44,6 +44,8 @@ import {
   detectWorkspaces,
   getWorkspaceSubpath,
   setWorkspaceSubpath,
+  getDevServerDisabled,
+  setDevServerDisabled,
 } from '../lib/project';
 import type { WorkspacePick } from '../components/dashboard/MonorepoPickerModal';
 import { getProjectGitHubStatus } from '../lib/github';
@@ -91,6 +93,8 @@ export interface UseProjectLifecycleParams {
   ) => Promise<ProjectType>;
   isServerRunning: (projectPath: string) => boolean;
   restartDevServer: (projectPath: string, portOverride?: number) => Promise<void>;
+  /** Stop a project's dev server. Used when switching it off for a project. */
+  stopServer: (projectPath: string) => Promise<void>;
   /** Drop the dependency-install gate on a project's dev server. Called after
    *  a successful pnpm/npm install so a follow-up startServer actually spawns. */
   clearNeedsInstall: (projectPath: string) => void;
@@ -136,6 +140,7 @@ export function useProjectLifecycle({
   startServerForProject,
   isServerRunning,
   restartDevServer,
+  stopServer,
   clearNeedsInstall,
   pasteToActiveTerminal,
   terminalTabs,
@@ -1022,6 +1027,31 @@ export function useProjectLifecycle({
     await restartDevServer(currentProject.path);
   };
 
+  /**
+   * Switch the dev server off (or back on) for the current project.
+   *
+   * Off also stops the server that's running — a setting that only takes hold
+   * at the next open would read as broken, and the point is to be rid of the
+   * process now. On starts it back up for the same reason.
+   */
+  const handleToggleDevServer = async () => {
+    if (!currentProject) return;
+    const path = currentProject.path;
+    try {
+      const wasOff = await getDevServerDisabled(path);
+      await setDevServerDisabled(path, !wasOff);
+      if (wasOff) {
+        await restartDevServer(path);
+        showToast('Dev server on for this project', 'success');
+      } else {
+        await stopServer(path);
+        showToast('Dev server off for this project', 'success');
+      }
+    } catch (err) {
+      showToast(formatCommandError(asCommandError(err)), 'error');
+    }
+  };
+
   const handleGitHubStatusChange = () => {
     // Refresh project GitHub status after push/publish
     if (currentProject) {
@@ -1064,6 +1094,7 @@ export function useProjectLifecycle({
     handleImportLocalFolder,
     handleCreateProject,
     handleRestartDevServer,
+    handleToggleDevServer,
     handleGitHubStatusChange,
     handlePreviewReady,
     sendToClaude,

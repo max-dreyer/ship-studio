@@ -10,7 +10,12 @@ import '../../styles/features/notifications.css';
 import { ModalFrame } from '../primitives/ModalFrame';
 import { Button } from '../primitives/Button';
 import { useModal } from '../../contexts/ModalContext';
-import { getForceStaticServe, setForceStaticServe } from '../../lib/project';
+import {
+  getForceStaticServe,
+  setForceStaticServe,
+  getDevServerDisabled,
+  setDevServerDisabled,
+} from '../../lib/project';
 import { logger } from '../../lib/logger';
 
 interface ProjectSettingsModalProps {
@@ -47,6 +52,12 @@ export function ProjectSettingsModal({
   // time and must not trigger a render.
   const loadedForceStatic = useRef<boolean | null>(null);
 
+  // Switching the dev server off applies to any project — a framework app is
+  // exactly where you'd want it when the preview isn't part of the work.
+  const showDevServerToggle = !!projectPath;
+  const [devServerOff, setDevServerOff] = useState(false);
+  const loadedDevServerOff = useRef<boolean | null>(null);
+
   // Load the persisted override whenever the modal opens (or the project changes).
   useEffect(() => {
     if (!isOpen || !showForceStatic || !projectPath) return;
@@ -68,6 +79,26 @@ export function ProjectSettingsModal({
     };
   }, [isOpen, showForceStatic, projectPath]);
 
+  useEffect(() => {
+    if (!isOpen || !showDevServerToggle || !projectPath) return;
+    let cancelled = false;
+    loadedDevServerOff.current = null;
+    getDevServerDisabled(projectPath)
+      .then((value) => {
+        if (cancelled) return;
+        setDevServerOff(value);
+        loadedDevServerOff.current = value;
+      })
+      .catch((err) => {
+        logger.warn('[ProjectSettings] Failed to load dev_server_disabled', {
+          error: err instanceof Error ? err.message : String(err),
+        });
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [isOpen, showDevServerToggle, projectPath]);
+
   const isValid = Number.isInteger(port) && port >= 1 && port <= 65535;
 
   const handleSave = () => {
@@ -87,6 +118,18 @@ export function ProjectSettingsModal({
       ) {
         void setForceStaticServe(projectPath, forceStatic).catch((err) => {
           logger.error('[ProjectSettings] Failed to save force_static_serve', {
+            error: err instanceof Error ? err.message : String(err),
+          });
+        });
+      }
+      if (
+        showDevServerToggle &&
+        projectPath &&
+        loadedDevServerOff.current !== null &&
+        devServerOff !== loadedDevServerOff.current
+      ) {
+        void setDevServerDisabled(projectPath, devServerOff).catch((err) => {
+          logger.error('[ProjectSettings] Failed to save dev_server_disabled', {
             error: err instanceof Error ? err.message : String(err),
           });
         });
@@ -225,6 +268,50 @@ export function ProjectSettingsModal({
                     for plain HTML/CSS sites that weren't recognized automatically — e.g. ones that
                     keep a <code>package.json</code> only for build tooling. Reopen the project to
                     apply.
+                  </span>
+                </span>
+              </label>
+            </div>
+          )}
+          {showDevServerToggle && (
+            <div className="notification-setting-section">
+              <label
+                style={{
+                  display: 'flex',
+                  alignItems: 'flex-start',
+                  gap: 'var(--spacing-sm)',
+                  cursor: 'pointer',
+                }}
+              >
+                <input
+                  type="checkbox"
+                  checked={devServerOff}
+                  onChange={(e) => setDevServerOff(e.target.checked)}
+                  style={{ marginTop: 2 }}
+                />
+                <span
+                  style={{ display: 'flex', flexDirection: 'column', gap: 'var(--spacing-xs)' }}
+                >
+                  <span
+                    style={{
+                      fontSize: 'var(--font-size-sm)',
+                      fontWeight: 500,
+                      color: 'var(--text-primary)',
+                    }}
+                  >
+                    Don't start the dev server
+                  </span>
+                  <span
+                    style={{
+                      fontSize: 'var(--font-size-xs)',
+                      color: 'var(--text-muted)',
+                      lineHeight: 1.4,
+                    }}
+                  >
+                    For work that doesn't need a preview — writing docs, reading a diff. Nothing is
+                    spawned and no port is claimed. Everything else (terminal, code, git) works as
+                    usual. Takes effect the next time the project opens; switch it back on the same
+                    way.
                   </span>
                 </span>
               </label>

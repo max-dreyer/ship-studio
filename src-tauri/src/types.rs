@@ -208,6 +208,12 @@ pub struct ProjectMetadata {
     /// auto-detection.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub force_static_serve: Option<bool>,
+    /// Whether to skip starting the dev server when this project opens. For
+    /// work that doesn't need a preview — writing docs, reviewing a diff —
+    /// where the server is just a process and a port doing nothing. `None`
+    /// (the common case) means start it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub dev_server_disabled: Option<bool>,
     /// Saved terminal tab state for session restoration
     #[serde(skip_serializing_if = "Option::is_none")]
     pub terminal_state: Option<TerminalState>,
@@ -276,6 +282,7 @@ impl Default for ProjectMetadata {
             custom_dev_command: None,
             dev_server_port: None,
             force_static_serve: None,
+            dev_server_disabled: None,
             terminal_state: None,
             custom_thumbnail: None,
             workspace_subpath: None,
@@ -940,6 +947,30 @@ pub struct CompactModePreferences {
 #[cfg(test)]
 mod metadata_tests {
     use super::ProjectMetadata;
+
+    #[test]
+    fn dev_server_disabled_is_omitted_when_unset() {
+        // The default has to stay invisible in the file: a project nobody
+        // configured must keep starting its server, including on older builds
+        // that don't know the field.
+        let meta = ProjectMetadata::default();
+        assert_eq!(meta.dev_server_disabled, None);
+        let json = serde_json::to_string(&meta).expect("serializes");
+        assert!(
+            !json.contains("dev_server_disabled"),
+            "unset flag should not be written: {json}"
+        );
+    }
+
+    #[test]
+    fn dev_server_disabled_round_trips_when_set() {
+        let mut meta = ProjectMetadata::default();
+        meta.dev_server_disabled = Some(true);
+        let json = serde_json::to_string(&meta).expect("serializes");
+        assert!(json.contains("\"dev_server_disabled\":true"));
+        let parsed: ProjectMetadata = serde_json::from_str(&json).expect("parses");
+        assert_eq!(parsed.dev_server_disabled, Some(true));
+    }
 
     #[test]
     fn force_static_serve_is_omitted_when_unset() {
