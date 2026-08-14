@@ -950,6 +950,9 @@ pub struct AccountCredentialStatus {
     pub codex_auth_email: Option<String>,
     pub opencode_auth_email: Option<String>,
     pub github_auth_email: Option<String>,
+    /// GitLab identity from `glab auth status` for this workspace. `None` when
+    /// glab isn't installed or no instance is signed in.
+    pub gitlab_username: Option<String>,
     /// Vercel identity (`vercel whoami`) verified with this workspace's injected
     /// `VERCEL_TOKEN`. `None` when no token is set or the token is invalid.
     pub vercel_username: Option<String>,

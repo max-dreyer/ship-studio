@@ -47,6 +47,7 @@ import {
   CodexIcon,
   CursorIcon,
   GitHubIcon,
+  GitLabIcon,
   OpencodeIcon,
   VercelIcon,
 } from '../icons';
@@ -704,6 +705,12 @@ export function AgentsPanel() {
                   name: 'GitHub',
                   icon: <GitHubIcon size={18} />,
                   identity: credStatus?.githubAuthEmail ?? null,
+                },
+                {
+                  id: 'gitlab' as const,
+                  name: 'GitLab',
+                  icon: <GitLabIcon size={18} />,
+                  identity: credStatus?.gitlabUsername ?? null,
                 },
                 {
                   id: 'vercel' as const,

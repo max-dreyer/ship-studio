@@ -16,7 +16,7 @@
  */
 
 import { useState, useEffect } from 'react';
-import { CheckIcon, WarningIcon, ChevronIcon, ClaudeIcon, GitHubIcon } from '../icons';
+import { CheckIcon, WarningIcon, ChevronIcon, ClaudeIcon, GitHubIcon, GitLabIcon } from '../icons';
 import { Spinner } from '../primitives/Spinner';
 import { getFullSetupStatus, SetupItem, SETUP_ITEM_ORDER, MACHINE_ITEM_IDS } from '../../lib/setup';
 import { logger } from '../../lib/logger';
@@ -56,6 +56,8 @@ export function MachineToolsPanel() {
         return <ClaudeIcon />;
       case 'gh':
         return <GitHubIcon />;
+      case 'glab':
+        return <GitLabIcon />;
       default:
         return <CheckIcon size={16} />;
     }

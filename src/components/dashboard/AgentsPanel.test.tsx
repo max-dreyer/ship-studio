@@ -88,6 +88,7 @@ vi.mock('../icons', () => ({
   OpencodeIcon: () => <span data-testid="opencode-icon" />,
   CursorIcon: () => <span data-testid="cursor-icon" />,
   GitHubIcon: () => <span data-testid="github-icon" />,
+  GitLabIcon: () => <span data-testid="gitlab-icon" />,
   VercelIcon: () => <span data-testid="vercel-icon" />,
 }));
 
@@ -469,6 +470,7 @@ describe('AgentsPanel', () => {
     mockWorkspace(CIRCA);
     mockInvoke('get_account_credential_status', {
       githubAuthEmail: 'octocat@github.com',
+      gitlabUsername: 'circa-dev',
       vercelUsername: 'circa-team',
     });
     render(<AgentsPanel />);
@@ -482,14 +484,14 @@ describe('AgentsPanel', () => {
   it('non-default workspace: Vercel "Connect" opens the token modal and saves the credential', async () => {
     mockInvoke('get_agents_status', [CLAUDE_DEFAULT]);
     mockWorkspace(CIRCA);
-    // No credential status → both services read "Connect".
+    // No credential status → every service reads "Connect".
     render(<AgentsPanel />);
 
     await waitFor(() => expect(screen.getByText('Vercel')).toBeInTheDocument());
-    // Both GitHub + Vercel offer Connect; grab them in row order.
+    // GitHub, GitLab and Vercel each offer Connect; grab them in row order.
     const connectButtons = screen.getAllByRole('button', { name: 'Connect' });
-    expect(connectButtons).toHaveLength(2);
-    fireEvent.click(connectButtons[1]); // Vercel row
+    expect(connectButtons).toHaveLength(3);
+    fireEvent.click(connectButtons[2]); // Vercel row
 
     // Token modal opens (no native terminal).
     const input = await screen.findByPlaceholderText('vercel_xxxxxxxxxxxxxxxx');

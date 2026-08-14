@@ -109,6 +109,8 @@ export interface FullSetupStatus {
  */
 export const OPTIONAL_ITEMS = new Set([
   'gh_auth',
+  'glab',
+  'glab_auth',
   'claude',
   'claude_auth',
   'codex',
@@ -153,6 +155,7 @@ export const MACHINE_ITEM_IDS = new Set([
   'npm_fix',
   'git',
   'gh',
+  'glab',
   'claude',
   'codex',
   'opencode',
@@ -182,6 +185,8 @@ export function getSetupDependencies(): Record<string, string[]> {
     git: ['homebrew'],
     gh: ['homebrew'],
     gh_auth: ['gh'],
+    glab: ['homebrew'],
+    glab_auth: ['glab'],
     claude: [], // Uses its own installer (native, not npm)
     claude_auth: ['claude'],
     codex: ['node'], // npm global install — fails with a misleading error without Node
@@ -207,6 +212,8 @@ export const SETUP_ITEM_ORDER = [
   'git',
   'gh',
   'gh_auth',
+  'glab',
+  'glab_auth',
   'claude',
   'claude_auth',
   'codex',
@@ -227,6 +234,8 @@ export const SETUP_FRIENDLY_NAMES: Record<string, string> = {
   git: 'Git',
   gh: 'GitHub CLI',
   gh_auth: 'GitHub Account',
+  glab: 'GitLab CLI',
+  glab_auth: 'GitLab Account',
   claude: 'Claude Code',
   claude_auth: 'Claude Account',
   codex: 'Codex',
@@ -247,6 +256,8 @@ export const SETUP_PROGRESS_MESSAGES: Record<string, string> = {
   git: 'Installing Git...',
   gh: 'Installing GitHub CLI...',
   gh_auth: 'Connecting to GitHub...',
+  glab: 'Installing GitLab CLI...',
+  glab_auth: 'Connecting to GitLab...',
   claude: 'Installing Claude Code...',
   claude_auth: 'Connecting to Claude...',
   codex: 'Installing Codex...',
@@ -267,6 +278,8 @@ export const SETUP_TIME_ESTIMATES: Record<string, string> = {
   git: '~5 sec',
   gh: '~1 min',
   gh_auth: '~15 sec',
+  glab: '~1 min',
+  glab_auth: '~30 sec',
   claude: '~10 sec',
   claude_auth: '~15 sec',
   codex: '~15 sec',
@@ -688,10 +701,10 @@ export async function installPackages(packages: string[]): Promise<void> {
 }
 
 /** Brew-installed packages that can be batched */
-export const BREW_PACKAGES = new Set(['node', 'git', 'gh']);
+export const BREW_PACKAGES = new Set(['node', 'git', 'gh', 'glab']);
 
 /** Package manager-installed packages (Homebrew on macOS, Winget on Windows) */
-export const PKG_MGR_PACKAGES = new Set(['node', 'git', 'gh']);
+export const PKG_MGR_PACKAGES = new Set(['node', 'git', 'gh', 'glab']);
 
 /**
  * Check if the npm cache directory (~/.npm) is writable.
@@ -751,6 +764,14 @@ export function getTerminalCommands(): Record<string, TerminalCommand> {
       gh_auth: {
         command: 'gh',
         args: ['auth', 'login', '--web', '--git-protocol', 'https'],
+      },
+      glab_auth: {
+        // No --web equivalent: `glab auth login` is interactive and asks which
+        // instance to use, which is also what makes it work for self-hosted
+        // GitLab. --git-protocol https matches the gh setup so pushes use the
+        // credential helper rather than SSH keys the user may not have.
+        command: 'glab',
+        args: ['auth', 'login', '--git-protocol', 'https'],
       },
       claude: {
         // Official native installer for Windows (mirrors the macOS install.sh
@@ -874,6 +895,14 @@ export function getTerminalCommands(): Record<string, TerminalCommand> {
       gh_auth: {
         command: 'gh',
         args: ['auth', 'login', '--web', '--git-protocol', 'https'],
+      },
+      glab_auth: {
+        // No --web equivalent: `glab auth login` is interactive and asks which
+        // instance to use, which is also what makes it work for self-hosted
+        // GitLab. --git-protocol https matches the gh setup so pushes use the
+        // credential helper rather than SSH keys the user may not have.
+        command: 'glab',
+        args: ['auth', 'login', '--git-protocol', 'https'],
       },
       claude: {
         // Echo first + a curl progress bar: the download must never be

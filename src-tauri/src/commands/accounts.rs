@@ -1034,6 +1034,31 @@ pub async fn get_account_credential_status(
         Err(_) => None,
     };
 
+    // GitLab identity, resolved exactly like the GitHub one above. Skipped
+    // entirely when glab isn't installed, which is the common case — spawning a
+    // missing binary just to get an error costs a process per status refresh.
+    let gitlab_username = if find_binary_by_name("glab").is_some() {
+        let mut glab_cmd = tokio::process::Command::from(create_command("glab"));
+        glab_cmd.args(["auth", "status"]);
+        glab_cmd.env("PATH", get_extended_path());
+        // Same reasoning as GH_CONFIG_DIR: pinning it for the Default workspace
+        // would hide the user's own native glab login.
+        if id != DEFAULT_ACCOUNT_ID {
+            glab_cmd.env("GITLAB_CONFIG_DIR", glab_config_dir(&id));
+        }
+        match run_with_timeout(glab_cmd, "glab auth status", 10).await {
+            // glab writes its whole report to stderr and exits non-zero when no
+            // instance is usable, so the exit code decides and the parsed name
+            // only supplies the label.
+            Ok(output) if output.status.success() => {
+                parse_glab_auth_status(&String::from_utf8_lossy(&output.stderr))
+            }
+            _ => None,
+        }
+    } else {
+        None
+    };
+
     // Vercel identity, resolved the same way setup/status.rs does: verify the
     // workspace's injected token via `vercel whoami`. The Default workspace
     // (no injected token) falls back to the machine's native CLI session.
@@ -1068,6 +1093,7 @@ pub async fn get_account_credential_status(
         codex_auth_email,
         opencode_auth_email,
         github_auth_email,
+        gitlab_username,
         vercel_username,
         has_anthropic_base_url: read_from_keychain(&id, "anthropic_base_url").is_some(),
         has_vercel_token: read_from_keychain(&id, "vercel_token").is_some(),
@@ -1592,6 +1618,7 @@ pub fn disconnect_claude_account(id: String) -> Result<(), CommandError> {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum ConnectService {
     Github,
+    Gitlab,
     Codex,
     Opencode,
 }
@@ -1600,6 +1627,7 @@ impl ConnectService {
     fn parse(s: &str) -> Option<Self> {
         match s {
             "github" => Some(Self::Github),
+            "gitlab" => Some(Self::Gitlab),
             "codex" => Some(Self::Codex),
             "opencode" => Some(Self::Opencode),
             _ => None,
@@ -1610,6 +1638,7 @@ impl ConnectService {
     fn binary(self) -> &'static str {
         match self {
             Self::Github => "gh",
+            Self::Gitlab => "glab",
             Self::Codex => "codex",
             Self::Opencode => "opencode",
         }
@@ -1621,6 +1650,11 @@ impl ConnectService {
             // `--web` uses the device flow (prints a one-time code + opens the
             // browser); `--git-protocol https` skips the protocol prompt.
             Self::Github => &["auth", "login", "--web", "--git-protocol", "https"],
+            // glab has no --web: the login is interactive and asks which
+            // instance to use, which is what makes it work for self-hosted
+            // GitLab too. --git-protocol https matches the GitHub setup so
+            // pushes go through the credential helper.
+            Self::Gitlab => &["auth", "login", "--git-protocol", "https"],
             Self::Codex => &["login"],
             Self::Opencode => &["auth", "login"],
         }
@@ -1921,6 +1955,10 @@ pub fn workspace_disconnect_service(id: String, service: String) -> Result<(), C
     })?;
     let logout_args: &[&str] = match svc {
         ConnectService::Github => &["auth", "logout", "--hostname", "github.com"],
+        // Same shape as gh's. gitlab.com covers the hosted case; a self-hosted
+        // instance keeps its token, which is the safer failure: this is
+        // best-effort and a stale token surfaces as "not connected" anyway.
+        ConnectService::Gitlab => &["auth", "logout", "--hostname", "gitlab.com"],
         ConnectService::Codex => &["logout"],
         ConnectService::Opencode => &["auth", "logout"],
     };

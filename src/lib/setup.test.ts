@@ -17,6 +17,7 @@ import {
   AGENT_ITEM_IDS,
   OPTIONAL_ITEMS,
   SETUP_ITEM_ORDER,
+  MACHINE_ITEM_IDS,
   SETUP_DEPENDENCIES,
   SETUP_FRIENDLY_NAMES,
   TERMINAL_COMMANDS,
@@ -763,5 +764,56 @@ describe('findFirstIncompleteStep', () => {
       return i;
     });
     expect(findFirstIncompleteStep(items)).toBe('hosting');
+  });
+});
+
+describe('GitLab setup items are wired into every enumeration', () => {
+  // The backend reported `glab` / `glab_auth` for a while before the frontend
+  // knew about them, so GitLab was invisible in the app even once installed and
+  // signed in. Anything the backend emits has to be renderable here, or it
+  // silently falls out of the UI.
+  const GITLAB_ITEMS = ['glab', 'glab_auth'] as const;
+
+  it('names both items', () => {
+    for (const id of GITLAB_ITEMS) {
+      expect(SETUP_FRIENDLY_NAMES[id]).toBeTruthy();
+    }
+  });
+
+  it('orders both items so panels can sort them', () => {
+    // MachineToolsPanel sorts by indexOf; a missing id sorts to -1 and lands in
+    // an arbitrary position.
+    for (const id of GITLAB_ITEMS) {
+      expect(SETUP_ITEM_ORDER).toContain(id);
+    }
+  });
+
+  it('lists the CLI as a machine tool so the dashboard shows it', () => {
+    expect(MACHINE_ITEM_IDS.has('glab')).toBe(true);
+    // The login is per-workspace, not machine-wide, so it belongs to the
+    // accounts card instead.
+    expect(MACHINE_ITEM_IDS.has('glab_auth')).toBe(false);
+  });
+
+  it('keeps both optional so a GitHub-only user is never blocked', () => {
+    for (const id of GITLAB_ITEMS) {
+      expect(OPTIONAL_ITEMS.has(id)).toBe(true);
+    }
+  });
+
+  it('never puts them in a wizard step, which would block Next until GitLab is set up', () => {
+    const stepItemIds = WIZARD_STEPS.flatMap((step) => step.itemIds);
+    for (const id of GITLAB_ITEMS) {
+      expect(stepItemIds).not.toContain(id);
+    }
+  });
+
+  it('installs the CLI through the package manager', () => {
+    expect(BREW_PACKAGES.has('glab')).toBe(true);
+    expect(PKG_MGR_PACKAGES.has('glab')).toBe(true);
+  });
+
+  it('declares its dependencies', () => {
+    expect(SETUP_DEPENDENCIES.glab_auth).toContain('glab');
   });
 });

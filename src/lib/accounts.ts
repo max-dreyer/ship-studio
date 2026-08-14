@@ -35,6 +35,8 @@ export interface AccountCredentialStatus {
   codexAuthEmail: string | null;
   opencodeAuthEmail: string | null;
   githubAuthEmail: string | null;
+  /** GitLab identity from `glab auth status`, or null when not signed in. */
+  gitlabUsername: string | null;
   /** Vercel identity verified with this workspace's token; null if unset/invalid. */
   vercelUsername: string | null;
   hasAnthropicBaseUrl: boolean;
@@ -79,6 +81,7 @@ export const STATUS_FIELD_TO_KEY: Record<
     | 'codexAuthEmail'
     | 'opencodeAuthEmail'
     | 'githubAuthEmail'
+    | 'gitlabUsername'
     | 'vercelUsername'
   >,
   CredentialKey
@@ -194,7 +197,7 @@ export async function clearAccountCredential(id: string, key: CredentialKey): Pr
  * CLI's own login under the workspace's env — so the connect PTY streams output
  * verbatim and treats process exit as completion.
  */
-export type WorkspaceConnectService = 'github' | 'codex' | 'opencode';
+export type WorkspaceConnectService = 'github' | 'gitlab' | 'codex' | 'opencode';
 
 /**
  * Start a backend-owned PTY login for a workspace's GitHub/Codex/Opencode

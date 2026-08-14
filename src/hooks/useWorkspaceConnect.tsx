@@ -43,6 +43,9 @@ export type ConnectServiceId = WorkspaceConnectService | 'vercel';
  */
 const NATIVE_LOGIN: Record<ConnectServiceId, { command: string; args: string[] }> = {
   github: { command: 'gh', args: ['auth', 'login', '--web', '--git-protocol', 'https'] },
+  // glab has no --web; its login is interactive and asks for the instance,
+  // which is also how self-hosted GitLab is reached.
+  gitlab: { command: 'glab', args: ['auth', 'login', '--git-protocol', 'https'] },
   codex: { command: 'codex', args: ['login'] },
   opencode: { command: 'opencode', args: ['auth', 'login'] },
   vercel: { command: 'vercel', args: ['login'] },
@@ -50,6 +53,7 @@ const NATIVE_LOGIN: Record<ConnectServiceId, { command: string; args: string[] }
 
 const SERVICE_LABEL: Record<ConnectServiceId, string> = {
   github: 'GitHub',
+  gitlab: 'GitLab',
   codex: 'Codex',
   opencode: 'Opencode',
   vercel: 'Vercel',
