@@ -75,6 +75,52 @@ pub fn create_label(forge: &ForgeConfig) -> String {
     format!("{binary} repo create")
 }
 
+/// Arguments to look up a repository and get its web URL as JSON.
+///
+/// Used to confirm a project's remote actually resolves to a repository the
+/// signed-in user can see, rather than trusting the URL string alone.
+pub fn view_args(forge: &ForgeConfig, path: &str) -> Vec<String> {
+    match forge.id {
+        "gitlab" => vec![
+            "repo".into(),
+            "view".into(),
+            path.into(),
+            "--output".into(),
+            "json".into(),
+        ],
+        _ => vec![
+            "repo".into(),
+            "view".into(),
+            path.into(),
+            "--json".into(),
+            "url".into(),
+        ],
+    }
+}
+
+/// Pull the repository's web URL out of a view command's JSON.
+///
+/// The two CLIs name the field differently: `gh` sends `url`, `glab` sends
+/// `web_url` (verified against glab 1.113.0). Returns `None` when the response
+/// isn't JSON or carries neither, leaving the caller to fall back to a URL
+/// built from the remote.
+pub fn parse_view_url(stdout: &str) -> Option<String> {
+    let value: serde_json::Value = serde_json::from_str(stdout).ok()?;
+    ["url", "web_url"]
+        .iter()
+        .find_map(|key| value.get(key).and_then(|v| v.as_str()))
+        .map(str::to_string)
+}
+
+/// A label for the view invocation, for timeout messages and telemetry.
+pub fn view_label(forge: &ForgeConfig) -> String {
+    let binary = match forge.transport {
+        ForgeTransport::Cli(name) => name,
+        ForgeTransport::Rest => forge.id,
+    };
+    format!("{binary} repo view")
+}
+
 /// Whether the forge's stderr says the name is already taken.
 ///
 /// A collision is user input needing a different name, not a malfunction, so
@@ -150,5 +196,33 @@ mod tests {
     fn labels_name_the_binary() {
         assert_eq!(create_label(&GITHUB), "gh repo create");
         assert_eq!(create_label(&GITLAB), "glab repo create");
+        assert_eq!(view_label(&GITLAB), "glab repo view");
+    }
+
+    #[test]
+    fn view_asks_each_cli_for_json_its_own_way() {
+        assert!(view_args(&GITHUB, "o/r").contains(&"--json".to_string()));
+        assert!(view_args(&GITLAB, "g/p").contains(&"--output".to_string()));
+        // The path is positional on both.
+        assert_eq!(view_args(&GITLAB, "g/p")[2], "g/p");
+    }
+
+    #[test]
+    fn view_url_reads_both_field_names() {
+        // gh sends "url", glab sends "web_url" (verified against glab 1.113.0).
+        assert_eq!(
+            parse_view_url(r#"{"url":"https://github.com/o/r"}"#).as_deref(),
+            Some("https://github.com/o/r")
+        );
+        assert_eq!(
+            parse_view_url(r#"{"web_url":"https://gitlab.com/g/p","name":"p"}"#).as_deref(),
+            Some("https://gitlab.com/g/p")
+        );
+    }
+
+    #[test]
+    fn view_url_is_none_when_the_response_carries_neither() {
+        assert_eq!(parse_view_url("not json"), None);
+        assert_eq!(parse_view_url(r#"{"name":"p"}"#), None);
     }
 }

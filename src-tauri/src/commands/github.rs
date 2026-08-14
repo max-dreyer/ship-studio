@@ -345,12 +345,17 @@ pub async fn get_project_github_status(project_path: String) -> ProjectGitHubSta
         }
     };
 
-    // Parse GitHub repo from remote URL (handles HTTPS and SSH)
-    let github_repo = parse_github_repo(&remote_url);
-    let github_repo = match github_repo {
-        Some(repo) => repo,
+    // Resolve the remote to a forge and a project path. Not `parse_github_repo`:
+    // that returns None for anything that isn't GitHub, which reported every
+    // GitLab project as "no-remote" — so the UI offered to create a repository
+    // for a project that already had one.
+    let (remote, forge) = match crate::forge::remote::parse_remote(&remote_url) {
+        Some(remote) => {
+            let forge = crate::forge::detect::forge_for_remote_url(&remote_url);
+            (remote, forge)
+        }
         None => {
-            debug!(remote_url = %remote_url, "Could not parse GitHub repo from remote URL");
+            debug!(remote_url = %remote_url, "Could not parse a project path from the remote URL");
             return ProjectGitHubStatus {
                 status: "no-remote".to_string(),
                 github_repo: None,
@@ -358,28 +363,48 @@ pub async fn get_project_github_status(project_path: String) -> ProjectGitHubSta
             };
         }
     };
+    let github_repo = remote.path.clone();
+
+    // A forge we only reach over REST has no CLI to verify with. Report it as
+    // connected on the strength of the remote itself rather than claiming the
+    // project has none.
+    let ForgeTransport::Cli(binary) = forge.transport else {
+        return ProjectGitHubStatus {
+            status: "connected".to_string(),
+            github_repo: Some(github_repo),
+            github_url: Some(remote.web_url()),
+        };
+    };
 
     // Verify repo exists on GitHub using gh CLI (with timeout). Scope to the
     // project's workspace so a repo private to that workspace's GitHub login
     // resolves correctly even when another workspace is globally active.
     let step_start = std::time::Instant::now();
     debug!(github_repo = %github_repo, "Running gh repo view");
-    let mut gh_cmd = get_gh_command_for_project(&project);
-    gh_cmd
-        .args(["repo", "view", &github_repo, "--json", "url"])
+    let mut forge_cmd = if let Some(path) = find_executable(binary) {
+        create_command(path)
+    } else {
+        create_command(binary)
+    };
+    forge_cmd.env("PATH", get_extended_path());
+    forge_cmd.envs(crate::commands::accounts::get_env_vars_for_project(
+        &project,
+    ));
+    forge_cmd.stdin(std::process::Stdio::null());
+    forge_cmd
+        .args(crate::forge::repo::view_args(forge, &github_repo))
         .current_dir(&project);
 
-    let result = match run_command_with_timeout(gh_cmd, "gh repo view", GITHUB_CLI_TIMEOUT_SECS)
+    let view_label = crate::forge::repo::view_label(forge);
+    let result = match run_command_with_timeout(forge_cmd, &view_label, GITHUB_CLI_TIMEOUT_SECS)
         .await
     {
         Ok(output) if output.status.success() => {
             debug!(elapsed_ms = step_start.elapsed().as_millis() as u64, github_repo = %github_repo, "gh repo view completed successfully");
             // Parse the URL from JSON response
             let json_str = String::from_utf8_lossy(&output.stdout);
-            let url = serde_json::from_str::<serde_json::Value>(&json_str)
-                .ok()
-                .and_then(|v| v.get("url").and_then(|u| u.as_str()).map(|s| s.to_string()))
-                .unwrap_or_else(|| format!("https://github.com/{github_repo}"));
+            let url =
+                crate::forge::repo::parse_view_url(&json_str).unwrap_or_else(|| remote.web_url());
 
             ProjectGitHubStatus {
                 status: "connected".to_string(),

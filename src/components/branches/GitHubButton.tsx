@@ -26,6 +26,10 @@ import { ModalFrame } from '../primitives/ModalFrame';
 import { useOptionalToast } from '../../contexts/ToastContext';
 import { humanizeGitError } from '../../lib/errors';
 import { ALL_FORGES, getForgeById } from '../../lib/forge';
+import { useProjectForge } from '../../hooks/useProjectForge';
+// This file carries its own local GitHubIcon (below); ForgeIcon comes from the
+// shared barrel because it has to dispatch on the project's forge.
+import { ForgeIcon } from '../icons';
 
 /** Props for the GitHubButton component */
 interface GitHubButtonProps {
@@ -62,6 +66,9 @@ export function GitHubButton({
   // yet, which is exactly what this flow is here to fix.
   const [targetForgeId, setTargetForgeId] = useState('github');
   const targetForge = getForgeById(targetForgeId);
+  // For a project that already has a remote, the link below must carry that
+  // forge's mark and name — a GitLab project used to show a GitHub icon.
+  const projectForge = useProjectForge(projectPath);
   const [isPrivate, setIsPrivate] = useState(true);
   const [isLoading, setIsLoading] = useState(false);
   const [isCreatingRepo, setIsCreatingRepo] = useState(false);
@@ -160,15 +167,15 @@ export function GitHubButton({
     );
   }
 
-  // If project has a GitHub repo, show icon link to repo
+  // If the project has a repo on its forge, show an icon link to it.
   if (projectStatus?.status === 'connected' && projectStatus?.github_url) {
     return (
       <button
         className="github-button github-link"
         onClick={() => void openUrl(projectStatus.github_url!)}
-        title="Open on GitHub"
+        title={`Open on ${projectForge.displayName}`}
       >
-        <GitHubIcon />
+        <ForgeIcon forgeId={projectForge.id} />
       </button>
     );
   }
