@@ -484,11 +484,6 @@ pub async fn push_to_github(options: PushToGitHubOptions) -> Result<String, Comm
     let validated_path =
         validate_project_path(&options.project_path).map_err(CommandError::from)?;
     let repo_name = &options.repo_name;
-    let visibility = if options.is_private {
-        "--private"
-    } else {
-        "--public"
-    };
 
     // Check if it's already a git repo, if not initialize
     let git_dir = validated_path.join(".git");

@@ -83,10 +83,14 @@ pub fn create_label(forge: &ForgeConfig) -> String {
 pub fn is_name_taken(stderr: &str) -> bool {
     let lower = stderr.to_lowercase();
     // GitHub: "GraphQL: Name already exists on this account (createRepository)".
-    // GitLab: "has already been taken" for both path and name fields.
+    // GitLab: "has already been taken" for both the path and name fields.
+    //
+    // Deliberately not a bare "already exists": git says "remote origin already
+    // exists" when a retry hits a half-configured repo, and telling the user to
+    // pick a different repository name would send them to fix the wrong thing.
     lower.contains("name already exists on this account")
         || lower.contains("has already been taken")
-        || lower.contains("already exists")
+        || lower.contains("name already exists")
 }
 
 #[cfg(test)]
@@ -133,6 +137,13 @@ mod tests {
         ));
         assert!(is_name_taken("Path has already been taken"));
         assert!(!is_name_taken("network unreachable"));
+    }
+
+    #[test]
+    fn an_existing_git_remote_is_not_a_name_collision() {
+        // A retry over a half-configured repo hits this. Telling the user to
+        // rename the repository would point them at the wrong problem.
+        assert!(!is_name_taken("error: remote origin already exists."));
     }
 
     #[test]
