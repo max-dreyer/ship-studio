@@ -38,6 +38,8 @@ import {
 } from '../../lib/worktrees';
 import { openProjectInNewWindow } from '../../lib/project';
 import { BranchIcon, PlusIcon, TrashIcon, ExternalLinkIcon } from '../icons';
+import { useProjectForge } from '../../hooks/useProjectForge';
+import { pullRequestLower } from '../../lib/forge';
 import { Spinner } from '../primitives/Spinner';
 import { BranchGraph } from './BranchGraph';
 import { UnsavedChangesModal } from './UnsavedChangesModal';
@@ -136,6 +138,10 @@ export function BranchesTab({
   onWorktreesChanged,
   onCreateWorktree,
 }: BranchesTabProps) {
+  // Forge-specific wording: "pull request" on GitHub, "merge request" on
+  // GitLab, and the brand name in the send-to-remote copy.
+  const forge = useProjectForge(projectPath);
+  const prLower = pullRequestLower(forge);
   const { showToast } = useOptionalToast();
   const onToast = (message: string, type?: 'success' | 'error' | 'info') =>
     showToast(message, type);
@@ -569,9 +575,9 @@ export function BranchesTab({
                   size="sm"
                   onClick={() => setSendToGitHubBranch(currentBranchInfo.name)}
                   disabled={publishingBranch === currentBranchInfo.name}
-                  title="Push this branch to GitHub (no pull request)"
+                  title={`Push this branch to ${forge.displayName} (no ${prLower})`}
                 >
-                  Send to GitHub
+                  Send to {forge.displayName}
                 </Button>
               )}
               <Button
@@ -980,11 +986,11 @@ export function BranchesTab({
         >
           <div className="post-merge-body">
             <p>
-              This puts <strong>{sendToGitHubBranch}</strong> on GitHub so it's saved there and your
-              teammates can see it.
+              This puts <strong>{sendToGitHubBranch}</strong> on {forge.displayName} so it's saved
+              there and your teammates can see it.
             </p>
             <p>
-              It <strong>won't</strong> open a pull request or merge anything. It just uploads the
+              It <strong>won't</strong> open a {prLower} or merge anything. It just uploads the
               branch. When you're ready for someone to review and merge it, use{' '}
               <strong>Submit for Review</strong>.
             </p>

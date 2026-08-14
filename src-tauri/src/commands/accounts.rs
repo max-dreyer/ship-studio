@@ -486,6 +486,25 @@ pub fn gh_config_dir(account_id: &str) -> PathBuf {
     private_account_subdir(account_id, "gh")
 }
 
+/// Directory used as `GITLAB_CONFIG_DIR` for this account, created on access.
+///
+/// Mirrors [`gh_config_dir`]: the Default account resolves to `glab`'s real,
+/// global config directory (honoring `GITLAB_CONFIG_DIR`/`XDG_CONFIG_HOME` if
+/// already set, else `~/.config/glab-cli`) so an existing `glab` login keeps
+/// working, and other accounts get an isolated directory.
+pub fn glab_config_dir(account_id: &str) -> PathBuf {
+    if account_id == DEFAULT_ACCOUNT_ID {
+        if let Ok(dir) = std::env::var("GITLAB_CONFIG_DIR") {
+            return PathBuf::from(dir);
+        }
+        let config_home = std::env::var("XDG_CONFIG_HOME")
+            .map(PathBuf::from)
+            .unwrap_or_else(|_| dirs::home_dir().unwrap_or_default().join(".config"));
+        return config_home.join("glab-cli");
+    }
+    private_account_subdir(account_id, "glab")
+}
+
 /// Directory used as `CODEX_HOME` for this account, created on access.
 ///
 /// The Default account resolves to the real, global Codex directory
@@ -622,6 +641,10 @@ pub fn get_env_vars_for_account(account_id: &str) -> HashMap<String, String> {
         vars.insert(
             "GH_CONFIG_DIR".to_string(),
             gh_config_dir(account_id).to_string_lossy().to_string(),
+        );
+        vars.insert(
+            "GITLAB_CONFIG_DIR".to_string(),
+            glab_config_dir(account_id).to_string_lossy().to_string(),
         );
         vars.insert(
             "CODEX_HOME".to_string(),
@@ -762,6 +785,44 @@ pub(crate) fn parse_gh_auth_status(stdout: &str, stderr: &str) -> Option<String>
     }
     // No active marker (older single-account gh): any valid login counts.
     entries.into_iter().find(|e| e.valid).map(|e| e.user)
+}
+
+/// The GitLab counterpart: read `glab auth status` output and return the signed
+/// in username, or `None` when no instance is usable.
+///
+/// `glab` writes all of this to stderr and exits non-zero when nothing is
+/// configured, so the exit code alone would answer the yes/no question. Parsing
+/// it anyway gets us the username for the setup screen, and keeps the answer
+/// right when a second instance is configured and broken while the first works.
+///
+/// The failure markers below were taken verbatim from `glab` 1.113.0 with an
+/// empty config directory. The "Logged in to" success marker follows glab's
+/// documented phrasing but could not be checked against a live login here, so
+/// the caller treats the exit code as authoritative and uses this only to put a
+/// name on screen.
+pub(crate) fn parse_glab_auth_status(stderr: &str) -> Option<String> {
+    let lower = stderr.to_lowercase();
+    if lower.contains("no token found") || lower.contains("could not authenticate") {
+        return None;
+    }
+
+    for line in stderr.lines() {
+        let trimmed = line.trim();
+        let Some(idx) = trimmed.find("Logged in to ") else {
+            continue;
+        };
+        // "Logged in to gitlab.com as octocat (config file …)" — skip the host,
+        // then take the word after the connector.
+        let rest = &trimmed[idx + "Logged in to ".len()..];
+        let mut words = rest.split_whitespace();
+        let _host = words.next();
+        if words.next() == Some("as") {
+            if let Some(user) = words.next().filter(|u| !u.is_empty()) {
+                return Some(user.trim_matches(['(', ')']).to_string());
+            }
+        }
+    }
+    None
 }
 
 // ============ Tauri commands ============
@@ -2108,6 +2169,32 @@ mod tests {
         // JSON without a loggedIn bool is equally non-definitive.
         assert_eq!(parse_claude_auth_status(r#"{"email":"a@b.com"}"#), None);
         assert_eq!(parse_claude_auth_status(r#"{"loggedIn":"yes"}"#), None);
+    }
+
+    #[test]
+    fn parse_glab_auth_status_returns_none_without_a_token() {
+        // Verbatim from `glab auth status` with an empty GITLAB_CONFIG_DIR.
+        let stderr = "gitlab.com\n  x gitlab.com: API call failed: GET https://gitlab.com/api/v4/user: 401 {message: 401 Unauthorized}\n  ! No token found (checked config file, keyring, and environment variables).\n  X could not authenticate to one or more of the configured GitLab instances.\n";
+        assert_eq!(parse_glab_auth_status(stderr), None);
+    }
+
+    #[test]
+    fn parse_glab_auth_status_extracts_username() {
+        let stderr = "gitlab.com\n  ✓ Logged in to gitlab.com as octocat (config file)\n  ✓ Git operations for gitlab.com configured to use https protocol.\n";
+        assert_eq!(parse_glab_auth_status(stderr), Some("octocat".to_string()));
+    }
+
+    #[test]
+    fn parse_glab_auth_status_ignores_a_login_line_when_no_token_is_present() {
+        // A broken second instance must not turn "no token" into a login.
+        let stderr = "gitlab.com\n  ✓ Logged in to gitlab.com as octocat\n  ! No token found (checked config file, keyring, and environment variables).\n";
+        assert_eq!(parse_glab_auth_status(stderr), None);
+    }
+
+    #[test]
+    fn parse_glab_auth_status_handles_unrelated_output() {
+        assert_eq!(parse_glab_auth_status(""), None);
+        assert_eq!(parse_glab_auth_status("something else"), None);
     }
 
     #[test]

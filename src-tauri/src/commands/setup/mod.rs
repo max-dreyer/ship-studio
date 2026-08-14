@@ -69,6 +69,8 @@ const ALL_ITEMS: &[&str] = &[
     "git",
     "gh",
     "gh_auth",
+    "glab",
+    "glab_auth",
     "claude",
     "claude_auth",
     "codex",
@@ -83,7 +85,7 @@ const ALL_ITEMS: &[&str] = &[
 
 /// Tool items (not auth)
 const TOOL_ITEMS: &[&str] = &[
-    "homebrew", "node", "git", "gh", "claude", "codex", "opencode", "cursor", "vercel",
+    "homebrew", "node", "git", "gh", "glab", "claude", "codex", "opencode", "cursor", "vercel",
 ];
 
 // ============ App State Persistence (shared helpers) ============
@@ -434,8 +436,8 @@ mod tests {
     }
 
     #[test]
-    fn all_items_contains_15_items_including_all_agents_and_vercel() {
-        assert_eq!(ALL_ITEMS.len(), 15);
+    fn all_items_contains_17_items_including_all_agents_forges_and_vercel() {
+        assert_eq!(ALL_ITEMS.len(), 17);
         assert!(ALL_ITEMS.contains(&"codex"));
         assert!(ALL_ITEMS.contains(&"codex_auth"));
         assert!(ALL_ITEMS.contains(&"opencode"));
@@ -444,16 +446,37 @@ mod tests {
         assert!(ALL_ITEMS.contains(&"cursor_auth"));
         assert!(ALL_ITEMS.contains(&"vercel"));
         assert!(ALL_ITEMS.contains(&"vercel_auth"));
+        assert!(ALL_ITEMS.contains(&"glab"));
+        assert!(ALL_ITEMS.contains(&"glab_auth"));
     }
 
     #[test]
-    fn tool_items_contains_9_items_including_all_agents_and_vercel() {
-        assert_eq!(TOOL_ITEMS.len(), 9);
+    fn tool_items_contains_10_items_including_all_agents_forges_and_vercel() {
+        assert_eq!(TOOL_ITEMS.len(), 10);
         assert!(TOOL_ITEMS.contains(&"codex"));
         assert!(TOOL_ITEMS.contains(&"claude"));
         assert!(TOOL_ITEMS.contains(&"opencode"));
         assert!(TOOL_ITEMS.contains(&"cursor"));
         assert!(TOOL_ITEMS.contains(&"vercel"));
+        assert!(TOOL_ITEMS.contains(&"glab"));
+    }
+
+    #[test]
+    fn every_cli_forge_has_a_setup_item() {
+        // A forge that ships a CLI must be installable from the setup screen,
+        // or the user is told to install it with no way to do so.
+        for forge in crate::forge::ALL_FORGES {
+            let Some(binary_id) = forge.setup_item_ids.0 else {
+                continue;
+            };
+            assert!(
+                TOOL_ITEMS.contains(&binary_id),
+                "{} declares setup item {binary_id} but it isn't in TOOL_ITEMS",
+                forge.display_name
+            );
+            assert!(ALL_ITEMS.contains(&binary_id));
+            assert!(ALL_ITEMS.contains(&forge.setup_item_ids.1));
+        }
     }
 
     #[test]

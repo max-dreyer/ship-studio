@@ -6,6 +6,7 @@ use crate::cache::TtlCache;
 use crate::commands::git::git_stage_and_commit;
 use crate::errors::CommandError;
 use crate::external_command::{run_with_timeout, truncate_output};
+use crate::forge::{ForgeConfig, ForgeTransport};
 use crate::types::{
     GitHubCliStatus, GitHubLanguage, GitHubRepo, ProjectGitHubStatus, PushToGitHubOptions,
 };
@@ -92,21 +93,65 @@ pub fn get_gh_command_for_project(project_path: &std::path::Path) -> Command {
     cmd
 }
 
-/// Parse "owner/repo" from a GitHub URL (HTTPS or SSH format)
+/// Like [`get_gh_command_for_project`], but picks the CLI that matches the
+/// forge the project's `origin` actually points at: `gh` for GitHub, `glab` for
+/// GitLab. Returns the resolved [`ForgeConfig`] alongside the command so the
+/// caller can pick the right subcommands and terminology from one lookup.
+///
+/// Errors for a forge we reach over REST rather than a CLI (Forgejo). That is a
+/// real, reachable state — a user can add a Codeberg remote today — so it gets
+/// an explicit message instead of a confusing "glab not found".
+pub fn get_forge_command_for_project(
+    project_path: &std::path::Path,
+) -> Result<(Command, &'static ForgeConfig), CommandError> {
+    let forge = crate::forge::detect::forge_for_project(project_path);
+    let ForgeTransport::Cli(binary) = forge.transport else {
+        return Err(format!(
+            "{} projects aren't supported yet. Ship Studio talks to {} over its API, which needs a token that can't be set up here.",
+            forge.display_name, forge.display_name
+        )
+        .into());
+    };
+
+    let mut cmd = if let Some(path) = find_executable(binary) {
+        create_command(path)
+    } else {
+        create_command(binary)
+    };
+    cmd.env("PATH", get_extended_path());
+    cmd.envs(crate::commands::accounts::get_env_vars_for_project(
+        project_path,
+    ));
+    // Fail fast instead of blocking on a prompt — see get_gh_command().
+    cmd.stdin(std::process::Stdio::null());
+    Ok((cmd, forge))
+}
+
+/// Parse "owner/repo" from a GitHub remote URL (HTTPS or SSH format).
+///
+/// Delegates to [`crate::forge::remote`], which parses the URL structurally
+/// rather than searching for `"github.com"` as a substring. That search matched
+/// the host anywhere in the string, so `https://evil.example/github.com/a/b`
+/// used to come back as the GitHub repo `a/b`.
 pub fn parse_github_repo(url: &str) -> Option<String> {
-    // HTTPS: https://github.com/owner/repo.git
-    if let Some(start) = url.find("github.com/") {
-        let rest = &url[start + 11..];
-        let end = rest.find(".git").unwrap_or(rest.len());
-        return Some(rest[..end].trim_end_matches('/').to_string());
+    let (remote, forge) = crate::forge::remote::parse_remote_with_forge(url)?;
+    // Only GitHub remotes have a "owner/repo" that `gh` can act on.
+    if forge?.id != crate::forge::GITHUB.id {
+        return None;
     }
-    // SSH: git@github.com:owner/repo.git
-    if let Some(start) = url.find("github.com:") {
-        let rest = &url[start + 11..];
-        let end = rest.find(".git").unwrap_or(rest.len());
-        return Some(rest[..end].trim_end_matches('/').to_string());
-    }
-    None
+    Some(remote.path)
+}
+
+/// Which forge a project belongs to, for the UI's terminology and capability
+/// decisions. Never fails: an unidentifiable remote resolves to the default
+/// forge, same as the backend's own command paths.
+#[tauri::command]
+#[tracing::instrument(skip(project_path), fields(project = %project_path))]
+pub async fn get_project_forge(
+    project_path: String,
+) -> Result<crate::types::ForgeInfo, CommandError> {
+    let validated_path = validate_project_path(&project_path)?;
+    Ok(crate::forge::detect::forge_for_project(&validated_path).to_info())
 }
 
 #[tauri::command]
@@ -495,43 +540,114 @@ pub async fn push_to_github(options: PushToGitHubOptions) -> Result<String, Comm
         }
     }
 
-    // Create GitHub repo and push, scoped to the project's workspace so the repo
-    // is created under that workspace's GitHub account, not the active one.
-    let mut gh_cmd = get_gh_command_for_project(&validated_path);
-    gh_cmd
-        .args([
-            "repo", "create", repo_name, visibility, "--source", ".", "--remote", "origin",
-            "--push",
-        ])
+    // Which forge to create on is the caller's choice — there is no remote to
+    // infer it from yet. Unspecified means GitHub, as it always did.
+    let forge = crate::forge::get_forge_by_id(options.forge_id.as_deref().unwrap_or("github"));
+    let ForgeTransport::Cli(binary) = forge.transport else {
+        return Err(format!(
+            "Creating a repository on {} isn't supported yet.",
+            forge.display_name
+        )
+        .into());
+    };
+
+    // Create the repo, scoped to the project's workspace so it lands under that
+    // workspace's account rather than whichever is globally active.
+    let mut forge_cmd = if let Some(path) = find_executable(binary) {
+        create_command(path)
+    } else {
+        create_command(binary)
+    };
+    forge_cmd.env("PATH", get_extended_path());
+    forge_cmd.envs(crate::commands::accounts::get_env_vars_for_project(
+        &validated_path,
+    ));
+    forge_cmd.stdin(std::process::Stdio::null());
+    forge_cmd
+        .args(crate::forge::repo::create_args(
+            forge,
+            repo_name,
+            options.is_private,
+        ))
         .current_dir(&validated_path);
+    let label = crate::forge::repo::create_label(forge);
     // Longer timeout: create+push can take a while for bigger repos.
-    let output = run_command_with_timeout(gh_cmd, "gh repo create --push", 60).await?;
+    let output = run_command_with_timeout(forge_cmd, &label, 60).await?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
         // A name collision is user input needing a different name, not a
-        // malfunction — surface it in plain language instead of GitHub's raw
-        // "GraphQL: Name already exists on this account (createRepository)"
-        // (issue #279). Expected: routine collisions aren't telemetry.
-        if stderr.contains("Name already exists on this account") {
+        // malfunction — surface it in plain language instead of the CLI's raw
+        // GraphQL/API error (issue #279). Expected: routine collisions aren't
+        // telemetry.
+        if crate::forge::repo::is_name_taken(&stderr) {
             return Err(CommandError::expected(format!(
                 "A repository named \"{repo_name}\" already exists on this account. Choose a different name."
             )));
         }
-        // Connectivity blips and GitHub's transient API 400s are the
-        // environment/GitHub, not a malfunction (#420, #602).
-        if let Some(err) = gh_common_error(&stderr) {
+        // Connectivity blips and transient API 400s are the environment, not a
+        // malfunction (#420, #602).
+        if let Some(err) = crate::forge::errors::classify(forge, &stderr) {
             return Err(err);
         }
         return Err(CommandError::Process {
-            cmd: "gh repo create".to_string(),
+            cmd: label,
             exit_code: output.status.code().unwrap_or(-1),
             stderr: truncate_output(&stderr),
         });
     }
 
-    // Return the repo URL
-    Ok(format!("https://github.com/{repo_name}"))
+    // `glab repo create` only creates the project and wires up the remote; it
+    // does not upload anything. Skipping this would report success on an empty
+    // repository. `gh repo create --push` has already done it.
+    if crate::forge::repo::needs_explicit_push(forge) {
+        let push = crate::commands::git::run_git_net(
+            &["push", "-u", "origin", "HEAD"],
+            &validated_path,
+            "push",
+        )
+        .await?;
+        if !push.status.success() {
+            let stderr = String::from_utf8_lossy(&push.stderr);
+            if let Some(err) = crate::commands::git::classify_git_net_error(&stderr) {
+                return Err(err);
+            }
+            return Err(format!(
+                "Created the repository, but pushing to it failed: {}",
+                truncate_output(&stderr)
+            )
+            .into());
+        }
+    }
+
+    // The remote the CLI just configured is the authoritative URL — building it
+    // from a hardcoded host would be wrong for self-hosted instances and for
+    // any namespace the forge normalized.
+    crate::forge::detect::invalidate_project_forge(&validated_path);
+    Ok(created_repo_url(&validated_path, forge, repo_name))
+}
+
+/// The web URL of the repository that was just created.
+///
+/// Reads it back from `origin`, which the forge CLI set, so self-hosted hosts
+/// and namespaces the forge rewrote both come out right. Falls back to the
+/// forge's default host only when the remote can't be read.
+fn created_repo_url(
+    project_path: &std::path::Path,
+    forge: &'static ForgeConfig,
+    repo_name: &str,
+) -> String {
+    let remote_url = crate::utils::git_command_in(project_path)
+        .ok()
+        .and_then(|mut cmd| cmd.args(["remote", "get-url", "origin"]).output().ok())
+        .filter(|o| o.status.success())
+        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string());
+
+    remote_url
+        .as_deref()
+        .and_then(crate::forge::remote::parse_remote)
+        .map(|r| r.web_url())
+        .unwrap_or_else(|| format!("https://{}/{}", forge.default_host, repo_name))
 }
 
 /// gh's stderr when a subcommand needs auth and none is configured — "To get

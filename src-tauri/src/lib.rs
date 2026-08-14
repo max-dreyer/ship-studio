@@ -17,6 +17,7 @@ pub mod commands;
 pub mod error_reporting;
 pub mod errors;
 pub mod external_command;
+pub mod forge;
 pub mod logging;
 pub mod proxy;
 pub mod state;
@@ -590,6 +591,7 @@ pub fn run() {
             commands::plugins::unlink_dev_plugin,
             // GitHub integration
             commands::github::check_github_cli_status,
+            commands::github::get_project_forge,
             commands::github::get_github_username,
             commands::github::get_github_orgs,
             commands::github::get_project_github_status,
@@ -675,6 +677,7 @@ pub fn run() {
             commands::setup::install_node_via_brew,
             commands::setup::install_git_via_brew,
             commands::setup::install_gh_via_brew,
+            commands::setup::install_glab_via_brew,
             commands::setup::install_brew_packages,
             commands::setup::install_winget_packages,
             commands::setup::start_github_auth,

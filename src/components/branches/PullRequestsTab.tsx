@@ -25,6 +25,8 @@ import { Button } from '../primitives/Button';
 import { Spinner } from '../primitives/Spinner';
 import { useOptionalToast } from '../../contexts/ToastContext';
 import { asCommandError, formatCommandError, isMergeConflictError } from '../../lib/errors';
+import { useProjectForge } from '../../hooks/useProjectForge';
+import { pullRequestPlural, pullRequestLower } from '../../lib/forge';
 
 interface PullRequestsTabProps {
   /** Project path for PR operations */
@@ -52,6 +54,12 @@ export function PullRequestsTab({
   onNavigateToBranches,
   onResolveConflicts,
 }: PullRequestsTabProps) {
+  // GitHub calls these pull requests, GitLab merge requests. Every user-facing
+  // string below reads the term off the project's forge.
+  const forge = useProjectForge(projectPath);
+  const prTerm = forge.pullRequestTerm;
+  const prPlural = pullRequestPlural(forge);
+  const prLower = pullRequestLower(forge);
   const { showToast } = useOptionalToast();
   const onToast = (message: string, type?: 'success' | 'error' | 'info') =>
     showToast(message, type);
@@ -121,7 +129,7 @@ export function PullRequestsTab({
         base_ref: baseRef,
         $screen_name: 'Workspace',
       });
-      onToast?.('Pull request merged', 'success');
+      onToast?.(`${prTerm} merged`, 'success');
       await fetchPullRequests();
       onRefresh();
       // Show post-merge cleanup dialog
@@ -136,7 +144,7 @@ export function PullRequestsTab({
         // Expected, by-design state with dedicated follow-up UI (the conflict
         // resolver opens right below) — info toast, NOT 'error': error toasts
         // auto-file bug reports and this isn't a bug (issue #632).
-        onToast?.('This pull request has merge conflicts', 'info');
+        onToast?.(`This ${prLower} has merge conflicts`, 'info');
         onResolveConflicts(headRef, baseRef);
       } else {
         onToast?.(`Failed to merge: ${formatCommandError(asCommandError(e))}`, 'error');
@@ -208,7 +216,7 @@ export function PullRequestsTab({
     try {
       await closePullRequest(projectPath, prNumber);
       void trackEvent('pr_closed', { $screen_name: 'Workspace' });
-      onToast?.('Pull request closed', 'success');
+      onToast?.(`${prTerm} closed`, 'success');
       await fetchPullRequests();
       onRefresh();
     } catch (e) {
@@ -228,7 +236,7 @@ export function PullRequestsTab({
       <div className="prs-tab">
         <div className="prs-tab-loading">
           <Spinner size="lg" />
-          <span>Loading pull requests...</span>
+          <span>Loading {prPlural.toLowerCase()}...</span>
         </div>
       </div>
     );
@@ -238,7 +246,7 @@ export function PullRequestsTab({
     return (
       <div className="prs-tab">
         <div className="prs-tab-error">
-          <p>Failed to load pull requests</p>
+          <p>Failed to load {prPlural.toLowerCase()}</p>
           <button onClick={() => void fetchPullRequests()}>Try Again</button>
         </div>
       </div>
@@ -255,9 +263,9 @@ export function PullRequestsTab({
             <div className="prs-tab-empty-icon">
               <BranchIcon size={32} />
             </div>
-            <h3 className="prs-tab-empty-title">No open pull requests</h3>
+            <h3 className="prs-tab-empty-title">No open {prPlural.toLowerCase()}</h3>
             <p className="prs-tab-empty-description">
-              Pull requests let you propose changes and get feedback before merging into the main
+              {prPlural} let you propose changes and get feedback before merging into the main
               branch. Create a branch, make your changes, then submit it for review.
             </p>
             {onNavigateToBranches && (
@@ -271,6 +279,7 @@ export function PullRequestsTab({
             <PrCard
               key={pr.number}
               pr={pr}
+              prPlural={prPlural}
               isOwn={pr.author === githubUsername}
               isCheckedOut={currentBranch === pr.headRef || checkedOutHead === pr.headRef}
               isMerging={mergingPr === pr.number}
@@ -293,6 +302,7 @@ export function PullRequestsTab({
             <PrCard
               key={pr.number}
               pr={pr}
+              prPlural={prPlural}
               isOwn={pr.author === githubUsername}
               isMerging={false}
             />
@@ -306,7 +316,7 @@ export function PullRequestsTab({
           isOpen
           onClose={() => setConfirmMergePr(null)}
           dismissable={!mergingPr}
-          title="Merge Pull Request?"
+          title={`Merge ${prTerm}?`}
           className="post-merge-content"
         >
           <div className="post-merge-body">
@@ -381,7 +391,7 @@ export function PullRequestsTab({
           isOpen
           onClose={() => setConfirmClosePr(null)}
           dismissable={!closingPr}
-          title="Close Pull Request?"
+          title={`Close ${prTerm}?`}
           className="post-merge-content"
         >
           <div className="post-merge-body">
@@ -427,8 +437,8 @@ export function PullRequestsTab({
           <div className="post-merge-body">
             <p>
               This will switch your project to the <strong>{confirmCheckoutPr.headRef}</strong>{' '}
-              branch and pull the latest changes from the pull request. Any uncommitted changes on
-              your current branch will be stashed.
+              branch and pull the latest changes from the {prLower}. Any uncommitted changes on your
+              current branch will be stashed.
             </p>
           </div>
           <div className="post-merge-footer">
@@ -459,6 +469,8 @@ export function PullRequestsTab({
 
 interface PrCardProps {
   pr: PullRequestInfo;
+  /** Plural term for the project's forge ("Pull Requests" / "Merge Requests"). */
+  prPlural: string;
   isOwn: boolean;
   isCheckedOut?: boolean;
   isMerging: boolean;
@@ -472,6 +484,7 @@ interface PrCardProps {
 
 function PrCard({
   pr,
+  prPlural,
   isOwn,
   isCheckedOut,
   isMerging,
@@ -502,8 +515,9 @@ function PrCard({
   };
 
   const hasConflicts = pr.mergeable === false;
-  // Drafts are refused by GitHub with a raw GraphQL error — don't offer a
-  // Merge that's doomed to fail (issue #482).
+  // Drafts are refused by GitHub with a raw GraphQL error and blocked by
+  // GitLab's draft status — don't offer a Merge that's doomed to fail
+  // (issue #482).
   const canMerge = pr.state === 'OPEN' && pr.mergeable !== false && !pr.isDraft;
 
   return (
@@ -514,7 +528,10 @@ function PrCard({
           <div className="pr-card-title">{pr.title}</div>
           <span className="pr-card-number">#{pr.number}</span>
           {pr.isDraft && (
-            <span className="pr-card-number" title="Draft pull requests can't be merged yet">
+            <span
+              className="pr-card-number"
+              title={`Draft ${prPlural.toLowerCase()} can't be merged yet`}
+            >
               Draft
             </span>
           )}

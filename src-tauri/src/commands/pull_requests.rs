@@ -1,12 +1,20 @@
 //! # Pull Request Commands
 //!
-//! Commands for managing GitHub pull requests.
+//! Commands for managing pull requests on whichever forge a project belongs to.
+//! GitHub calls them pull requests and GitLab calls them merge requests; the
+//! command names here keep GitHub's word because that is what the frontend and
+//! the Tauri command registry already use, while `forge::pr` translates the
+//! arguments, JSON and vocabulary per forge.
 
-use crate::commands::github::get_gh_command_for_project;
+use crate::commands::github::get_forge_command_for_project;
 use crate::errors::CommandError;
 use crate::external_command::{run_with_timeout, truncate_output};
+use crate::forge::pr as forge_pr;
 use crate::types::PullRequestInfo;
 use crate::utils::validate_project_path;
+
+/// How many PRs the list command asks for.
+const PR_LIST_LIMIT: u32 = 20;
 
 /// Timeout for network-facing CLI ops (gh/git) so a hung remote can't freeze a
 /// PR command. Matches git/branches.rs.
@@ -34,72 +42,29 @@ pub async fn list_pull_requests(
 ) -> Result<Vec<PullRequestInfo>, CommandError> {
     let validated_path = validate_project_path(&project_path)?;
 
-    let mut cmd = get_gh_command_for_project(&validated_path);
-    cmd.args([
-        "pr",
-        "list",
-        "--json",
-        "number,title,headRefName,baseRefName,author,state,mergeable,isDraft,url,createdAt",
-        "--limit",
-        "20",
-    ])
-    .current_dir(&validated_path);
-    let output = run_net(cmd, "gh pr list").await?;
+    let (mut cmd, forge) = get_forge_command_for_project(&validated_path)?;
+    cmd.args(forge_pr::list_args(forge, PR_LIST_LIMIT))
+        .current_dir(&validated_path);
+    let output = run_net(cmd, &forge_pr::command_label(forge, "list")).await?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        // "no git remotes found" is gh's message for a local-only repo that was
-        // never connected to GitHub — an expected state (github.rs models it as
-        // the "no-remote" status), not an error worth toasting (issue #268).
-        if stderr.contains("no pull requests")
-            || stderr.contains("Could not")
-            || stderr.contains("no git remotes found")
-        {
+        // A local-only repo that was never connected to a forge is an expected
+        // state (github.rs models it as the "no-remote" status), not an error
+        // worth toasting (issue #268).
+        if crate::forge::errors::is_empty_list_stderr(forge, &stderr) {
             return Ok(Vec::new());
         }
         // Auth-not-configured is an expected state, not an error to report
-        // with gh's raw multi-line stderr (issue #326).
-        if let Some(err) = crate::commands::github::gh_auth_error(&stderr) {
-            return Err(err);
-        }
-        if let Some(err) = crate::commands::github::gh_common_error(&stderr) {
-            return Err(err);
-        }
-        if let Some(err) = crate::commands::github::gh_git_repo_error(&stderr) {
+        // with the CLI's raw multi-line stderr (issue #326).
+        if let Some(err) = crate::forge::errors::classify(forge, &stderr) {
             return Err(err);
         }
         return Err(truncate_output(&stderr).into());
     }
 
     let stdout = String::from_utf8_lossy(&output.stdout);
-    let json: Vec<serde_json::Value> =
-        serde_json::from_str(&stdout).map_err(|e| format!("Failed to parse PR list: {e}"))?;
-
-    let prs: Vec<PullRequestInfo> = json
-        .iter()
-        .filter_map(|pr| {
-            Some(PullRequestInfo {
-                number: pr.get("number")?.as_i64()? as i32,
-                title: pr.get("title")?.as_str()?.to_string(),
-                head_ref: pr.get("headRefName")?.as_str()?.to_string(),
-                base_ref: pr.get("baseRefName")?.as_str()?.to_string(),
-                author: pr.get("author")?.get("login")?.as_str()?.to_string(),
-                state: pr.get("state")?.as_str()?.to_string(),
-                mergeable: pr
-                    .get("mergeable")
-                    .and_then(|v| v.as_str())
-                    .map(|s| s == "MERGEABLE"),
-                // Draft PRs can't be merged — the UI needs to know so it can
-                // offer "mark ready" instead of a Merge that's doomed to fail
-                // with a raw GraphQL error (issue #482).
-                is_draft: pr.get("isDraft").and_then(|v| v.as_bool()).unwrap_or(false),
-                url: pr.get("url")?.as_str()?.to_string(),
-                created_at: pr.get("createdAt")?.as_str()?.to_string(),
-            })
-        })
-        .collect();
-
-    Ok(prs)
+    Ok(forge_pr::parse_list(forge, &stdout)?)
 }
 
 /// git's stderr for an ordinary push rejection — the remote branch moved ahead
@@ -178,41 +143,35 @@ pub async fn create_pull_request(
     }
 
     let body_str = body.unwrap_or_default();
-    let args = vec![
-        "pr", "create", "--title", &title, "--body", &body_str, "--base", &base,
-    ];
 
-    let mut cmd = get_gh_command_for_project(&validated_path);
-    cmd.args(&args).current_dir(&validated_path);
-    let output = run_net(cmd, "gh pr create").await?;
+    let (mut cmd, forge) = get_forge_command_for_project(&validated_path)?;
+    cmd.args(forge_pr::create_args(forge, &title, &body_str, &base))
+        .current_dir(&validated_path);
+    let output = run_net(cmd, &forge_pr::command_label(forge, "create")).await?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        if let Some(err) = crate::commands::github::gh_auth_error(&stderr) {
+        if let Some(err) = crate::forge::errors::classify(forge, &stderr) {
             return Err(err);
         }
-        if let Some(err) = crate::commands::github::gh_common_error(&stderr) {
-            return Err(err);
-        }
-        if let Some(err) = crate::commands::github::gh_git_repo_error(&stderr) {
-            return Err(err);
-        }
-        // gh's by-design refusals for `pr create` — the frontend already
-        // rephrases both into friendly guidance (humanizeGitError), so keep
-        // the raw text but mark them Expected so they stay out of telemetry
-        // (issue #428).
+        // By-design refusals for `create` — the frontend already rephrases
+        // these into friendly guidance (humanizeGitError), so keep the raw
+        // text but mark them Expected so they stay out of telemetry
+        // (issue #428). GitLab words the duplicate case as "merge request
+        // already exists", hence matching the noun loosely.
         let lower = stderr.to_lowercase();
         if lower.contains("no commits between")
-            || (lower.contains("already exists") && lower.contains("pull request"))
+            || lower.contains("different project or branch")
+            || (lower.contains("already exists")
+                && (lower.contains("pull request") || lower.contains("merge request")))
         {
             return Err(CommandError::expected(stderr.to_string()));
         }
         return Err(truncate_output(&stderr).into());
     }
 
-    // Output contains the PR URL
-    let url = String::from_utf8_lossy(&output.stdout).trim().to_string();
-    Ok(url)
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    Ok(forge_pr::parse_created_url(&stdout))
 }
 
 /// Merge a pull request. Returns `CommandError::MergeConflict` when `gh`
@@ -223,37 +182,50 @@ pub async fn create_pull_request(
 pub async fn merge_pull_request(project_path: String, pr_number: i32) -> Result<(), CommandError> {
     let validated_path = validate_project_path(&project_path)?;
 
-    let mut cmd = get_gh_command_for_project(&validated_path);
-    cmd.args(["pr", "merge", &pr_number.to_string(), "--merge"])
+    let (mut cmd, forge) = get_forge_command_for_project(&validated_path)?;
+    cmd.args(forge_pr::merge_args(forge, pr_number))
         .current_dir(&validated_path);
-    let output = run_net(cmd, "gh pr merge").await?;
+    let output = run_net(cmd, &forge_pr::command_label(forge, "merge")).await?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
         if is_conflict_stderr(&stderr) {
             return Err(CommandError::MergeConflict { pr_number, stderr });
         }
-        // Draft PRs are refused by GitHub with a raw GraphQL error; the UI
-        // now disables Merge for drafts, but a just-converted or stale-listed
-        // PR can still race into this (issue #482).
-        if stderr.to_lowercase().contains("still a draft") {
-            return Err(CommandError::expected(
-                "This pull request is still a draft, so it can't be merged yet. Mark it as ready for review on GitHub first.",
-            ));
+        // Drafts are refused by GitHub with a raw GraphQL error and by GitLab
+        // with "cannot merge a draft"; the UI disables Merge for drafts, but a
+        // just-converted or stale-listed PR can still race into this
+        // (issue #482).
+        if is_draft_refusal(&stderr) {
+            return Err(CommandError::expected(format!(
+                "This {} is still a draft, so it can't be merged yet. Mark it as ready for review on {} first.",
+                forge.terms.pull_request.to_lowercase(),
+                forge.display_name
+            )));
         }
-        if let Some(err) = crate::commands::github::gh_auth_error(&stderr) {
-            return Err(err);
-        }
-        if let Some(err) = crate::commands::github::gh_common_error(&stderr) {
-            return Err(err);
-        }
-        if let Some(err) = crate::commands::github::gh_git_repo_error(&stderr) {
+        if let Some(err) = crate::forge::errors::classify(forge, &stderr) {
             return Err(err);
         }
         return Err(truncate_output(&stderr).into());
     }
 
     Ok(())
+}
+
+/// Match the stderr both CLIs emit when the merge was refused *because the PR
+/// is a draft*, as opposed to any other reason.
+///
+/// Kept to specific phrases rather than "mentions draft and merge": GitLab
+/// calls the object a "merge request", so the loose version would fire on
+/// every GitLab error that happens to mention a draft.
+fn is_draft_refusal(stderr: &str) -> bool {
+    let lower = stderr.to_lowercase();
+    // gh: "Pull request #12 is still a draft". GitLab surfaces its block as
+    // the `draft_status` detailed-merge-status, and glab echoes the API's
+    // "cannot be merged" wording alongside it.
+    lower.contains("still a draft")
+        || lower.contains("draft status")
+        || lower.contains("draft_status")
 }
 
 /// Match the stderr fragments `gh pr merge` emits when a PR can't be merged
@@ -274,20 +246,14 @@ pub async fn checkout_pull_request(
 ) -> Result<String, CommandError> {
     let validated_path = validate_project_path(&project_path)?;
 
-    let mut cmd = get_gh_command_for_project(&validated_path);
-    cmd.args(["pr", "checkout", &pr_number.to_string()])
+    let (mut cmd, forge) = get_forge_command_for_project(&validated_path)?;
+    cmd.args(forge_pr::checkout_args(forge, pr_number))
         .current_dir(&validated_path);
-    let output = run_net(cmd, "gh pr checkout").await?;
+    let output = run_net(cmd, &forge_pr::command_label(forge, "checkout")).await?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        if let Some(err) = crate::commands::github::gh_auth_error(&stderr) {
-            return Err(err);
-        }
-        if let Some(err) = crate::commands::github::gh_common_error(&stderr) {
-            return Err(err);
-        }
-        if let Some(err) = crate::commands::github::gh_git_repo_error(&stderr) {
+        if let Some(err) = crate::forge::errors::classify(forge, &stderr) {
             return Err(err);
         }
         // Git refusing to check out over uncommitted local edits ("would be
@@ -323,20 +289,14 @@ pub async fn checkout_pull_request(
 pub async fn close_pull_request(project_path: String, pr_number: i32) -> Result<(), CommandError> {
     let validated_path = validate_project_path(&project_path)?;
 
-    let mut cmd = get_gh_command_for_project(&validated_path);
-    cmd.args(["pr", "close", &pr_number.to_string()])
+    let (mut cmd, forge) = get_forge_command_for_project(&validated_path)?;
+    cmd.args(forge_pr::close_args(forge, pr_number))
         .current_dir(&validated_path);
-    let output = run_net(cmd, "gh pr close").await?;
+    let output = run_net(cmd, &forge_pr::command_label(forge, "close")).await?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        if let Some(err) = crate::commands::github::gh_auth_error(&stderr) {
-            return Err(err);
-        }
-        if let Some(err) = crate::commands::github::gh_common_error(&stderr) {
-            return Err(err);
-        }
-        if let Some(err) = crate::commands::github::gh_git_repo_error(&stderr) {
+        if let Some(err) = crate::forge::errors::classify(forge, &stderr) {
             return Err(err);
         }
         return Err(format!("Failed to close PR: {}", truncate_output(&stderr)).into());

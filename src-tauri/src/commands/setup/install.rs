@@ -154,6 +154,53 @@ pub async fn install_gh_via_brew(app: tauri::AppHandle) -> Result<(), CommandErr
     Ok(())
 }
 
+/// Install the GitLab CLI via Homebrew.
+///
+/// Mirrors [`install_gh_via_brew`]. The package name comes from
+/// `forge::GITLAB.brew_package` so the forge config stays the one place that
+/// knows how a forge is installed.
+#[tauri::command]
+#[tracing::instrument(skip(app))]
+pub async fn install_glab_via_brew(app: tauri::AppHandle) -> Result<(), CommandError> {
+    let _ = app.emit(
+        "setup-progress",
+        serde_json::json!({
+            "itemId": "glab",
+            "message": "Installing GitLab CLI..."
+        }),
+    );
+
+    if is_mock_mode() {
+        tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
+        mock_install("glab");
+        return Ok(());
+    }
+
+    let package = crate::forge::GITLAB
+        .brew_package
+        .ok_or("GitLab CLI has no Homebrew package configured.")?;
+
+    let brew = get_brew_command().ok_or(
+        "Homebrew is needed to install this. Install Homebrew from the Package Manager step first, then try again.",
+    )?;
+
+    let output = create_command(&brew)
+        .args(["install", package])
+        .env("HOMEBREW_NO_AUTO_UPDATE", "1")
+        .output()
+        .map_err(|e| format!("Failed to run brew: {e}"))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(humanize_brew_failure(
+            "Failed to install GitLab CLI",
+            &stderr,
+        ));
+    }
+
+    Ok(())
+}
+
 /// Batch install multiple Homebrew packages in a single command.
 /// This is faster than individual installs because:
 /// 1. Auto-update only runs once
@@ -368,8 +415,12 @@ pub async fn install_winget_packages(
         .filter_map(|p| match p.as_str() {
             "node" => Some("OpenJS.NodeJS"),
             "git" => Some("Git.Git"),
-            "gh" => Some("GitHub.cli"),
-            _ => None,
+            // Forge CLIs carry their own winget id, so adding a forge doesn't
+            // mean remembering to extend this match too.
+            id => crate::forge::ALL_FORGES
+                .iter()
+                .find(|f| f.setup_item_ids.0 == Some(id))
+                .and_then(|f| f.winget_id),
         })
         .collect();
 

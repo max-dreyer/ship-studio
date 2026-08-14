@@ -25,6 +25,25 @@ export function GitHubIcon({ size = 16 }: IconProps) {
   );
 }
 
+export function GitLabIcon({ size = 16 }: IconProps) {
+  // Official GitLab tanuki (simple-icons, CC0). Drawn in currentColor like the
+  // other forge marks so it inherits the surrounding button's state colors.
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+      <path d="m23.6004 9.5927-.0337-.0862L20.3.9814a.851.851 0 0 0-.3363-.4062.8748.8748 0 0 0-.9997.0539.8748.8748 0 0 0-.29.4399l-2.2055 6.748H7.5375l-2.2057-6.748a.8573.8573 0 0 0-.29-.4412.8748.8748 0 0 0-.9997-.0537.8585.8585 0 0 0-.3362.4063L.4332 9.5015l-.0325.0862a6.0657 6.0657 0 0 0 2.0119 7.0105l.0113.0087.0300.0213 4.9764 3.7263 2.4622 1.8633 1.4995 1.1321a1.0085 1.0085 0 0 0 1.2197 0l1.4995-1.1321 2.4622-1.8633 5.0064-3.7488.0125-.01a6.0682 6.0682 0 0 0 2.0081-7.0068Z" />
+    </svg>
+  );
+}
+
+/**
+ * The mark for a forge id, falling back to GitHub's for anything unknown —
+ * the same fallback the rest of the forge layer applies.
+ */
+export function ForgeIcon({ forgeId, size = 16 }: IconProps & { forgeId: string }) {
+  if (forgeId === 'gitlab') return <GitLabIcon size={size} />;
+  return <GitHubIcon size={size} />;
+}
+
 export function VercelIcon({ size = 16 }: IconProps) {
   // Official mark is an equilateral triangle: 24 wide, 24·√3/2 ≈ 20.78 tall,
   // vertically centered in the viewBox (simple-icons geometry).

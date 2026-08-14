@@ -25,6 +25,7 @@ import { Button } from '../primitives/Button';
 import { ModalFrame } from '../primitives/ModalFrame';
 import { useOptionalToast } from '../../contexts/ToastContext';
 import { humanizeGitError } from '../../lib/errors';
+import { ALL_FORGES, getForgeById } from '../../lib/forge';
 
 /** Props for the GitHubButton component */
 interface GitHubButtonProps {
@@ -57,6 +58,10 @@ export function GitHubButton({
   const onToast = (message: string, type?: 'success' | 'error') => showToast(message, type);
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [repoName, setRepoName] = useState(projectName);
+  // Which forge to create on. Chosen, not detected: the project has no remote
+  // yet, which is exactly what this flow is here to fix.
+  const [targetForgeId, setTargetForgeId] = useState('github');
+  const targetForge = getForgeById(targetForgeId);
   const [isPrivate, setIsPrivate] = useState(true);
   const [isLoading, setIsLoading] = useState(false);
   const [isCreatingRepo, setIsCreatingRepo] = useState(false);
@@ -211,33 +216,55 @@ export function GitHubButton({
       <ModalFrame
         isOpen={showCreateModal}
         onClose={closeCreateModal}
-        title="Create GitHub Repository"
+        title={`Create ${targetForge.displayName} Repository`}
         className="github-modal"
         dismissable={!isLoading}
       >
-        <p>Create a new GitHub repository for this project.</p>
+        <p>Create a new {targetForge.displayName} repository for this project.</p>
 
         <div className="github-form">
           <label>
-            Owner
+            Host
             <select
               className="owner-select"
-              value={selectedOwner || username || ''}
-              onChange={(e) => setSelectedOwner(e.target.value)}
+              value={targetForgeId}
+              onChange={(e) => setTargetForgeId(e.target.value)}
             >
-              {username && <option value={username}>{username}</option>}
-              {orgs.map((org) => (
-                <option key={org} value={org}>
-                  {org}
+              {ALL_FORGES.filter((f) => f.hasCli).map((f) => (
+                <option key={f.id} value={f.id}>
+                  {f.displayName}
                 </option>
               ))}
             </select>
           </label>
 
+          {/* Owner picking is GitHub-only for now: the list comes from `gh`'s
+              org API. On GitLab the project lands in the signed-in user's own
+              namespace, which is what `glab repo create` does without a group. */}
+          {targetForgeId === 'github' && (
+            <label>
+              Owner
+              <select
+                className="owner-select"
+                value={selectedOwner || username || ''}
+                onChange={(e) => setSelectedOwner(e.target.value)}
+              >
+                {username && <option value={username}>{username}</option>}
+                {orgs.map((org) => (
+                  <option key={org} value={org}>
+                    {org}
+                  </option>
+                ))}
+              </select>
+            </label>
+          )}
+
           <label>
             Repository name
             <div className="repo-name-input">
-              <span className="repo-prefix">{selectedOwner || username}/</span>
+              {targetForgeId === 'github' && (
+                <span className="repo-prefix">{selectedOwner || username}/</span>
+              )}
               <input
                 type="text"
                 value={repoName}
@@ -295,12 +322,17 @@ export function GitHubButton({
                 setIsCreatingRepo(true);
                 setError(null);
                 try {
+                  // GitHub takes "owner/name"; glab takes a bare name and
+                  // uses the signed-in user's namespace. Sending "owner/name"
+                  // to glab would create a project literally called that.
                   const owner = selectedOwner || username;
-                  const fullRepoName = `${owner}/${repoName}`;
+                  const fullRepoName =
+                    targetForgeId === 'github' ? `${owner}/${repoName}` : repoName;
                   await pushToGitHub({
                     projectPath,
                     repoName: fullRepoName,
                     isPrivate,
+                    forgeId: targetForgeId,
                   });
 
                   // Close modal immediately after GitHub repo is created

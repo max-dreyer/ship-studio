@@ -92,6 +92,39 @@ async fn run_gh_with_timeout(args: &[&str], timeout_secs: u64) -> Option<std::pr
     }
 }
 
+/// Run a `glab` subcommand (extended PATH + active-workspace env) with a
+/// timeout. Returns `None` when the command times out or fails to spawn.
+///
+/// Deliberately not folded into [`run_gh_with_timeout`] with a binary
+/// parameter: the two differ in how their results are read (gh's exit code is
+/// unreliable across multiple accounts, glab's is authoritative), and a shared
+/// helper would invite treating those the same.
+async fn run_glab_with_timeout(args: &[&str], timeout_secs: u64) -> Option<std::process::Output> {
+    let mut std_cmd = if let Some(path) = find_executable("glab") {
+        create_command(path)
+    } else {
+        create_command("glab")
+    };
+    std_cmd.env("PATH", crate::utils::get_extended_path());
+    std_cmd.envs(crate::commands::accounts::get_env_vars_for_active_account());
+    std_cmd.args(args);
+    std_cmd.stdin(std::process::Stdio::null());
+    let mut cmd = tokio::process::Command::from(std_cmd);
+    cmd.kill_on_drop(true);
+    let label = format!("glab {}", args.join(" "));
+    match run_with_timeout(cmd, label.clone(), timeout_secs).await {
+        Ok(output) => Some(output),
+        Err(err) => {
+            tracing::warn!(
+                cmd = %label,
+                error = %err,
+                "setup status: glab probe failed; treating GitLab as not authenticated"
+            );
+            None
+        }
+    }
+}
+
 /// Run `vercel whoami` (optionally with an explicit token) with a network
 /// timeout. `None` on any failure — not signed in, spawn error, or timeout.
 async fn run_vercel_whoami(vercel_path: &Path, token: Option<&str>) -> Option<String> {
@@ -130,6 +163,8 @@ pub async fn get_full_setup_status() -> FullSetupStatus {
             ("git", "Git", Some("homebrew")),
             ("gh", "GitHub CLI", Some("homebrew")),
             ("gh_auth", "GitHub Account", Some("gh")),
+            ("glab", "GitLab CLI", Some("homebrew")),
+            ("glab_auth", "GitLab Account", Some("glab")),
             ("claude", "Claude Code", None),
             ("claude_auth", "Claude Account", Some("claude")),
             ("codex", "Codex", None),
@@ -184,12 +219,18 @@ pub async fn get_full_setup_status() -> FullSetupStatus {
             .unwrap_or(false);
 
         // Required base items for setup completion
-        const REQUIRED_ITEMS_MOCK: &[&str] = &["homebrew", "node", "git", "gh"];
+        const REQUIRED_ITEMS_MOCK: &[&str] = &["homebrew", "node", "git"];
+        // Either forge CLI satisfies the requirement — see FORGE_CLI_ITEMS.
+        const FORGE_CLI_ITEMS_MOCK: &[&str] = &["gh", "glab"];
 
         let base_ready = mock_items
             .iter()
             .filter(|i| REQUIRED_ITEMS_MOCK.contains(&i.id.as_str()))
-            .all(|i| matches!(i.status, SetupItemStatus::Ready));
+            .all(|i| matches!(i.status, SetupItemStatus::Ready))
+            && mock_items
+                .iter()
+                .filter(|i| FORGE_CLI_ITEMS_MOCK.contains(&i.id.as_str()))
+                .any(|i| matches!(i.status, SetupItemStatus::Ready));
 
         // Check which agent pairs are fully ready
         let mut detected_agents = Vec::new();
@@ -238,6 +279,7 @@ pub async fn get_full_setup_status() -> FullSetupStatus {
     let node_path = find_executable("node");
     let git_path = find_executable("git");
     let gh_path = find_executable("gh");
+    let glab_path = find_executable("glab");
     let vercel_path = find_executable("vercel");
     let agent_paths: Vec<Option<std::path::PathBuf>> = ALL_AGENTS
         .iter()
@@ -305,6 +347,34 @@ pub async fn get_full_setup_status() -> FullSetupStatus {
             })
         } else {
             None
+        };
+        (version, authed, username)
+    };
+    // GitLab is optional: a GitHub-only user never installs glab, and its
+    // absence must read as "not set up", never as a broken install. So this
+    // probe mirrors the gh one but its items stay out of REQUIRED_ITEMS.
+    let glab_fut = async {
+        let version = match &glab_path {
+            Some(p) => probe_stdout_first_line(p, &["--version"], LOCAL_PROBE_TIMEOUT_SECS).await,
+            None => None,
+        };
+
+        // Unlike gh, `glab auth status` exits non-zero exactly when no
+        // instance is usable (measured against glab 1.113.0), so the exit code
+        // is the authoritative answer and the parsed name is decoration.
+        let (authed, username) = if glab_path.is_some() {
+            match run_glab_with_timeout(&["auth", "status"], NETWORK_PROBE_TIMEOUT_SECS).await {
+                Some(o) => {
+                    let stderr = String::from_utf8_lossy(&o.stderr);
+                    (
+                        o.status.success(),
+                        crate::commands::accounts::parse_glab_auth_status(&stderr),
+                    )
+                }
+                None => (false, None),
+            }
+        } else {
+            (false, None)
         };
         (version, authed, username)
     };
@@ -405,6 +475,7 @@ pub async fn get_full_setup_status() -> FullSetupStatus {
         node_version,
         git_version,
         (gh_version, gh_auth, gh_username),
+        (glab_version, glab_auth, glab_username),
         agent_probes,
         (vercel_version, vercel_whoami_result),
         (claude_auth_active, claude_auth_global),
@@ -413,6 +484,7 @@ pub async fn get_full_setup_status() -> FullSetupStatus {
         node_fut,
         git_fut,
         gh_fut,
+        glab_fut,
         agents_fut,
         vercel_fut,
         claude_auth_fut
@@ -532,6 +604,38 @@ pub async fn get_full_setup_status() -> FullSetupStatus {
         error_message: None,
     });
 
+    // 5b. GitLab CLI and Auth. Optional throughout: these are absent from
+    // REQUIRED_ITEMS, so a GitHub-only setup still reports all_ready with glab
+    // missing. Reported regardless so the UI can offer GitLab to anyone whose
+    // project points at one.
+    items.push(SetupItemInfo {
+        id: "glab".to_string(),
+        friendly_name: "GitLab CLI".to_string(),
+        status: if glab_path.is_some() {
+            SetupItemStatus::Ready
+        } else {
+            SetupItemStatus::NotInstalled
+        },
+        version: glab_version,
+        username: None,
+        error_message: None,
+    });
+
+    items.push(SetupItemInfo {
+        id: "glab_auth".to_string(),
+        friendly_name: "GitLab Account".to_string(),
+        status: if glab_auth {
+            SetupItemStatus::Ready
+        } else if glab_path.is_some() {
+            SetupItemStatus::NotAuthenticated
+        } else {
+            SetupItemStatus::NotInstalled
+        },
+        version: None,
+        username: glab_username,
+        error_message: None,
+    });
+
     // 6-7. Agent CLIs and Auth — check ALL agents (probed above with timeouts).
     // claude_auth_active / claude_auth_global come from the joined
     // claude_auth_fut above.
@@ -647,18 +751,27 @@ pub async fn get_full_setup_status() -> FullSetupStatus {
     });
 
     // Required base items for setup completion (GitHub auth and individual agent items are optional)
-    const REQUIRED_ITEMS: &[&str] = &["homebrew", "node", "git", "gh"];
+    const REQUIRED_ITEMS: &[&str] = &["homebrew", "node", "git"];
+    /// A forge CLI is required, but *which* one is the user's choice. Demanding
+    /// `gh` specifically would make someone who only works on GitLab install
+    /// the GitHub CLI to finish onboarding, for a forge they never use.
+    const FORGE_CLI_ITEMS: &[&str] = &["gh", "glab"];
 
     let base_ready = items
         .iter()
         .filter(|i| REQUIRED_ITEMS.contains(&i.id.as_str()) || i.id == "npm_fix")
         .all(|i| matches!(i.status, SetupItemStatus::Ready));
 
+    let forge_cli_ready = items
+        .iter()
+        .filter(|i| FORGE_CLI_ITEMS.contains(&i.id.as_str()))
+        .any(|i| matches!(i.status, SetupItemStatus::Ready));
+
     // At least one agent pair must be fully ready — or the user declared they
     // bring their own agent ("Other" in agent-led onboarding).
     let external_agent = read_app_state().external_agent.unwrap_or(false);
     let at_least_one_agent = !detected_agents.is_empty() || external_agent;
-    let all_ready = base_ready && at_least_one_agent;
+    let all_ready = base_ready && forge_cli_ready && at_least_one_agent;
 
     // Track optional auth status separately
     let github_authenticated = items
@@ -724,7 +837,9 @@ pub async fn quick_setup_check() -> crate::types::QuickSetupCheck {
 
     let node_present = find_executable("node").is_some();
     let git_present = find_executable("git").is_some();
-    let gh_present = find_executable("gh").is_some();
+    // Either forge CLI counts — a GitLab-only user must not be held on the
+    // onboarding screen for a missing `gh`.
+    let forge_cli_present = find_executable("gh").is_some() || find_executable("glab").is_some();
 
     // Check ALL agents — at least one pair must be present (or the user
     // opted to bring their own agent via "Other" in agent-led onboarding)
@@ -752,7 +867,7 @@ pub async fn quick_setup_check() -> crate::types::QuickSetupCheck {
     // It will be verified in the background after showing projects
 
     let all_present =
-        pkg_mgr_present && node_present && git_present && gh_present && at_least_one_agent;
+        pkg_mgr_present && node_present && git_present && forge_cli_present && at_least_one_agent;
 
     crate::types::QuickSetupCheck {
         all_present,

@@ -360,6 +360,35 @@ pub struct AgentCliStatus {
 /// Backward-compatible alias
 pub type ClaudeCliStatus = AgentCliStatus;
 
+// ============ Forge Integration ============
+
+/// The forge a project belongs to, flattened for the frontend.
+///
+/// Sends the terminology and capability flags rather than just the id so the UI
+/// renders "Merge Request" without keeping its own copy of the mapping that
+/// could drift from the backend's.
+#[derive(Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct ForgeInfo {
+    /// Stable id: "github" | "gitlab" | "forgejo".
+    pub id: String,
+    /// Brand name for display ("GitLab").
+    pub display_name: String,
+    /// "Pull Request" or "Merge Request".
+    pub pull_request_term: String,
+    /// "PR" or "MR".
+    pub pull_request_short: String,
+    /// "Organization" or "Group".
+    pub organization_term: String,
+    /// Whether this forge is reachable with an installed CLI. False for
+    /// REST-only forges, which the UI must not offer PR actions for yet.
+    pub has_cli: bool,
+    /// Whether Vercel/Cloudflare can auto-deploy from this forge on push.
+    pub hosting_auto_deploy: bool,
+    /// Whether project paths can nest deeper than `owner/repo`.
+    pub nested_namespaces: bool,
+}
+
 // ============ GitHub Integration ============
 
 #[derive(Serialize)]
@@ -385,6 +414,13 @@ pub struct PushToGitHubOptions {
     pub project_path: String,
     pub repo_name: String,
     pub is_private: bool,
+    /// Which forge to create the repository on ("github" | "gitlab").
+    ///
+    /// Explicit rather than detected: the project has no remote yet, which is
+    /// the whole point of this call, so there is nothing to detect from. Absent
+    /// means GitHub, keeping older frontends and saved flows working.
+    #[serde(default)]
+    pub forge_id: Option<String>,
 }
 
 /// GitHub repository info from gh CLI

@@ -79,6 +79,13 @@ interface PushToGitHubOptions {
   repoName: string;
   /** Whether to create a private repository */
   isPrivate: boolean;
+  /**
+   * Which forge to create the repository on ("github" | "gitlab").
+   *
+   * Explicit rather than detected: the project has no remote yet, so there is
+   * nothing to detect from. Omitted means GitHub.
+   */
+  forgeId?: string;
 }
 
 /** GitHub repository primary language */
