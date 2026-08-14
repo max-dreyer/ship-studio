@@ -8,6 +8,9 @@ import {
   DEFAULT_FORGE,
   getForgeById,
   fetchProjectForge,
+  moveProjectToForge,
+  mirrorProjectToForge,
+  getDefaultForge,
   pullRequestPlural,
   pullRequestLower,
 } from './forge';
@@ -100,5 +103,99 @@ describe('fetchProjectForge', () => {
     const forge = await fetchProjectForge('/some/project');
     expect(forge.id).toBe(DEFAULT_FORGE.id);
     expect(forge.pullRequestTerm).toBe('Pull Request');
+  });
+});
+
+describe('moving and mirroring', () => {
+  it('sends the options through to the move command', async () => {
+    let seen: unknown;
+    mockIPC((cmd, args) => {
+      if (cmd === 'move_project_to_forge') {
+        seen = args;
+        return { url: 'https://gitlab.com/me/app', remoteName: 'origin', previousOriginUrl: null };
+      }
+      return undefined;
+    });
+    const result = await moveProjectToForge({
+      projectPath: '/p',
+      forgeId: 'gitlab',
+      repoName: 'app',
+      isPrivate: true,
+      remoteName: 'origin',
+    });
+    expect(result.remoteName).toBe('origin');
+    expect(seen).toMatchObject({ options: { forgeId: 'gitlab', repoName: 'app' } });
+  });
+
+  it('surfaces the previous origin so a move can be undone', async () => {
+    mockIPC((cmd) =>
+      cmd === 'mirror_project_to_forge'
+        ? undefined
+        : {
+            url: 'https://gitlab.com/me/app',
+            remoteName: 'origin',
+            previousOriginUrl: 'git@github.com:me/app.git',
+          }
+    );
+    const result = await moveProjectToForge({
+      projectPath: '/p',
+      forgeId: 'gitlab',
+      repoName: 'app',
+      isPrivate: true,
+      remoteName: 'origin',
+    });
+    expect(result.previousOriginUrl).toBe('git@github.com:me/app.git');
+  });
+
+  it('reports the remote a mirror actually landed on', async () => {
+    // The backend renames a mirror asked to write "origin", so the caller has
+    // to read the answer rather than assume what it sent.
+    mockIPC(() => ({
+      url: 'https://gitlab.com/me/app',
+      remoteName: 'gitlab',
+      previousOriginUrl: null,
+    }));
+    const result = await mirrorProjectToForge({
+      projectPath: '/p',
+      forgeId: 'gitlab',
+      repoName: 'app',
+      isPrivate: false,
+      remoteName: 'origin',
+    });
+    expect(result.remoteName).toBe('gitlab');
+  });
+
+  it('lets a failed move reject so the UI can show why', async () => {
+    mockIPC(() => {
+      throw new Error('name taken');
+    });
+    await expect(
+      moveProjectToForge({
+        projectPath: '/p',
+        forgeId: 'gitlab',
+        repoName: 'app',
+        isPrivate: true,
+        remoteName: 'origin',
+      })
+    ).rejects.toBeTruthy();
+  });
+});
+
+describe('getDefaultForge', () => {
+  it('resolves the stored id', async () => {
+    mockIPC((cmd) => (cmd === 'get_default_forge_id' ? 'gitlab' : undefined));
+    expect((await getDefaultForge()).id).toBe('gitlab');
+  });
+
+  it('falls back to the default when nothing is stored', async () => {
+    mockIPC(() => null);
+    expect((await getDefaultForge()).id).toBe(DEFAULT_FORGE.id);
+  });
+
+  it('falls back when the lookup fails', async () => {
+    mockIPC(() => {
+      throw new Error('nope');
+    });
+    expect((await getDefaultForge()).id).toBe(DEFAULT_FORGE.id);
   });
 });

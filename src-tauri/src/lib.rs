@@ -592,6 +592,8 @@ pub fn run() {
             // GitHub integration
             commands::github::check_github_cli_status,
             commands::github::get_project_forge,
+            commands::forge_ops::move_project_to_forge,
+            commands::forge_ops::mirror_project_to_forge,
             commands::github::get_github_username,
             commands::github::get_github_orgs,
             commands::github::get_project_github_status,
@@ -698,6 +700,8 @@ pub fn run() {
             commands::setup::reset_setup_state,
             commands::setup::get_default_agent_id,
             commands::setup::set_default_agent_id,
+            commands::setup::get_default_forge_id,
+            commands::setup::set_default_forge_id,
             commands::setup::get_agents_status,
             commands::setup::sign_out_agent,
             commands::setup::uninstall_agent,

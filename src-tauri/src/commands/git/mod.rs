@@ -65,16 +65,38 @@ pub(crate) async fn run_git_net(
     // clears any inherited helper (e.g. osxkeychain) so a globally-cached
     // credential can't shadow gh. These are git *global* options, so they must
     // precede the subcommand in `args`.
-    if let Some(gh) = find_executable("gh") {
+    //
+    // Every installed forge CLI that ships a helper is registered, not just
+    // gh's. Git consults helpers in order and each answers only for its own
+    // hosts, so adding glab costs nothing on a GitHub push but is the
+    // difference between working and failing on a GitLab one — the PR flow
+    // pushes the branch through here before creating the merge request.
+    let helpers: Vec<String> = crate::forge::ALL_FORGES
+        .iter()
+        .filter_map(|forge| {
+            let crate::forge::ForgeTransport::Cli(binary) = forge.transport else {
+                return None;
+            };
+            let args = forge.credential_helper_args?;
+            let path = find_executable(binary)?;
+            // Git hands a `!`-prefixed helper to `sh -c`, which word-splits on
+            // spaces — so the path must be quoted or a default Windows install
+            // (`C:\Program Files\GitHub CLI\gh.exe`) becomes the command
+            // `C:\Program` (issue #265). Single quotes keep backslashes literal
+            // under POSIX sh.
+            Some(format!(
+                "credential.helper=!'{}' {}",
+                path.display(),
+                args.join(" ")
+            ))
+        })
+        .collect();
+
+    if !helpers.is_empty() {
         cmd.arg("-c").arg("credential.helper=");
-        // Git hands a `!`-prefixed helper to `sh -c`, which word-splits on
-        // spaces — so the path must be quoted or a default Windows install
-        // (`C:\Program Files\GitHub CLI\gh.exe`) becomes the command `C:\Program`
-        // (issue #265). Single quotes keep backslashes literal under POSIX sh.
-        cmd.arg("-c").arg(format!(
-            "credential.helper=!'{}' auth git-credential",
-            gh.display()
-        ));
+        for helper in &helpers {
+            cmd.arg("-c").arg(helper);
+        }
     }
 
     cmd.args(args)

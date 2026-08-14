@@ -104,6 +104,75 @@ export async function fetchProjectForge(projectPath: string): Promise<ForgeInfo>
   }
 }
 
+/** Options for putting an existing project on another forge. */
+export interface ForgeTransferOptions {
+  projectPath: string;
+  /** Target forge id ("github" | "gitlab"). */
+  forgeId: string;
+  /**
+   * Repository name. GitHub accepts `owner/name`; GitLab takes a bare name and
+   * creates the project in the signed-in user's namespace.
+   */
+  repoName: string;
+  isPrivate: boolean;
+  /** Remote to write. Ignored by {@link moveProjectToForge}, which forces `origin`. */
+  remoteName: string;
+}
+
+export interface ForgeTransferResult {
+  /** Web URL of the newly created repository. */
+  url: string;
+  /** The remote that now points at it. */
+  remoteName: string;
+  /**
+   * What `origin` pointed at before a move. Nothing else records this, so it is
+   * the only way to tell the user how to undo.
+   */
+  previousOriginUrl: string | null;
+}
+
+/**
+ * Move a project to another forge: create the repository there, repoint
+ * `origin`, push every branch and tag.
+ *
+ * The repository on the old forge is left in place — this never deletes
+ * anything, so a move made by mistake is undone by pointing `origin` back at
+ * `previousOriginUrl`.
+ */
+export async function moveProjectToForge(
+  options: ForgeTransferOptions
+): Promise<ForgeTransferResult> {
+  return invoke<ForgeTransferResult>('move_project_to_forge', { options });
+}
+
+/**
+ * Add another forge as a second remote, leaving `origin` alone. Pull requests
+ * and branch actions keep running against `origin`.
+ */
+export async function mirrorProjectToForge(
+  options: ForgeTransferOptions
+): Promise<ForgeTransferResult> {
+  return invoke<ForgeTransferResult>('mirror_project_to_forge', { options });
+}
+
+/**
+ * The forge preselected when creating a repository for a new project.
+ * Resolves to {@link DEFAULT_FORGE} when unset or unreadable.
+ */
+export async function getDefaultForge(): Promise<ForgeInfo> {
+  try {
+    const id = await invoke<string | null>('get_default_forge_id');
+    return id ? getForgeById(id) : DEFAULT_FORGE;
+  } catch {
+    return DEFAULT_FORGE;
+  }
+}
+
+/** Persist which forge new repositories should default to. */
+export async function setDefaultForgeId(forgeId: string): Promise<void> {
+  return invoke('set_default_forge_id', { forgeId });
+}
+
 /**
  * "Pull Request" / "Merge Request", pluralized.
  *

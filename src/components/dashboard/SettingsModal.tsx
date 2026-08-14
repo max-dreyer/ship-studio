@@ -33,6 +33,7 @@ import {
 } from '../../lib/settings';
 import { asCommandError, formatCommandError } from '../../lib/errors';
 import { EditIcon } from '../icons';
+import { ALL_FORGES, DEFAULT_FORGE, getDefaultForge, setDefaultForgeId } from '../../lib/forge';
 import { useActiveAccount } from '../../hooks/useActiveAccount';
 import { useOpenModal } from '../../contexts/ModalContext';
 
@@ -73,6 +74,7 @@ export function SettingsModal({
   const [slackCtaVisible, setLocalSlackCtaVisible] = useState(true);
   const [terminalGpuEnabled, setLocalTerminalGpuEnabled] = useState(true);
   const [thumbnailsOn, setLocalThumbnailsOn] = useState(true);
+  const [defaultForgeId, setDefaultForge] = useState(DEFAULT_FORGE.id);
   const [loading, setLoading] = useState(true);
 
   const [projectsRoot, setLocalProjectsRoot] = useState('');
@@ -85,7 +87,7 @@ export function SettingsModal({
     if (!isOpen) return;
     let cancelled = false;
     void (async () => {
-      const [enabled, calHidden, slackHidden, gpuEnabled, thumbnails, root, custom] =
+      const [enabled, calHidden, slackHidden, gpuEnabled, thumbnails, root, custom, forge] =
         await Promise.all([
           getAnalyticsEnabled(),
           getCalendarHidden(),
@@ -94,6 +96,7 @@ export function SettingsModal({
           getThumbnailsEnabled(),
           getProjectsRoot().catch(() => ''),
           isCustomProjectsRoot(),
+          getDefaultForge(),
         ]);
       if (!cancelled) {
         setLocalAnalyticsEnabled(enabled);
@@ -105,6 +108,7 @@ export function SettingsModal({
         setLocalThumbnailsOn(thumbnails !== false);
         setLocalProjectsRoot(root);
         setCustomRoot(custom);
+        setDefaultForge(forge.id);
         setLoading(false);
       }
     })();
@@ -112,6 +116,25 @@ export function SettingsModal({
       cancelled = true;
     };
   }, [isOpen]);
+
+  // Persist immediately and roll the control back if the write fails, so it
+  // never shows a preference that wasn't saved.
+  const handleDefaultForgeChange = useCallback(
+    async (forgeId: string) => {
+      const previous = defaultForgeId;
+      setDefaultForge(forgeId);
+      try {
+        await setDefaultForgeId(forgeId);
+      } catch (e) {
+        setDefaultForge(previous);
+        showToast(
+          `Couldn't save the default host: ${formatCommandError(asCommandError(e))}`,
+          'error'
+        );
+      }
+    },
+    [defaultForgeId, showToast]
+  );
 
   const handleToggle = useCallback(() => {
     const newValue = !analyticsEnabled;
@@ -288,6 +311,26 @@ export function SettingsModal({
                   </button>
                 )}
               </div>
+            </div>
+            <div className="settings-row">
+              <div className="settings-row-info">
+                <span className="settings-row-label">Default host for new repositories</span>
+                <span className="settings-row-description">
+                  Which host is preselected when you create a repository for a new project. Projects
+                  that already have a remote keep the host they are on.
+                </span>
+              </div>
+              <select
+                className="settings-select"
+                value={defaultForgeId}
+                onChange={(e) => void handleDefaultForgeChange(e.target.value)}
+              >
+                {ALL_FORGES.filter((f) => f.hasCli).map((f) => (
+                  <option key={f.id} value={f.id}>
+                    {f.displayName}
+                  </option>
+                ))}
+              </select>
             </div>
             <div className="settings-row">
               <div className="settings-row-info">

@@ -174,3 +174,34 @@ pub async fn set_default_agent_id(agent_id: String) -> Result<(), CommandError> 
     tracing::info!("Default agent set to: {}", agent_id);
     Ok(())
 }
+
+/// The forge preselected when creating a repository for a new project.
+///
+/// `None` means GitHub, matching the behavior before the app knew about more
+/// than one forge.
+#[tauri::command]
+#[tracing::instrument]
+pub async fn get_default_forge_id() -> Option<String> {
+    read_app_state().default_forge_id
+}
+
+/// Set the forge preselected for new repositories.
+///
+/// Rejects an unknown id rather than persisting it: the value is read back into
+/// a UI dropdown, and a stored id nothing matches would leave that control
+/// showing nothing with no way to tell why.
+#[tauri::command]
+#[tracing::instrument]
+pub async fn set_default_forge_id(forge_id: String) -> Result<(), CommandError> {
+    if !crate::forge::ALL_FORGES.iter().any(|f| f.id == forge_id) {
+        return Err(CommandError::Validation {
+            field: "forgeId".to_string(),
+            reason: format!("Unknown forge \"{forge_id}\"."),
+        });
+    }
+    let mut state = read_app_state();
+    state.default_forge_id = Some(forge_id.clone());
+    write_app_state(&state)?;
+    tracing::info!("Default forge set to: {}", forge_id);
+    Ok(())
+}

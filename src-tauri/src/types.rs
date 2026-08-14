@@ -873,6 +873,12 @@ pub struct AppState {
     /// Default AI agent ID (e.g., "claude-code" or "codex"). None falls back to Claude Code.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub default_agent_id: Option<String>,
+    /// Forge preselected when creating a repository for a new project
+    /// (e.g. "gitlab"). None falls back to GitHub, which is what the flow did
+    /// before more than one forge existed. Only affects new repositories;
+    /// existing projects keep whatever their remote points at.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub default_forge_id: Option<String>,
     /// User opted to bring their own agent ("Other" in agent-led onboarding).
     /// Satisfies the at-least-one-agent requirement in setup checks so they
     /// aren't bounced back to onboarding on every launch.

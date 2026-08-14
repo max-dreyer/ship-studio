@@ -342,3 +342,68 @@
 .github-modal .modal-actions button:first-child:hover {
   background: var(--border);
 }
+
+/* ── Moving a project to another host ─────────────────────────────────────
+   The link button gains a chevron that opens a small menu. Positioned
+   relative to the group so the menu tracks the button rather than the
+   toolbar, which scrolls. */
+.github-link-group {
+  position: relative;
+  display: inline-flex;
+  align-items: stretch;
+  gap: 1px;
+}
+
+.github-button.github-link-more {
+  padding: 0 var(--spacing-xs);
+}
+
+/* Sits under the menu and over everything else, so a click anywhere outside
+   closes it. */
+.github-transfer-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: var(--z-dropdown);
+}
+
+.github-transfer-menu {
+  position: absolute;
+  top: calc(100% + var(--spacing-xs));
+  right: 0;
+  z-index: calc(var(--z-dropdown) + 1);
+  min-width: 200px;
+  padding: var(--spacing-xs);
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-md);
+}
+
+.github-transfer-group + .github-transfer-group {
+  margin-top: var(--spacing-xs);
+  padding-top: var(--spacing-xs);
+  border-top: 1px solid var(--border);
+}
+
+.github-transfer-menu button {
+  display: block;
+  width: 100%;
+  padding: var(--spacing-sm) var(--spacing-md);
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-primary);
+  font-size: var(--font-size-sm);
+  text-align: left;
+  cursor: pointer;
+  transition: background var(--transition);
+}
+
+.github-transfer-menu button:hover {
+  background: var(--bg-tertiary);
+}
+
+.github-transfer-menu button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}

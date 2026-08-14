@@ -20,6 +20,37 @@
 
 use super::{ForgeConfig, ForgeTransport};
 
+/// Arguments for creating an empty repository on the forge *without* touching
+/// the local directory.
+///
+/// This is what moving or mirroring an existing project needs: the project
+/// already has a remote, so [`create_args`]'s `--source .` would fail on
+/// GitHub ("remote origin already exists") and glab would try to set up the
+/// local repo again. The caller wires the remote itself afterwards.
+///
+/// Verified against gh 2.x and glab 1.113.0: omitting `--source`/`--clone`
+/// makes `gh repo create` a pure remote operation, and glab needs
+/// `--skipGitInit` to say the same thing.
+pub fn create_bare_args(forge: &ForgeConfig, repo_name: &str, is_private: bool) -> Vec<String> {
+    let visibility = if is_private { "--private" } else { "--public" };
+    match forge.id {
+        "gitlab" => vec![
+            "repo".into(),
+            "create".into(),
+            "--name".into(),
+            repo_name.into(),
+            visibility.into(),
+            "--skipGitInit".into(),
+        ],
+        _ => vec![
+            "repo".into(),
+            "create".into(),
+            repo_name.into(),
+            visibility.into(),
+        ],
+    }
+}
+
 /// Arguments for creating a repository from the current directory.
 pub fn create_args(forge: &ForgeConfig, repo_name: &str, is_private: bool) -> Vec<String> {
     match forge.id {
@@ -197,6 +228,28 @@ mod tests {
         assert_eq!(create_label(&GITHUB), "gh repo create");
         assert_eq!(create_label(&GITLAB), "glab repo create");
         assert_eq!(view_label(&GITLAB), "glab repo view");
+    }
+
+    #[test]
+    fn bare_create_leaves_the_local_directory_alone() {
+        // Moving an existing project can't use --source: origin already exists,
+        // and gh fails outright on that.
+        let gh = create_bare_args(&GITHUB, "my-app", true);
+        assert!(!gh.contains(&"--source".to_string()));
+        assert!(!gh.contains(&"--push".to_string()));
+        assert!(!gh.contains(&"--clone".to_string()));
+
+        // glab needs to be told explicitly, or it sets the local repo up again.
+        let glab = create_bare_args(&GITLAB, "my-app", true);
+        assert!(glab.contains(&"--skipGitInit".to_string()));
+        assert!(!glab.contains(&"--remoteName".to_string()));
+    }
+
+    #[test]
+    fn bare_create_still_states_visibility_explicitly() {
+        assert!(create_bare_args(&GITLAB, "a", true).contains(&"--private".to_string()));
+        assert!(create_bare_args(&GITLAB, "a", false).contains(&"--public".to_string()));
+        assert!(create_bare_args(&GITHUB, "a", true).contains(&"--private".to_string()));
     }
 
     #[test]

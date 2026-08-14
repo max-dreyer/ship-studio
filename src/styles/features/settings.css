@@ -229,3 +229,22 @@
   background: var(--text-bright);
   box-shadow: 0 1px 3px var(--overlay-30);
 }
+
+/* Dropdown inside a settings row (default host for new repositories).
+   Sized so it doesn't stretch the row the way a full-width control would. */
+.settings-select {
+  flex-shrink: 0;
+  min-width: 140px;
+  padding: var(--spacing-sm) var(--spacing-md);
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text-primary);
+  font-size: var(--font-size-sm);
+  cursor: pointer;
+}
+
+.settings-select:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
