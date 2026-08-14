@@ -1660,6 +1660,29 @@ impl ConnectService {
         }
     }
 
+    /// Extra login args needed to keep an isolated workspace's credential
+    /// inside that workspace.
+    ///
+    /// `gh`, `codex` and `opencode` write their credential into the config dir
+    /// we pin per workspace (`gh` uses `hosts.yml`), so pinning the dir is
+    /// enough. `glab` does not: it stores the token in the OS keyring under the
+    /// key `glab:<hostname>`, which has no workspace component, so two
+    /// workspaces signing into gitlab.com would silently share one token — and
+    /// a push could go out as the wrong account.
+    ///
+    /// `--insecure-storage` moves the token into the workspace's own
+    /// `config.yml`, which lives in a directory we create with mode 0700. That
+    /// is the same shape as gh's `hosts.yml`, and the trade is deliberate:
+    /// a file only this user can read, versus a credential that belongs to the
+    /// wrong workspace. The Default workspace has nothing to isolate from, so
+    /// it keeps the keyring.
+    fn isolation_args(self, account_id: &str) -> &'static [&'static str] {
+        match self {
+            Self::Gitlab if account_id != DEFAULT_ACCOUNT_ID => &["--insecure-storage"],
+            _ => &[],
+        }
+    }
+
     /// Whether this service's CLI pauses on a "Press Enter to open…" prompt that
     /// we can auto-advance so the browser opens without a manual keystroke.
     fn auto_enter(self) -> bool {
@@ -1747,6 +1770,9 @@ pub fn workspace_connect_start(
 
     let mut cmd = CommandBuilder::new(&binary);
     for arg in svc.args() {
+        cmd.arg(arg);
+    }
+    for arg in svc.isolation_args(&id) {
         cmd.arg(arg);
     }
     cmd.cwd(dirs::home_dir().unwrap_or_default());
@@ -2095,6 +2121,42 @@ mod tests {
         assert_eq!(ConnectService::Codex.args(), &["login"]);
         assert_eq!(ConnectService::Opencode.binary(), "opencode");
         assert_eq!(ConnectService::Opencode.args(), &["auth", "login"]);
+        assert_eq!(ConnectService::Gitlab.binary(), "glab");
+        assert!(ConnectService::Gitlab
+            .args()
+            .starts_with(&["auth", "login"]));
+    }
+
+    #[test]
+    fn gitlab_keeps_an_isolated_workspaces_token_out_of_the_shared_keyring() {
+        // glab's keyring key is "glab:<hostname>" with no workspace component,
+        // so two isolated workspaces on gitlab.com would share one token and a
+        // push could go out as the wrong account. --insecure-storage puts it in
+        // the workspace's own config dir (mode 0700) instead.
+        assert_eq!(
+            ConnectService::Gitlab.isolation_args("some-workspace"),
+            &["--insecure-storage"]
+        );
+    }
+
+    #[test]
+    fn the_default_workspace_keeps_the_os_keyring() {
+        // Nothing to isolate from there, so don't downgrade the storage.
+        assert!(ConnectService::Gitlab
+            .isolation_args(DEFAULT_ACCOUNT_ID)
+            .is_empty());
+    }
+
+    #[test]
+    fn services_that_write_into_their_config_dir_need_no_extra_args() {
+        // gh writes hosts.yml into GH_CONFIG_DIR, so pinning the dir isolates it.
+        for svc in [
+            ConnectService::Github,
+            ConnectService::Codex,
+            ConnectService::Opencode,
+        ] {
+            assert!(svc.isolation_args("some-workspace").is_empty());
+        }
     }
 
     #[test]
