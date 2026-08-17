@@ -393,9 +393,55 @@ export interface ProcessErrorInfo {
  * "Process exited with code N" messages are mapped to actionable advice;
  * callers can extend the exit-code map for flow-specific codes.
  */
+/**
+ * Per-forge wording for the credential-setup advice below.
+ *
+ * The advice has to name the right host, the right key page and the right CLI,
+ * or it sends the user to fix a service that wasn't involved: telling a failed
+ * GitLab clone to run `gh config set git_protocol https` changes nothing, which
+ * is exactly what happened before this existed.
+ */
+interface ForgeCredentialHints {
+  name: string;
+  /** Where the user adds an SSH key for their account. */
+  keysUrl: string;
+  /** Command that switches the CLI's git protocol to HTTPS. */
+  httpsCommand: string;
+  /** Commands that give git a working HTTPS credential for this forge. */
+  credentialCommands: string;
+}
+
+function forgeCredentialHints(forgeId: string): ForgeCredentialHints {
+  if (forgeId === 'gitlab') {
+    return {
+      name: 'GitLab',
+      keysUrl: 'gitlab.com/-/user_settings/ssh_keys',
+      // `--host` is not optional: glab stores git_protocol per host, and the
+      // per-host value overrides the global one — a bare `glab config set
+      // git_protocol https` looks like it worked and changes nothing. glab also
+      // defaults to ssh (unlike gh), so this is the common failure for anyone
+      // without an SSH key.
+      httpsCommand: 'glab config set git_protocol https --host gitlab.com',
+      credentialCommands: '`glab auth login --git-protocol https`',
+    };
+  }
+  return {
+    name: 'GitHub',
+    keysUrl: 'github.com/settings/keys',
+    httpsCommand: 'gh config set git_protocol https',
+    credentialCommands: '`gh auth login`, then `gh auth setup-git`',
+  };
+}
+
+/**
+ * @param forgeId - Which forge the failed operation talked to ("github" |
+ *   "gitlab"). Only affects the credential-setup advice; defaults to GitHub,
+ *   which every pre-forge call site means.
+ */
 export function describeProcessError(
   err: unknown,
-  extraExitCodeMessages?: Record<number, string>
+  extraExitCodeMessages?: Record<number, string>,
+  forgeId = 'github'
 ): ProcessErrorInfo {
   const msg =
     err instanceof Error
@@ -404,6 +450,7 @@ export function describeProcessError(
         ? err
         : formatCommandError(asCommandError(err));
   const lower = msg.toLowerCase();
+  const forge = forgeCredentialHints(forgeId);
   // Git-over-SSH auth failure. `gh repo clone` wraps git and exits with its
   // own code 1, so the exit-code-128 mapping below never matches — the raw
   // shell dump ("Permission denied (publickey)…") reached the user instead
@@ -416,8 +463,7 @@ export function describeProcessError(
   ) {
     return {
       expected: true,
-      message:
-        "GitHub couldn't authenticate this computer over SSH, so the repository couldn't be reached. Either set up an SSH key for your GitHub account (github.com/settings/keys), or switch to HTTPS by running `gh config set git_protocol https` in a terminal, then try again.",
+      message: `${forge.name} couldn't authenticate this computer over SSH, so the repository couldn't be reached. Either set up an SSH key for your ${forge.name} account (${forge.keysUrl}), or switch to HTTPS by running \`${forge.httpsCommand}\` in a terminal, then try again.`,
     };
   }
   // Git-over-HTTPS credential failure: no usable credential helper, so git
@@ -431,8 +477,7 @@ export function describeProcessError(
   ) {
     return {
       expected: true,
-      message:
-        "GitHub couldn't authenticate this computer over HTTPS — git needed to ask for a password, and there's no saved credential to use. Open a terminal and run `gh auth login`, then `gh auth setup-git`, and try again.",
+      message: `${forge.name} couldn't authenticate this computer over HTTPS — git needed to ask for a password, and there's no saved credential to use. Open a terminal and run ${forge.credentialCommands}, and try again.`,
     };
   }
   // Windows path-length limit during clone checkout: the download itself

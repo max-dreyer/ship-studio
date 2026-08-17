@@ -122,6 +122,30 @@ describe('friendlyProcessError', () => {
     expect(info.message).not.toContain('Cloning into');
   });
 
+  it('points a failed GitLab clone at glab, not gh', () => {
+    // glab defaults to ssh, so this is the common failure for a GitLab import
+    // on a machine without an SSH key. Advising `gh config set …` would change
+    // nothing — the user follows it and the clone fails again.
+    const raw =
+      "Process exited with code 1\n\nCloning into 'pb-crm'...\ngit@gitlab.com: Permission denied (publickey).\nfatal: Could not read from remote repository.";
+    const info = describeProcessError(raw, undefined, 'gitlab');
+    expect(info.expected).toBe(true);
+    expect(info.message).toContain('GitLab');
+    expect(info.message).not.toContain('GitHub');
+    // --host matters: glab stores git_protocol per host and the per-host value
+    // overrides the global one, so advice without it looks like it worked.
+    expect(info.message).toContain('glab config set git_protocol https --host gitlab.com');
+    expect(info.message).toContain('gitlab.com/-/user_settings/ssh_keys');
+  });
+
+  it('points a GitLab HTTPS credential failure at glab auth login', () => {
+    const raw =
+      "fatal: could not read Password for 'https://user@gitlab.com': Device not configured";
+    const info = describeProcessError(raw, undefined, 'gitlab');
+    expect(info.message).toContain('glab auth login --git-protocol https');
+    expect(info.message).not.toContain('gh auth');
+  });
+
   it('maps npm E401 registry auth failures to `npm login` guidance (issue #505)', () => {
     const raw =
       'Process exited with code 1\n\nnpm warn deprecated something\nnpm error code E401\nnpm error Incorrect or missing password.\nnpm error To correct this please try logging in again with:\nnpm error   npm login';
