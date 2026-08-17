@@ -24,7 +24,12 @@ import { openUrl } from '@tauri-apps/plugin-opener';
 import { Button } from '../primitives/Button';
 import { ModalFrame } from '../primitives/ModalFrame';
 import { useOptionalToast } from '../../contexts/ToastContext';
-import { humanizeGitError } from '../../lib/errors';
+import {
+  asCommandError,
+  formatCommandError,
+  humanizeGitError,
+  isRecognizedGitFailure,
+} from '../../lib/errors';
 import { logger } from '../../lib/logger';
 import {
   ALL_FORGES,
@@ -66,7 +71,8 @@ export function GitHubButton({
   onModalClose,
 }: GitHubButtonProps) {
   const { showToast } = useOptionalToast();
-  const onToast = (message: string, type?: 'success' | 'error') => showToast(message, type);
+  const onToast = (message: string, type?: 'success' | 'error' | 'info') =>
+    showToast(message, type);
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [repoName, setRepoName] = useState(projectName);
   // Which forge to create on. Chosen, not detected: the project has no remote
@@ -361,7 +367,22 @@ export function GitHubButton({
                     : transferMode === 'mirror'
                       ? 'mirror the project'
                       : 'create repository';
-                onToast?.(`Failed to ${verb}: ${detail}`, 'error');
+                if (isRecognizedGitFailure(e)) {
+                  // A known, by-design refusal (name collision, auth,
+                  // network, …) — the backend already classified these
+                  // Expected and skipped its report; an unconditional 'error'
+                  // toast would re-report the same incident through the toast
+                  // telemetry pipeline (issues #666/#667, same pattern as
+                  // SubmitReviewModal / issue #538).
+                  logger.warn('[GitHubButton] Repo action refused for a recognized reason', {
+                    transferMode,
+                    forge: targetForgeId,
+                    error: formatCommandError(asCommandError(e)),
+                  });
+                  onToast?.(`Failed to ${verb}: ${detail}`, 'info');
+                } else {
+                  onToast?.(`Failed to ${verb}: ${detail}`, 'error');
+                }
                 setIsLoading(false);
                 setIsCreatingRepo(false);
               }

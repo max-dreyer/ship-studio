@@ -50,7 +50,12 @@ import { trackEvent, trackError } from '../../lib/analytics';
 import { ModalFrame } from '../primitives/ModalFrame';
 import { Button } from '../primitives/Button';
 import { useOptionalToast } from '../../contexts/ToastContext';
-import { asCommandError, formatCommandError, humanizeGitError } from '../../lib/errors';
+import {
+  asCommandError,
+  formatCommandError,
+  humanizeGitError,
+  isRecognizedGitFailure,
+} from '../../lib/errors';
 import { logger } from '../../lib/logger';
 
 /** A Tauri-rejected `CommandError` is an object — `String(err)` renders it as
@@ -312,14 +317,23 @@ export function BranchesTab({
             return;
           }
         }
-        onToast?.(humanizeGitError(raw, { branch: branchName }), 'error');
+        // Recognized, by-design refusals ride the info channel — an 'error'
+        // toast would re-report a failure the backend already classified
+        // Expected (issue #690, same pattern as useBranchManagement).
+        onToast?.(
+          humanizeGitError(raw, { branch: branchName }),
+          isRecognizedGitFailure(raw, { branch: branchName }) ? 'info' : 'error'
+        );
         // The branch is gone (deleted/renamed elsewhere) but still showing in a
         // stale list — refresh to drop the phantom entry.
         if (isBranchGoneError(raw)) onRefresh();
       }
     } catch (e) {
       trackError('branch_switch', e, 'Workspace');
-      onToast?.(humanizeGitError(e, { branch: branchName }), 'error');
+      onToast?.(
+        humanizeGitError(e, { branch: branchName }),
+        isRecognizedGitFailure(e, { branch: branchName }) ? 'info' : 'error'
+      );
       if (isBranchGoneError(errText(e))) onRefresh();
     } finally {
       setSwitchingBranch(null);
@@ -397,7 +411,10 @@ export function BranchesTab({
       onRefresh();
     } catch (e) {
       trackError('branch_publish', e, 'Workspace');
-      onToast?.(humanizeGitError(e, { branch: branchName }), 'error');
+      onToast?.(
+        humanizeGitError(e, { branch: branchName }),
+        isRecognizedGitFailure(e, { branch: branchName }) ? 'info' : 'error'
+      );
       // Same recovery as handleSwitch: the ref is gone but a stale entry is
       // still listed — refresh to drop the phantom (issue #334).
       if (isBranchGoneError(e)) onRefresh();
@@ -419,7 +436,10 @@ export function BranchesTab({
       onRefresh();
     } catch (e) {
       trackError('branch_delete', e, 'Workspace');
-      onToast?.(humanizeGitError(e, { branch: branchName }), 'error');
+      onToast?.(
+        humanizeGitError(e, { branch: branchName }),
+        isRecognizedGitFailure(e, { branch: branchName }) ? 'info' : 'error'
+      );
       if (isBranchGoneError(e)) onRefresh();
     } finally {
       setDeletingBranch(null);
@@ -504,7 +524,7 @@ export function BranchesTab({
       onRefresh();
     } catch (e) {
       trackError('branch_create', e, 'Workspace');
-      onToast?.(humanizeGitError(e), 'error');
+      onToast?.(humanizeGitError(e), isRecognizedGitFailure(e) ? 'info' : 'error');
       // e.g. the chosen base branch was deleted elsewhere — refresh the list.
       if (isBranchGoneError(e)) onRefresh();
     } finally {

@@ -524,6 +524,10 @@ where
 /// - macOS TCC denial (`Unable to read current working directory: Operation
 ///   not permitted`) — the sandbox refused the app read access to the project
 ///   folder, so spawned git can't even resolve its cwd (issue #546).
+/// - git itself running out of memory (`fatal: Out of memory, malloc failed
+///   (tried to allocate N bytes)`) — the host machine under memory pressure
+///   at the moment git spawned; cross-platform, first seen on Windows
+///   (issue #668).
 pub fn git_environment_gap(stderr: &str) -> Option<crate::errors::CommandError> {
     if stderr.contains("You have not agreed to the Xcode license agreements") {
         return Some(crate::errors::CommandError::expected(
@@ -546,6 +550,21 @@ pub fn git_environment_gap(stderr: &str) -> Option<crate::errors::CommandError> 
             "Ship Studio isn't allowed to read this project's folder — macOS blocked access. \
              Grant access in System Settings → Privacy & Security → Files & Folders (or give \
              Ship Studio Full Disk Access), then try again.",
+        ));
+    }
+    // git's allocator giving up ("fatal: Out of memory, malloc failed (tried
+    // to allocate N bytes)" — also "realloc failed" / "mmap failed" variants).
+    // The machine is out of memory at the moment git runs, which no app-side
+    // fix can address (issue #668).
+    let lower = stderr.to_lowercase();
+    if lower.contains("out of memory")
+        || lower.contains("malloc failed")
+        || lower.contains("realloc failed")
+    {
+        return Some(crate::errors::CommandError::expected(
+            "Git ran out of memory while working on this project — this computer is low on \
+             available RAM right now. Close some other applications to free up memory, then \
+             try again.",
         ));
     }
     None
@@ -1239,6 +1258,155 @@ pub fn validate_workspace_path(project_path: &str) -> Result<std::path::PathBuf,
     Ok(resolve_workspace_path(&root))
 }
 
+/// Recursively clear read-only attributes so Windows will delete the tree.
+/// Never follows symlinks — see the body comment.
+fn make_writable_recursive(path: &std::path::Path) -> std::io::Result<()> {
+    let metadata = std::fs::symlink_metadata(path)?;
+
+    // Never follow symlinks. A project can link outside itself — pnpm's
+    // node_modules links into the machine-global content-addressable store,
+    // whose files are deliberately read-only and shared by every project —
+    // and chmod-ing through the link would mutate files the delete below
+    // never touches. remove_dir_all removes the link itself, not its target,
+    // so the link needs no permission help either.
+    if metadata.file_type().is_symlink() {
+        return Ok(());
+    }
+
+    if metadata.file_type().is_dir() {
+        for entry in std::fs::read_dir(path)? {
+            make_writable_recursive(&entry?.path())?;
+        }
+    }
+
+    #[cfg(windows)]
+    {
+        let mut permissions = metadata.permissions();
+        if permissions.readonly() {
+            permissions.set_readonly(false);
+            std::fs::set_permissions(path, permissions)?;
+        }
+    }
+    #[cfg(unix)]
+    {
+        // Owner-write only — Permissions::set_readonly(false) would make the
+        // file world-writable on Unix (clippy::permissions_set_readonly_false).
+        use std::os::unix::fs::PermissionsExt;
+        let mode = metadata.permissions().mode();
+        if mode & 0o200 == 0 {
+            std::fs::set_permissions(path, std::fs::Permissions::from_mode(mode | 0o200))?;
+        }
+    }
+    Ok(())
+}
+
+/// Whether a failed filesystem delete/rename is worth retrying after a wait.
+///
+/// ERROR_SHARING_VIOLATION (32) / ERROR_LOCK_VIOLATION (33) are Windows'
+/// "file open by another process" errors — the transient locks (antivirus,
+/// Search indexer, a just-killed PTY's children winding down) this retry
+/// exists for. ERROR_ACCESS_DENIED (5) covers in-use executables.
+pub fn is_retryable_delete_error(e: &std::io::Error) -> bool {
+    matches!(e.raw_os_error(), Some(5) | Some(32) | Some(33))
+        || e.kind() == std::io::ErrorKind::PermissionDenied
+}
+
+/// Run a filesystem operation, retrying on transient Windows lock errors.
+///
+/// Backoff schedule totalling ~8s: field reports show antivirus / Search
+/// indexer locks routinely outlasting a flat ~1s budget (10 × 100ms), still
+/// surfacing "os error 32" to the user (issue #253). Growing sleeps keep the
+/// common quick-release case fast while giving a slow scanner time to let go.
+fn retry_on_transient_locks<F>(mut op: F) -> std::io::Result<()>
+where
+    F: FnMut() -> std::io::Result<()>,
+{
+    let mut delay = std::time::Duration::from_millis(100);
+    let mut retries = 10;
+    loop {
+        match op() {
+            Ok(()) => return Ok(()),
+            Err(e) if retries > 0 && is_retryable_delete_error(&e) => {
+                retries -= 1;
+                std::thread::sleep(delay);
+                delay = (delay * 2).min(std::time::Duration::from_secs(1));
+            }
+            Err(e) => return Err(e),
+        }
+    }
+}
+
+/// Blocking delete with read-only clearing and lock retries. Call from
+/// `spawn_blocking` — the chmod walk and retry sleeps can hold a thread for
+/// seconds on a large node_modules.
+pub fn remove_dir_all_robust(path: &std::path::Path) -> std::io::Result<()> {
+    if !path.exists() {
+        return Ok(());
+    }
+
+    // Fast path first: on a healthy tree remove_dir_all just works, and the
+    // chmod walk below stats every file — seconds of pure overhead on a large
+    // node_modules if paid unconditionally.
+    let first_err = match std::fs::remove_dir_all(path) {
+        Ok(()) => return Ok(()),
+        Err(e) => e,
+    };
+    tracing::info!(
+        "remove_dir_all failed ({}), retrying with read-only clearing: {}",
+        path.display(),
+        first_err
+    );
+
+    // Clear read-only attributes (Windows refuses to delete read-only files;
+    // git objects and some packages ship them). Best-effort: a partial chmod
+    // still lets most of the tree go.
+    if let Err(e) = make_writable_recursive(path) {
+        tracing::warn!(
+            "Failed to set write permissions recursively on {}: {}",
+            path.display(),
+            e
+        );
+    }
+
+    retry_on_transient_locks(|| std::fs::remove_dir_all(path))
+}
+
+/// Blocking single-file delete with the same read-only clearing and lock
+/// retries as [`remove_dir_all_robust`] — on Windows a file open in another
+/// process (antivirus, Search indexer) fails an unretried `fs::remove_file`
+/// with "Access is denied (os error 5)" / "os error 32" (issue #696). Call
+/// from `spawn_blocking`; the retry sleeps can hold a thread for seconds.
+///
+/// Unlike `remove_dir_all_robust`, a missing file is an error (surfaced from
+/// the underlying `remove_file`) so callers keep their existing semantics.
+pub fn remove_file_robust(path: &std::path::Path) -> std::io::Result<()> {
+    let first_err = match std::fs::remove_file(path) {
+        Ok(()) => return Ok(()),
+        Err(e) => e,
+    };
+    // NotFound etc. are not helped by chmod or waiting — fail immediately.
+    if !is_retryable_delete_error(&first_err) {
+        return Err(first_err);
+    }
+    tracing::info!(
+        "remove_file failed ({}), retrying with read-only clearing: {}",
+        path.display(),
+        first_err
+    );
+
+    // Windows also refuses to delete read-only files with "access denied";
+    // clear the attribute best-effort before retrying. (No-op for symlinks.)
+    if let Err(e) = make_writable_recursive(path) {
+        tracing::warn!(
+            "Failed to clear read-only attribute on {}: {}",
+            path.display(),
+            e
+        );
+    }
+
+    retry_on_transient_locks(|| std::fs::remove_file(path))
+}
+
 /// Check if Homebrew is installed
 pub fn check_homebrew() -> (bool, Option<String>) {
     let paths = [
@@ -1698,6 +1866,24 @@ mod tests {
             let err = git_environment_gap(stderr).expect("must classify");
             assert!(matches!(err, crate::errors::CommandError::Expected { .. }));
             assert!(err.to_string().contains("Privacy & Security"));
+        }
+
+        /// Issue #668: git's allocator failing on a memory-starved machine
+        /// (first seen on Windows) — an environment gap with close-other-apps
+        /// guidance, not a raw fatal that pages telemetry.
+        #[test]
+        fn classifies_git_oom_as_expected() {
+            let stderr = "fatal: Out of memory, malloc failed (tried to allocate 1048576 bytes)";
+            let err = git_environment_gap(stderr).expect("must classify");
+            assert!(matches!(err, crate::errors::CommandError::Expected { .. }));
+            let msg = err.to_string();
+            assert!(msg.contains("memory"), "got: {msg}");
+            assert!(
+                msg.contains("Close some other applications"),
+                "message must carry the remediation, got: {msg}"
+            );
+            // The realloc variant git emits from strbuf growth is covered too.
+            assert!(git_environment_gap("fatal: Out of memory, realloc failed").is_some());
         }
 
         #[test]
@@ -2186,6 +2372,127 @@ mod tests {
                 result.is_err(),
                 "symlinked final component must be rejected, got {result:?}"
             );
+        }
+    }
+
+    mod robust_delete {
+        use super::*;
+
+        // The #559/#253 shape: Windows sharing/lock violations are the
+        // transient states the rename/delete retry loops exist for; anything
+        // else must fail immediately.
+        #[test]
+        fn retryable_delete_error_matches_windows_lock_codes() {
+            assert!(is_retryable_delete_error(
+                &std::io::Error::from_raw_os_error(32) // ERROR_SHARING_VIOLATION
+            ));
+            assert!(is_retryable_delete_error(
+                &std::io::Error::from_raw_os_error(33) // ERROR_LOCK_VIOLATION
+            ));
+            assert!(is_retryable_delete_error(
+                &std::io::Error::from_raw_os_error(5) // ERROR_ACCESS_DENIED
+            ));
+            assert!(is_retryable_delete_error(&std::io::Error::new(
+                std::io::ErrorKind::PermissionDenied,
+                "denied"
+            )));
+            assert!(!is_retryable_delete_error(&std::io::Error::new(
+                std::io::ErrorKind::NotFound,
+                "gone"
+            )));
+        }
+
+        #[test]
+        fn remove_dir_all_robust_deletes_readonly_files() {
+            let tmp = tempfile::tempdir().unwrap();
+            let file_path = tmp.path().join("readonly_file.txt");
+            std::fs::write(&file_path, "test content").unwrap();
+
+            // Set the file to read-only
+            let mut perms = std::fs::metadata(&file_path).unwrap().permissions();
+            perms.set_readonly(true);
+            std::fs::set_permissions(&file_path, perms).unwrap();
+
+            // Verify it is indeed read-only
+            assert!(std::fs::metadata(&file_path)
+                .unwrap()
+                .permissions()
+                .readonly());
+
+            // Use remove_dir_all_robust to delete the directory tree
+            remove_dir_all_robust(tmp.path()).unwrap();
+
+            // Verify the directory no longer exists
+            assert!(!tmp.path().exists());
+        }
+
+        #[cfg(unix)]
+        #[test]
+        fn remove_dir_all_robust_never_chmods_through_symlinks() {
+            // pnpm-style layout: the project links to a shared store whose files
+            // are read-only on purpose. Deleting the project must remove the link
+            // itself without touching the store's permissions.
+            let store = tempfile::tempdir().unwrap();
+            let store_file = store.path().join("shared.txt");
+            std::fs::write(&store_file, "shared").unwrap();
+            let mut perms = std::fs::metadata(&store_file).unwrap().permissions();
+            perms.set_readonly(true);
+            std::fs::set_permissions(&store_file, perms).unwrap();
+
+            let project = tempfile::tempdir().unwrap();
+            std::os::unix::fs::symlink(store.path(), project.path().join("node_modules_link"))
+                .unwrap();
+
+            remove_dir_all_robust(project.path()).unwrap();
+
+            assert!(!project.path().exists());
+            assert!(
+                store_file.exists(),
+                "symlink target must survive the delete"
+            );
+            assert!(
+                std::fs::metadata(&store_file)
+                    .unwrap()
+                    .permissions()
+                    .readonly(),
+                "store file must stay read-only — chmod escaped through the symlink"
+            );
+        }
+
+        // The #696 shape: a read-only asset file (checked-out git object,
+        // Windows attribute) must delete after the attribute is cleared.
+        #[test]
+        fn remove_file_robust_deletes_readonly_file() {
+            let tmp = tempfile::tempdir().unwrap();
+            let file_path = tmp.path().join("readonly_asset.png");
+            std::fs::write(&file_path, "png-bytes").unwrap();
+
+            let mut perms = std::fs::metadata(&file_path).unwrap().permissions();
+            perms.set_readonly(true);
+            std::fs::set_permissions(&file_path, perms).unwrap();
+
+            remove_file_robust(&file_path).unwrap();
+
+            assert!(!file_path.exists());
+        }
+
+        #[test]
+        fn remove_file_robust_deletes_plain_file() {
+            let tmp = tempfile::tempdir().unwrap();
+            let file_path = tmp.path().join("asset.txt");
+            std::fs::write(&file_path, "hi").unwrap();
+            remove_file_robust(&file_path).unwrap();
+            assert!(!file_path.exists());
+        }
+
+        #[test]
+        fn remove_file_robust_surfaces_not_found_immediately() {
+            let tmp = tempfile::tempdir().unwrap();
+            let missing = tmp.path().join("never-existed.txt");
+            let err = remove_file_robust(&missing).unwrap_err();
+            // NotFound is not a lock — must not burn ~8s of retries, and the
+            // caller keeps remove_file's missing-file error semantics.
+            assert_eq!(err.kind(), std::io::ErrorKind::NotFound);
         }
     }
 }

@@ -12,7 +12,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { trackError } from '../lib/analytics';
-import { asCommandError, formatCommandError, friendlyProcessError } from '../lib/errors';
+import { describeAccountsLoadError, friendlyProcessError } from '../lib/errors';
 import { getForgeById } from '../lib/forge';
 import {
   checkForgeCliStatus,
@@ -91,10 +91,7 @@ export function useForgeImportAccounts(
         return;
       }
       trackError('forge_accounts_load', err, 'Dashboard');
-      setError(
-        `Couldn't load your ${forge.displayName} accounts: ${formatCommandError(asCommandError(err))}. ` +
-          `Try signing out and back into ${forge.displayName}.`
-      );
+      setError(describeAccountsLoadError(err, forge.displayName));
     } finally {
       setLoading(false);
     }

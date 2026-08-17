@@ -69,6 +69,48 @@ export interface GitErrorContext {
 }
 
 /**
+ * Wording (lowercased substrings) of the friendly messages the BACKEND already
+ * authored for recognized git/GitHub failures — `CommandError::expected(...)`
+ * strings in `src-tauri/src/commands/github.rs` (gh_network_error,
+ * gh_tls_error, gh_server_error, gh_malformed_request_error, gh_config_error,
+ * gh_crash_error, plus the gh timeout mapping) and
+ * `src-tauri/src/commands/git/branches.rs` (vanished base ref). Expected
+ * serializes identically to Other across IPC, so the tag is gone by the time
+ * the frontend sees the error — the wording itself is the only signal. Keep
+ * these in sync with the Rust strings byte-for-byte.
+ *
+ * Without this list, {@link humanizeGitError} returns these already-humanized
+ * messages unchanged and {@link isRecognizedGitFailure}'s inequality test
+ * misreads "unchanged" as "unrecognized", routing failures the backend
+ * deliberately kept out of telemetry straight back into the error-toast
+ * channels that auto-file bug reports (issue #687).
+ */
+const BACKEND_HUMANIZED_GIT_PHRASES = [
+  // gh_network_error / the gh timeout → Expected mapping (issues #375, #686)
+  "couldn't reach github",
+  'check your internet connection',
+  // gh_tls_error (issue #658)
+  "secure connection couldn't be verified",
+  // gh_server_error / gh_malformed_request_error (issues #627, #602)
+  "github's api is temporarily unavailable",
+  "github couldn't process the request",
+  // gh_config_error (issue #631)
+  "can't read its own settings",
+  // gh_crash_error (issue #610)
+  'the github cli (gh) crashed',
+  "couldn't start because the system is low on memory",
+  // create_branch's vanished base ref (issue #692)
+  'no longer exists on github',
+];
+
+/** True when a message is one the backend already humanized (see
+ *  {@link BACKEND_HUMANIZED_GIT_PHRASES}). */
+function isBackendHumanizedGitMessage(message: string): boolean {
+  const m = message.toLowerCase();
+  return BACKEND_HUMANIZED_GIT_PHRASES.some((phrase) => m.includes(phrase));
+}
+
+/**
  * Turn a raw git/GitHub error into a plain-language message a non-git-expert can
  * act on. Recognizes the common failures (empty branch, merge conflict, out of
  * date, auth, network, protected branch, existing PR, unsaved changes) and falls
@@ -108,8 +150,11 @@ export function humanizeGitError(value: unknown, ctx: GitErrorContext = {}): str
   // GitHub" — advice that can't fix a file the OS won't let gh read
   // (issue #631).
   if (
-    (m.includes('failed to read configuration') || m.includes('failed to load config')) &&
-    m.includes('permission denied')
+    // The backend's own friendly wording for this state (gh_config_error,
+    // issue #687) as well as gh's raw stderr.
+    m.includes("can't read its own settings") ||
+    ((m.includes('failed to read configuration') || m.includes('failed to load config')) &&
+      m.includes('permission denied'))
   ) {
     return `The GitHub CLI (gh) can't read its own settings because of a file-permissions problem on this computer — this isn't a GitHub sign-in issue. Open a terminal and run \`sudo chown -R $(whoami) ~/.config/gh\`, then try again.`;
   }
@@ -135,7 +180,13 @@ export function humanizeGitError(value: unknown, ctx: GitErrorContext = {}): str
   // Must be checked BEFORE the generic network branch: "check your internet
   // connection" can't fix a trust chain (issue #658, mirroring gh_tls_error
   // in src-tauri/src/commands/github.rs).
-  if (m.includes('failed to verify certificate') || m.includes('x509:')) {
+  if (
+    m.includes('failed to verify certificate') ||
+    m.includes('x509:') ||
+    // The backend's own friendly wording for this state (gh_tls_error,
+    // issue #687).
+    m.includes("secure connection couldn't be verified")
+  ) {
     return `GitHub's secure connection couldn't be verified. This usually means a corporate proxy, VPN, or antivirus is inspecting HTTPS traffic on this computer, or the system's certificate store is out of date. Install your proxy's certificate or update your system, then try again.`;
   }
 
@@ -156,7 +207,12 @@ export function humanizeGitError(value: unknown, ctx: GitErrorContext = {}): str
     // false-positive on ordinary words like "thereof" (issues #434/#642,
     // mirroring gh_network_error in src-tauri/src/commands/github.rs).
     m.includes('unexpected eof') ||
-    /:\s*eof\s*$/m.test(m)
+    /:\s*eof\s*$/m.test(m) ||
+    // The backend's own friendly wording (gh_network_error / the gh timeout
+    // mapping, issues #687/#686) — and gh's raw top-level DNS-failure output,
+    // which also says "check your internet connection" (issue #473).
+    m.includes("couldn't reach github") ||
+    m.includes('check your internet connection')
   ) {
     return `Couldn't reach GitHub. Check your internet connection and try again.`;
   }
@@ -164,6 +220,16 @@ export function humanizeGitError(value: unknown, ctx: GitErrorContext = {}): str
   // Branch protection blocks a direct push.
   if (m.includes('protected branch') || m.includes('branch protection') || m.includes('gh006')) {
     return `${base} is protected, so changes can't be pushed to it directly. Open a pull request instead.`;
+  }
+
+  // Creating a repo under a name the account already uses — a routine,
+  // user-correctable collision the backend deliberately refuses with friendly
+  // wording (issue #279; gh's raw phrasing is "Name already exists on this
+  // account"). Recognizing it here keeps the create-repo toast off the
+  // error/telemetry channel (issues #666/#667).
+  if (m.includes('already exists on this account')) {
+    const name = raw.match(/named "([^"]+)"/)?.[1];
+    return `A repository named ${name ? `"${name}"` : 'that'} already exists on this GitHub account. Choose a different name.`;
   }
 
   // A PR is already open for this branch.
@@ -181,6 +247,25 @@ export function humanizeGitError(value: unknown, ctx: GitErrorContext = {}): str
   // "is already checked out at …") — cover both (issue #406).
   if (m.includes('already used by worktree') || m.includes('already checked out')) {
     return `${branch} is already checked out in another worktree, so it can't be switched to here. Open it from the worktrees list instead.`;
+  }
+
+  // The ref handed to `git merge` didn't resolve to a commit ("merge:
+  // origin/x - not something we can merge") — the remote branch was deleted
+  // or renamed, or the fetch that should have brought it down didn't complete
+  // (issue #674).
+  if (m.includes('not something we can merge')) {
+    return `The branch to merge (${base}) couldn't be found — it may have been deleted or renamed on GitHub, or the latest fetch didn't complete. Refresh your branches and try again.`;
+  }
+
+  // Creating a branch from a base whose remote ref is gone: "fatal:
+  // 'origin/Y' is not a commit and a branch 'X' cannot be created from it" —
+  // the base branch was deleted or renamed on GitHub after the branch list
+  // loaded (issue #692). The backend classifies this Expected with its own
+  // friendly wording (see BACKEND_HUMANIZED_GIT_PHRASES); this matches git's
+  // raw phrasing for any path that misses that classification.
+  if (m.includes('is not a commit and a branch')) {
+    const missing = raw.match(/'([^']+)' is not a commit/)?.[1];
+    return `The branch this was based on${missing ? ` (${missing})` : ''} no longer exists on GitHub. Refresh your branches and try again.`;
   }
 
   // The ref is gone — git couldn't find the branch, so it treated it as a path.
@@ -203,8 +288,9 @@ export function humanizeGitError(value: unknown, ctx: GitErrorContext = {}): str
 /**
  * True when {@link humanizeGitError} recognized the failure as one of the
  * known, user-actionable git/GitHub conditions (nothing to review, conflicts,
- * out of date, auth, network, protected branch, existing PR, unsaved changes,
- * worktree collision, missing ref, not a repo).
+ * out of date, auth, network, protected branch, repo-name collision, existing
+ * PR, unsaved changes, worktree collision, unmergeable ref, missing ref, not
+ * a repo).
  *
  * The backend classifies many of these as `CommandError::Expected`, but that
  * variant deliberately serializes identically to `Other` across IPC, so the
@@ -213,7 +299,16 @@ export function humanizeGitError(value: unknown, ctx: GitErrorContext = {}): str
  * error channels that auto-file bug reports (issue #538).
  */
 export function isRecognizedGitFailure(value: unknown, ctx: GitErrorContext = {}): boolean {
-  return humanizeGitError(value, ctx) !== formatCommandError(asCommandError(value));
+  const raw = formatCommandError(asCommandError(value));
+  // Messages the backend already humanized can come back from
+  // humanizeGitError byte-identical (they ARE the friendly form — e.g.
+  // gh_network_error's "Couldn't reach GitHub…" maps to the same string), so
+  // the inequality test alone would misread them as unrecognized and route
+  // an already-classified failure back into telemetry (issue #687).
+  if (isBackendHumanizedGitMessage(raw)) {
+    return true;
+  }
+  return humanizeGitError(value, ctx) !== raw;
 }
 
 /**
@@ -340,6 +435,24 @@ export function describeProcessError(
         "GitHub couldn't authenticate this computer over HTTPS — git needed to ask for a password, and there's no saved credential to use. Open a terminal and run `gh auth login`, then `gh auth setup-git`, and try again.",
     };
   }
+  // Windows path-length limit during clone checkout: the download itself
+  // succeeded, but git couldn't write files whose paths exceed Windows'
+  // 260-character default ("error: unable to create file <path>: Filename too
+  // long", then "fatal: unable to checkout working tree" / "Clone succeeded,
+  // but checkout failed."). A machine-configuration state with a one-line
+  // fix, not an app bug — without this branch the raw clone dump reached the
+  // user (issue #701).
+  if (
+    lower.includes('filename too long') ||
+    lower.includes('unable to checkout working tree') ||
+    lower.includes('clone succeeded, but checkout failed')
+  ) {
+    return {
+      expected: true,
+      message:
+        "The repository was downloaded, but some of its files have names or paths longer than Windows allows by default, so git couldn't write them. Open a terminal and run `git config --global core.longpaths true` (and enable Windows long-path support — LongPathsEnabled — if it still fails), then delete the incomplete project folder and try again.",
+    };
+  }
   // GitHub's own API returning a transient 5xx (e.g. "HTTP 504: We couldn't
   // respond to your request in time…" from api.github.com/graphql during
   // `gh repo clone`). gh exits with the generic code 1, so only the wording
@@ -371,6 +484,33 @@ export function describeProcessError(
       expected: true,
       message:
         "npm couldn't sign in to the package registry — your saved npm login or token is expired or incorrect. Open a terminal and run `npm login` (or refresh the token in your .npmrc if this project uses a private registry), then try again.",
+    };
+  }
+  // Corrupted pnpm store: the content-addressable cache has dangling links,
+  // so installs die with "ENOENT: no such file or directory, open
+  // '…/pnpm/store/v11/links/…'". A local-cache state that `pnpm store prune`
+  // repairs, not an app or project bug (issue #681). Checked before the
+  // generic exit-code mapping — only the ENOENT text identifies it.
+  if (lower.includes('enoent') && (lower.includes('pnpm/store') || lower.includes('pnpm\\store'))) {
+    return {
+      expected: true,
+      message:
+        "pnpm's local package cache looks corrupted. Open a terminal and run `pnpm store prune`, then retry the install.",
+    };
+  }
+  // pnpm's build-script approval gate: the install itself succeeded, but
+  // pnpm (10+) exits 1 refusing to run dependency build scripts until the
+  // user approves them — "[ERR_PNPM_IGNORED_BUILDS] Ignored build scripts:
+  // esbuild@0.28.1" / "Run \"pnpm approve-builds\" to pick which dependencies
+  // should be allowed to run scripts." Routine pnpm safety behavior, not an
+  // app or project bug — mirror the guidance extractTerminalError
+  // (terminalDiagnostics.ts) already gives the other install surfaces
+  // (issues #670/#671, precedent #469).
+  if (lower.includes('err_pnpm_ignored_builds') || lower.includes('approve-builds')) {
+    return {
+      expected: true,
+      message:
+        'pnpm blocked dependency build scripts pending your approval. In a terminal, run `pnpm approve-builds` in the project folder, approve the listed packages, then retry the install.',
     };
   }
   // The tool itself is missing: Windows' cmd.exe says "'bun' is not
@@ -408,4 +548,26 @@ export function friendlyProcessError(
   extraExitCodeMessages?: Record<number, string>
 ): string {
   return describeProcessError(err, extraExitCodeMessages).message;
+}
+
+/**
+ * User-facing message for a failed forge accounts load (username + orgs/groups).
+ *
+ * A blown time budget means a slow network, not stale credentials — "sign
+ * out and back in" can't fix it (issue #686). Matches both the raw Timeout
+ * wording ("`gh api user` timed out after 15s") and the backend's Expected
+ * mapping ("GitHub took too long to respond").
+ *
+ * @param forgeName - Brand name to blame, e.g. "GitLab". Defaults to GitHub,
+ *   which every pre-forge call site means.
+ */
+export function describeAccountsLoadError(err: unknown, forgeName = 'GitHub'): string {
+  const message = formatCommandError(asCommandError(err));
+  const isTimeout = /timed out|took too long/i.test(message);
+  return (
+    `Couldn't load your ${forgeName} accounts: ${message}. ` +
+    (isTimeout
+      ? 'Check your internet connection and try again.'
+      : `Try signing out and back into ${forgeName}.`)
+  );
 }
