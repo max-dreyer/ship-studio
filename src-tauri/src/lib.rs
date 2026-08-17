@@ -600,6 +600,11 @@ pub fn run() {
             commands::github::push_to_github,
             commands::github::list_github_repos,
             commands::github::list_collaborator_repos,
+            // Forge-agnostic import (GitHub, GitLab)
+            commands::forge_import::list_forge_owners,
+            commands::forge_import::list_forge_repos,
+            commands::forge_import::forge_clone_command,
+            commands::forge_import::check_forge_cli_status,
             commands::github::detect_package_manager,
             // Publishing
             commands::publishing::publish_to_github,

@@ -66,7 +66,8 @@ export interface ClaudeState {
 
 /** Auth terminal configuration for login flows */
 export interface AuthTerminalConfig {
-  service: 'github';
+  /** Which forge the login is for; also names the terminal modal. */
+  service: 'github' | 'gitlab';
   command: string;
   args: string[];
 }
@@ -143,6 +144,8 @@ export interface UseIntegrationStatusReturn {
   authTerminalConfig: AuthTerminalConfig | null;
   /** Open GitHub auth terminal */
   handleGitHubConnect: () => void;
+  /** Open a forge's auth terminal ("github" | "gitlab") */
+  handleForgeConnect: (forgeId: string) => void;
   /** Handle auth terminal exit and refresh status */
   handleAuthTerminalExit: (exitCode: number | null, projectPath?: string) => Promise<void>;
   /** Close auth terminal without refreshing */
@@ -280,9 +283,36 @@ export function useIntegrationStatus(): UseIntegrationStatusReturn {
     });
   }, []);
 
+  /**
+   * Open a login terminal for a forge. GitLab's login is interactive (it asks
+   * which instance to use, which is what makes self-hosted GitLab work), so it
+   * has to run in a terminal rather than a background command — the same
+   * command the setup wizard uses for the `glab_auth` item.
+   */
+  const handleForgeConnect = useCallback(
+    (forgeId: string) => {
+      if (forgeId === 'gitlab') {
+        setAuthTerminalConfig({
+          service: 'gitlab',
+          command: 'glab',
+          args: ['auth', 'login', '--git-protocol', 'https'],
+        });
+        return;
+      }
+      handleGitHubConnect();
+    },
+    [handleGitHubConnect]
+  );
+
   const handleAuthTerminalExit = useCallback(
     async (exitCode: number | null, projectPath?: string) => {
+      // Read the service before clearing: the GitHub state refresh below only
+      // applies to a GitHub login, and re-running `gh auth status` after a
+      // GitLab sign-in would be a pointless network round trip.
+      const service = authTerminalConfig?.service ?? 'github';
       setAuthTerminalConfig(null);
+
+      if (service !== 'github') return;
 
       if (exitCode === 0 || exitCode === null) {
         await refreshGitHubStatus();
@@ -292,7 +322,7 @@ export function useIntegrationStatus(): UseIntegrationStatusReturn {
         }
       }
     },
-    [refreshGitHubStatus]
+    [authTerminalConfig, refreshGitHubStatus]
   );
 
   const closeAuthTerminal = useCallback(() => {
@@ -316,6 +346,7 @@ export function useIntegrationStatus(): UseIntegrationStatusReturn {
     clearProjectStatuses,
     authTerminalConfig,
     handleGitHubConnect,
+    handleForgeConnect,
     handleAuthTerminalExit,
     closeAuthTerminal,
     fetchProjectGitHubStatus,

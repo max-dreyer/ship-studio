@@ -1,34 +1,58 @@
 /**
- * Step1AccountSelection — first wizard step for ImportProject. Shows the
- * list of GitHub accounts (personal, orgs, collaborator access) for the
- * user to select one.
+ * Step1AccountSelection — first wizard step for ImportProject. Lists the
+ * namespaces the user can import from on the selected forge: their own account,
+ * their organizations (GitHub) or groups (GitLab), and repositories somebody
+ * else owns that they have access to.
  *
  * @module components/import-project/steps/Step1AccountSelection
  */
 
+import type { ForgeInfo } from '../../../lib/forge';
+import { sharedOwnerCopy, type ForgeOwnerSelection } from '../../../lib/forgeImport';
+
 export interface Step1AccountSelectionProps {
+  /** The forge being imported from; supplies its brand name and terminology. */
+  forge: ForgeInfo;
   username: string | null;
-  orgs: string[];
-  selectedOwner: string | null;
+  /** Organizations (GitHub) or groups (GitLab), by full path. */
+  groups: string[];
+  /** The instance the CLI is signed in to, when known. */
+  host: string | null;
+  selectedOwner: ForgeOwnerSelection | null;
   error: string | null;
-  onOwnerSelect: (owner: string) => void;
+  onOwnerSelect: (owner: ForgeOwnerSelection) => void;
   onCancel: () => void;
 }
 
+/** Initial for the avatar tile: the last path segment, so "acme/web" reads "W". */
+function ownerInitial(path: string): string {
+  const segment = path.split('/').filter(Boolean).pop() ?? path;
+  return (segment[0] ?? '?').toUpperCase();
+}
+
 export function Step1AccountSelection({
+  forge,
   username,
-  orgs,
+  groups,
+  host,
   selectedOwner,
   error,
   onOwnerSelect,
   onCancel,
 }: Step1AccountSelectionProps) {
+  const shared = sharedOwnerCopy(forge);
+
   return (
     <div className="create-modal-content">
       <div className="create-modal-header">
         <div>
           <h2>Import Project</h2>
-          <p>Select a GitHub account</p>
+          <p>
+            Select a {forge.displayName} account
+            {/* Only shown when the CLI can tell us — a self-hosted GitLab is the
+                normal case, and the user needs to see which instance this is. */}
+            {host && <span className="import-owner-host"> · {host}</span>}
+          </p>
         </div>
         <button
           className="create-modal-close"
@@ -54,33 +78,35 @@ export function Step1AccountSelection({
       <div className="import-owner-list">
         {username && (
           <button
-            className={`import-owner-btn ${selectedOwner === username ? 'selected' : ''}`}
-            onClick={() => onOwnerSelect(username)}
+            className={`import-owner-btn ${selectedOwner?.kind === 'user' ? 'selected' : ''}`}
+            onClick={() => onOwnerSelect({ kind: 'user', name: username })}
           >
-            <div className="import-owner-avatar">{username[0].toUpperCase()}</div>
+            <div className="import-owner-avatar">{ownerInitial(username)}</div>
             <div className="import-owner-info">
               <span className="import-owner-name">{username}</span>
               <span className="import-owner-type">Personal</span>
             </div>
           </button>
         )}
-        {orgs.map((org) => (
+        {groups.map((group) => (
           <button
-            key={org}
-            className={`import-owner-btn ${selectedOwner === org ? 'selected' : ''}`}
-            onClick={() => onOwnerSelect(org)}
+            key={group}
+            className={`import-owner-btn ${
+              selectedOwner?.kind === 'group' && selectedOwner.name === group ? 'selected' : ''
+            }`}
+            onClick={() => onOwnerSelect({ kind: 'group', name: group })}
           >
-            <div className="import-owner-avatar org">{org[0].toUpperCase()}</div>
+            <div className="import-owner-avatar org">{ownerInitial(group)}</div>
             <div className="import-owner-info">
-              <span className="import-owner-name">{org}</span>
-              <span className="import-owner-type">Organization</span>
+              <span className="import-owner-name">{group}</span>
+              <span className="import-owner-type">{forge.organizationTerm}</span>
             </div>
           </button>
         ))}
-        {/* Collaborator repos - repos owned by others where user has access */}
+        {/* Repositories owned by others that the user has access to. */}
         <button
-          className={`import-owner-btn ${selectedOwner === '__collaborator__' ? 'selected' : ''}`}
-          onClick={() => onOwnerSelect('__collaborator__')}
+          className={`import-owner-btn ${selectedOwner?.kind === 'shared' ? 'selected' : ''}`}
+          onClick={() => onOwnerSelect({ kind: 'shared', name: '' })}
         >
           <div className="import-owner-avatar collab">
             <svg
@@ -98,8 +124,8 @@ export function Step1AccountSelection({
             </svg>
           </div>
           <div className="import-owner-info">
-            <span className="import-owner-name">Collaborator Access</span>
-            <span className="import-owner-type">Repos shared with you</span>
+            <span className="import-owner-name">{shared.title}</span>
+            <span className="import-owner-type">{shared.subtitle}</span>
           </div>
         </button>
       </div>

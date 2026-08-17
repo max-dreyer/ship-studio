@@ -14,6 +14,7 @@
 
 pub mod detect;
 pub mod errors;
+pub mod listing;
 pub mod pr;
 pub mod remote;
 pub mod repo;
@@ -27,6 +28,7 @@ impl ForgeConfig {
             pull_request_term: self.terms.pull_request.to_string(),
             pull_request_short: self.terms.pull_request_short.to_string(),
             organization_term: self.terms.organization.to_string(),
+            repository_term: self.terms.repository.to_string(),
             has_cli: matches!(self.transport, ForgeTransport::Cli(_)),
             hosting_auto_deploy: self.capabilities.hosting_auto_deploy,
             nested_namespaces: self.capabilities.nested_namespaces,
@@ -96,6 +98,10 @@ pub struct ForgeTerms {
     pub pull_request_short: &'static str,
     /// What a group of users is called: "Organization" / "Group".
     pub organization: &'static str,
+    /// What a repository is called: "Repository" / "Project". GitLab calls them
+    /// projects everywhere in its own UI, so an import wizard that says
+    /// "repository" sends users looking for something they won't find.
+    pub repository: &'static str,
 }
 
 /// Configuration for a git forge integrated with Ship Studio.
@@ -150,6 +156,7 @@ pub const GITHUB: ForgeConfig = ForgeConfig {
         pull_request: "Pull Request",
         pull_request_short: "PR",
         organization: "Organization",
+        repository: "Repository",
     },
     capabilities: ForgeCapabilities {
         draft_pull_requests: DraftSupport::Native,
@@ -179,6 +186,7 @@ pub const GITLAB: ForgeConfig = ForgeConfig {
         pull_request: "Merge Request",
         pull_request_short: "MR",
         organization: "Group",
+        repository: "Project",
     },
     capabilities: ForgeCapabilities {
         draft_pull_requests: DraftSupport::TitlePrefix("Draft:"),
@@ -208,6 +216,7 @@ pub const FORGEJO: ForgeConfig = ForgeConfig {
         pull_request: "Pull Request",
         pull_request_short: "PR",
         organization: "Organization",
+        repository: "Repository",
     },
     capabilities: ForgeCapabilities {
         draft_pull_requests: DraftSupport::TitlePrefix("WIP:"),
@@ -323,6 +332,15 @@ mod tests {
         assert!(host_to_forge("").is_none());
         // Not a substring match: this is somebody's own domain, not GitHub.
         assert!(host_to_forge("github.com.evil.example").is_none());
+    }
+
+    #[test]
+    fn gitlab_speaks_gitlab() {
+        // GitLab's own UI says "project" and "group" everywhere; an import
+        // wizard saying "repository" sends users looking for the wrong thing.
+        assert_eq!(GITLAB.terms.repository, "Project");
+        assert_eq!(GITLAB.terms.organization, "Group");
+        assert_eq!(GITHUB.terms.repository, "Repository");
     }
 
     #[test]

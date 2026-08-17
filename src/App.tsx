@@ -284,6 +284,7 @@ function AppContents({ initialProjectPath }: AppProps) {
     clearProjectStatuses,
     authTerminalConfig,
     handleGitHubConnect: handleGitHubConnectFromOverlay,
+    handleForgeConnect,
     handleAuthTerminalExit,
     closeAuthTerminal,
   } = useIntegrationStatus();
@@ -1176,6 +1177,7 @@ function AppContents({ initialProjectPath }: AppProps) {
             importView={importView}
             setImportView={setImportView}
             onProjectImported={(path) => void handleProjectImported(path)}
+            onForgeConnect={handleForgeConnect}
             authTerminalConfig={authTerminalConfig}
             closeAuthTerminal={closeAuthTerminal}
             onAuthTerminalExit={handleAuthTerminalExitForProjects}

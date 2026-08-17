@@ -27,6 +27,8 @@ export interface ForgeInfo {
   pullRequestShort: string;
   /** "Organization" or "Group". */
   organizationTerm: string;
+  /** What the forge calls a repository: "Repository", or "Project" on GitLab. */
+  repositoryTerm: string;
   /**
    * Whether an installed CLI can drive this forge. False for REST-only forges
    * (Forgejo), where PR actions must be hidden rather than offered and failed.
@@ -44,6 +46,7 @@ export const GITHUB: ForgeInfo = {
   pullRequestTerm: 'Pull Request',
   pullRequestShort: 'PR',
   organizationTerm: 'Organization',
+  repositoryTerm: 'Repository',
   hasCli: true,
   hostingAutoDeploy: true,
   nestedNamespaces: false,
@@ -55,6 +58,7 @@ export const GITLAB: ForgeInfo = {
   pullRequestTerm: 'Merge Request',
   pullRequestShort: 'MR',
   organizationTerm: 'Group',
+  repositoryTerm: 'Project',
   hasCli: true,
   hostingAutoDeploy: true,
   nestedNamespaces: true,
@@ -66,6 +70,7 @@ export const FORGEJO: ForgeInfo = {
   pullRequestTerm: 'Pull Request',
   pullRequestShort: 'PR',
   organizationTerm: 'Organization',
+  repositoryTerm: 'Repository',
   hasCli: false,
   hostingAutoDeploy: false,
   nestedNamespaces: false,

@@ -1,27 +1,36 @@
 /**
- * ImportProject component that provides a wizard for importing existing GitHub repositories.
+ * ImportProject component that provides a wizard for importing an existing
+ * repository from a git forge (GitHub or GitLab).
  *
  * This is a multi-step wizard that:
- * 1. Lets user select a GitHub account/organization
- * 2. Shows a searchable list of repositories from the selected account
- * 3. Optionally lets user link to a Vercel project
- * 4. Shows progress while cloning and installing dependencies
+ * 1. Lets user select an account, organization/group, or shared access
+ * 2. Shows a searchable list of repositories from the selected namespace
+ * 3. Shows progress while cloning and installing dependencies
  *
- * Uses Tauri PTY for running git clone and npm/pnpm/yarn install with progress events.
+ * Which CLI does the work (`gh` / `glab`) and how each is invoked is decided in
+ * the backend (`src-tauri/src/commands/forge_import.rs`); this component only
+ * knows the forge id it was opened for. When that CLI isn't installed or signed
+ * in, the wizard shows the setup step instead of failing on the first call.
+ *
+ * Uses Tauri PTY for running the clone and npm/pnpm/yarn install with progress
+ * events.
  *
  * @module components/ImportProject
  */
 
 import { useState, useEffect } from 'react';
 import { trackError } from '../../lib/analytics';
+import { detectPackageManager } from '../../lib/github';
+import { getForgeById } from '../../lib/forge';
 import {
-  getGitHubUsername,
-  getGitHubOrgs,
-  listGitHubRepos,
-  listCollaboratorRepos,
-  detectPackageManager,
-  GitHubRepo,
-} from '../../lib/github';
+  filterRepos,
+  getForgeCloneCommand,
+  listForgeRepos,
+  sortReposByActivity,
+  type ForgeOwnerSelection,
+  type ForgeRepo,
+  type ImportForgeId,
+} from '../../lib/forgeImport';
 import {
   ensureShipStudioDir,
   projectPathExists,
@@ -32,6 +41,7 @@ import {
 } from '../../lib/project';
 import { runPtyToExit } from '../../lib/ptyRun';
 import { checkNpmCachePermissions } from '../../lib/setup';
+import { useForgeImportAccounts } from '../../hooks/useForgeImportAccounts';
 import { Step1AccountSelection } from '../import-project/steps/Step1AccountSelection';
 import { Step2RepoSelection } from '../import-project/steps/Step2RepoSelection';
 import { Step3ImportProgress, type Step } from '../import-project/steps/Step3ImportProgress';
@@ -39,6 +49,7 @@ import {
   Step3WorkspacePicker,
   type WorkspacePick,
 } from '../import-project/steps/Step3WorkspacePicker';
+import { StepForgeSetup } from '../import-project/steps/StepForgeSetup';
 import { logger } from '../../lib/logger';
 import {
   asCommandError,
@@ -50,57 +61,51 @@ import { Spinner } from '../primitives/Spinner';
 
 /** Props for the ImportProject component */
 interface ImportProjectProps {
+  /** Which forge to import from. */
+  forgeId: ImportForgeId;
   /** Callback when project import completes successfully */
   onComplete: (projectPath: string) => void;
   /** Callback when user cancels the wizard */
   onCancel: () => void;
+  /** Open the forge CLI's interactive login in a terminal. */
+  onConnect: (forgeId: string) => void;
 }
 
 /** Form wizard steps before import starts */
 type FormStep = 'select-account' | 'select-repo';
 
-export function ImportProject({ onComplete, onCancel }: ImportProjectProps) {
+export function ImportProject({ forgeId, onComplete, onCancel, onConnect }: ImportProjectProps) {
+  const forge = getForgeById(forgeId);
   const [formStep, setFormStep] = useState<FormStep>('select-account');
-  const [username, setUsername] = useState<string | null>(null);
-  const [orgs, setOrgs] = useState<string[]>([]);
-  const [selectedOwner, setSelectedOwner] = useState<string | null>(null);
-  const [repos, setRepos] = useState<GitHubRepo[]>([]);
+  const [selectedOwner, setSelectedOwner] = useState<ForgeOwnerSelection | null>(null);
+  const [repos, setRepos] = useState<ForgeRepo[]>([]);
   const [loadingRepos, setLoadingRepos] = useState(false);
-  const [selectedRepo, setSelectedRepo] = useState<GitHubRepo | null>(null);
+  const [selectedRepo, setSelectedRepo] = useState<ForgeRepo | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [isImporting, setIsImporting] = useState(false);
   const [currentStep, setCurrentStep] = useState<Step>('clone');
   const [error, setError] = useState<string | null>(null);
-  const [loadingAccounts, setLoadingAccounts] = useState(true);
   const [importedProjectPath, setImportedProjectPath] = useState<string | null>(null);
   const [importedPackageManager, setImportedPackageManager] = useState<string>('npm');
   const [discoveredWorkspaces, setDiscoveredWorkspaces] = useState<WorkspaceInfo[]>([]);
   const [selectedWorkspacePick, setSelectedWorkspacePick] = useState<WorkspacePick | null>(null);
   const [awaitingWorkspacePick, setAwaitingWorkspacePick] = useState(false);
 
-  // Load user and orgs on mount
-  useEffect(() => {
-    void loadAccounts();
-  }, []);
-
-  const loadAccounts = async () => {
-    setLoadingAccounts(true);
-    try {
-      const [user, orgList] = await Promise.all([getGitHubUsername(), getGitHubOrgs()]);
-      setUsername(user);
-      setOrgs(orgList);
-      // Auto-select personal account
-      setSelectedOwner(user);
-    } catch (err) {
-      trackError('github_accounts_load', err, 'Dashboard');
-      setError(
-        `Couldn't load your GitHub accounts: ${formatCommandError(asCommandError(err))}. ` +
-          'Try signing out and back into GitHub.'
-      );
-    } finally {
-      setLoadingAccounts(false);
-    }
-  };
+  // Accounts, and the CLI setup state that explains their absence.
+  const {
+    username,
+    groups,
+    host,
+    loading: loadingAccounts,
+    error: accountsError,
+    cliStatus,
+    installingCli,
+    setupError,
+    installCli,
+  } = useForgeImportAccounts(forgeId, (owners) =>
+    // Auto-select the personal account.
+    setSelectedOwner({ kind: 'user', name: owners.username })
+  );
 
   // Load repos when owner changes
   useEffect(() => {
@@ -109,20 +114,16 @@ export function ImportProject({ onComplete, onCancel }: ImportProjectProps) {
     }
   }, [selectedOwner]);
 
-  const loadRepos = async (owner: string) => {
+  const loadRepos = async (owner: ForgeOwnerSelection) => {
     setLoadingRepos(true);
     setRepos([]);
     setSelectedRepo(null);
     setError(null);
     try {
-      // Special case: "collaborator" fetches repos where user is a collaborator
-      const repoList =
-        owner === '__collaborator__' ? await listCollaboratorRepos() : await listGitHubRepos(owner);
-      // Sort by updated date (most recent first)
-      repoList.sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
-      setRepos(repoList);
+      const repoList = await listForgeRepos(forgeId, owner);
+      setRepos(sortReposByActivity(repoList));
     } catch (e) {
-      trackError('github_repos_load', e, 'Dashboard');
+      trackError('forge_repos_load', e, 'Dashboard');
       setError(`Failed to load repositories: ${formatCommandError(asCommandError(e))}`);
     } finally {
       setLoadingRepos(false);
@@ -240,24 +241,22 @@ export function ImportProject({ onComplete, onCancel }: ImportProjectProps) {
     try {
       const projectPath = `${shipstudioDir}/${safeName}`;
 
-      // Clone repository using gh CLI (uses GitHub CLI authentication)
-      // For collaborator repos, the name already includes the owner (e.g., "owner/repo")
-      const repoFullName =
-        selectedOwner === '__collaborator__'
-          ? selectedRepo.name
-          : `${selectedOwner}/${selectedRepo.name}`;
+      // Clone with the forge's own CLI, which already holds the credentials —
+      // the backend decides which binary and arguments that is.
+      const clone = await getForgeCloneCommand(forgeId, selectedRepo.fullPath, safeName);
 
       // Breadcrumb: log sanitized import parameters (names + paths only, no
       // tokens) before invoking, so a crash mid-import localizes the phase.
       logger.info('[ImportProject] phase: clone', {
-        repo: repoFullName,
+        forge: forgeId,
+        repo: selectedRepo.fullPath,
         safeName,
         projectPath,
       });
       await runPtyToExit({
         cwd: shipstudioDir,
-        command: 'gh',
-        args: ['repo', 'clone', repoFullName, safeName],
+        command: clone.command,
+        args: clone.args,
         rows: 10,
         cols: 80,
       });
@@ -300,7 +299,8 @@ export function ImportProject({ onComplete, onCancel }: ImportProjectProps) {
       // (issue #531).
       const logContext = {
         error: err instanceof Error ? err.message : String(err),
-        repo: selectedRepo.name,
+        forge: forgeId,
+        repo: selectedRepo.fullPath,
         safeName,
       };
       if (info.expected) {
@@ -380,22 +380,16 @@ export function ImportProject({ onComplete, onCancel }: ImportProjectProps) {
   };
 
   // Filter repos based on search
-  const filteredRepos = repos.filter((repo) => {
-    if (!searchQuery) return true;
-    return (
-      repo.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      (repo.description && repo.description.toLowerCase().includes(searchQuery.toLowerCase()))
-    );
-  });
+  const filteredRepos = filterRepos(repos, searchQuery);
 
-  const handleOwnerSelect = (owner: string) => {
+  const handleOwnerSelect = (owner: ForgeOwnerSelection) => {
     setSelectedOwner(owner);
     setFormStep('select-repo');
     setSelectedRepo(null);
     setSearchQuery('');
   };
 
-  const handleRepoSelect = (repo: GitHubRepo) => {
+  const handleRepoSelect = (repo: ForgeRepo) => {
     setSelectedRepo(repo);
   };
 
@@ -436,12 +430,27 @@ export function ImportProject({ onComplete, onCancel }: ImportProjectProps) {
       );
     }
 
+    // The forge's CLI isn't ready — offer the install or the sign-in.
+    if (cliStatus) {
+      return (
+        <StepForgeSetup
+          forge={forge}
+          status={cliStatus}
+          installing={installingCli}
+          error={setupError}
+          onInstall={() => void installCli()}
+          onConnect={() => onConnect(forgeId)}
+          onCancel={onCancel}
+        />
+      );
+    }
+
     // Loading accounts
     if (loadingAccounts) {
       return (
         <div className="create-modal-content creating">
           <Spinner size="lg" className="create-spinner" />
-          <p className="create-status">Loading GitHub accounts...</p>
+          <p className="create-status">Loading {forge.displayName} accounts...</p>
         </div>
       );
     }
@@ -450,10 +459,14 @@ export function ImportProject({ onComplete, onCancel }: ImportProjectProps) {
     if (formStep === 'select-account') {
       return (
         <Step1AccountSelection
+          forge={forge}
           username={username}
-          orgs={orgs}
+          groups={groups}
+          host={host}
           selectedOwner={selectedOwner}
-          error={error}
+          // Either source can have something to say here: the account lookup
+          // itself, or a repo list that failed for the preselected account.
+          error={accountsError ?? error}
           onOwnerSelect={handleOwnerSelect}
           onCancel={onCancel}
         />
@@ -464,6 +477,7 @@ export function ImportProject({ onComplete, onCancel }: ImportProjectProps) {
     if (formStep === 'select-repo') {
       return (
         <Step2RepoSelection
+          forge={forge}
           selectedOwner={selectedOwner}
           searchQuery={searchQuery}
           onSearchChange={setSearchQuery}

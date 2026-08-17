@@ -16,6 +16,7 @@ import { PluginSlot } from '../plugins/PluginSlot';
 import { UpdateBanner } from '../UpdateBanner';
 import { OnboardingTerminal } from '../setup';
 import type { Project } from '../../lib/project';
+import type { ImportView } from '../../hooks/useProjectLifecycle';
 import type { AuthTerminalConfig } from '../../hooks/useIntegrationStatus';
 import type { LoadedPlugin } from '../../hooks/usePlugins';
 import type {
@@ -38,9 +39,11 @@ interface ProjectsViewProps {
   showCreateModal: boolean;
   onCloseCreateModal: () => void;
   onProjectCreated: (projectPath: string) => void;
-  importView: 'none' | 'picker' | 'github';
-  setImportView: (view: 'none' | 'picker' | 'github') => void;
+  importView: ImportView;
+  setImportView: (view: ImportView) => void;
   onProjectImported: (projectPath: string) => void;
+  /** Start a forge CLI login ("github" | "gitlab") from the import wizard. */
+  onForgeConnect: (forgeId: string) => void;
 
   authTerminalConfig: AuthTerminalConfig | null;
   closeAuthTerminal: () => void;
@@ -78,6 +81,7 @@ export const ProjectsView = memo(function ProjectsView({
   importView,
   setImportView,
   onProjectImported,
+  onForgeConnect,
   authTerminalConfig,
   closeAuthTerminal,
   onAuthTerminalExit,
@@ -127,20 +131,28 @@ export const ProjectsView = memo(function ProjectsView({
         {importView === 'picker' && (
           <ImportTypePicker
             onSelectGitHub={() => setImportView('github')}
+            onSelectGitLab={() => setImportView('gitlab')}
             onSelectLocalFolder={() => void onImportLocalFolder()}
             onClose={() => setImportView('none')}
           />
         )}
-        {importView === 'github' && (
-          <ImportProject onComplete={onProjectImported} onCancel={() => setImportView('none')} />
+        {(importView === 'github' || importView === 'gitlab') && (
+          <ImportProject
+            forgeId={importView}
+            onComplete={onProjectImported}
+            onCancel={() => setImportView('none')}
+            onConnect={onForgeConnect}
+          />
         )}
 
-        {/* Auth Terminal Modal (for GitHub connect from projects view) */}
+        {/* Auth Terminal Modal (for a forge login started from the projects view) */}
         {authTerminalConfig && (
           <div className="onboarding-terminal-overlay">
             <div className="onboarding-terminal-modal">
               <div className="onboarding-terminal-header">
-                <span className="onboarding-terminal-title">GitHub Account</span>
+                <span className="onboarding-terminal-title">
+                  {authTerminalConfig.service === 'gitlab' ? 'GitLab Account' : 'GitHub Account'}
+                </span>
                 <button className="onboarding-terminal-cancel" onClick={() => closeAuthTerminal()}>
                   Cancel
                 </button>

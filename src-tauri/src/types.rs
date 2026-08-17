@@ -380,6 +380,8 @@ pub struct ForgeInfo {
     pub pull_request_short: String,
     /// "Organization" or "Group".
     pub organization_term: String,
+    /// What the forge calls a repository: "Repository" or, on GitLab, "Project".
+    pub repository_term: String,
     /// Whether this forge is reachable with an installed CLI. False for
     /// REST-only forges, which the UI must not offer PR actions for yet.
     pub has_cli: bool,
@@ -444,6 +446,77 @@ pub struct GitHubRepo {
 #[derive(Serialize, Deserialize)]
 pub struct GitHubLanguage {
     pub name: String,
+}
+
+/// A repository as the import flow shows it, for any forge.
+///
+/// Deliberately not [`GitHubRepo`]: the import wizard needs the full namespaced
+/// path to clone with, and GitLab's `name` is a display title ("RausRadar")
+/// distinct from its slug ("rausradar"). Reusing the GitHub shape would have
+/// forced one of the two into the wrong field.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ForgeRepo {
+    /// Slug within its namespace ("rausradar"). The local folder is named after
+    /// this.
+    pub name: String,
+    /// Full path including the namespace ("acme/web"), which is what the forge's
+    /// clone command takes.
+    pub full_path: String,
+    /// Web URL of the repository.
+    pub url: String,
+    pub ssh_url: String,
+    /// Whether the repository is invisible to anonymous users. GitLab's
+    /// "internal" counts as private here — see `visibility` for the exact term.
+    pub is_private: bool,
+    /// The forge's own visibility word, when it has more than two
+    /// ("private" | "internal" | "public"). `None` on forges where `is_private`
+    /// says everything, so the UI shows a label only when it knows one.
+    pub visibility: Option<String>,
+    pub description: Option<String>,
+    /// Primary language, when the forge's listing includes one. `None` on
+    /// GitLab, whose project list carries no language.
+    pub primary_language: Option<GitHubLanguage>,
+    /// Last activity timestamp, used to sort the picker.
+    pub updated_at: String,
+}
+
+/// The namespaces a user can import from on one forge.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ForgeOwners {
+    /// The signed-in user's own account name.
+    pub username: String,
+    /// Organizations (GitHub) or groups (GitLab), by full path.
+    pub groups: Vec<String>,
+    /// The instance the CLI is signed in to, when it can be read without
+    /// guessing. `None` for GitHub, where an Enterprise host is
+    /// indistinguishable from github.com without extra token scopes — the UI
+    /// then shows no host rather than a possibly wrong one.
+    pub host: Option<String>,
+}
+
+/// Whether a forge's CLI is installed and signed in.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ForgeCliStatus {
+    pub installed: bool,
+    pub authenticated: bool,
+    /// The CLI's binary name ("gh" | "glab"), so the UI can name the tool the
+    /// user has to install without hardcoding it.
+    pub binary: String,
+}
+
+/// An external command the frontend should run in a PTY.
+///
+/// The backend owns which binary and arguments a forge needs (see
+/// [`crate::forge::listing`]); this carries that decision to the frontend, which
+/// runs the clone in a terminal so the user sees git's progress.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ForgeCommandSpec {
+    pub command: String,
+    pub args: Vec<String>,
 }
 
 // ============ Publishing ============

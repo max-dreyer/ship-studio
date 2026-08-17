@@ -69,7 +69,12 @@ echo "Components (.tsx limit 1200):"
 check_file src/components/workspace/WorkspaceView.tsx 1670
 check_file src/components/dashboard/ProjectList.tsx 900
 check_file src/components/plugins/PluginManager.tsx 700
-check_file src/components/dashboard/ImportProject.tsx 500
+# Bumped by 20 for the GitLab import: the wizard is forge-generic now (forge id
+# prop, forge-neutral repo shape) and gained one screen — the CLI setup step for
+# a forge that isn't installed or signed in. The account/readiness logic was
+# extracted to useForgeImportAccounts rather than added here; what remains is
+# the render branch plus the props it needs.
+check_file src/components/dashboard/ImportProject.tsx 520
 check_file src/App.tsx 1302
 echo
 echo "CSS (limit 1200 per file):"

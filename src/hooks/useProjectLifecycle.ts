@@ -78,6 +78,13 @@ import { basename } from '../lib/paths';
 import type { AppView } from '../lib/types';
 import { preferredPortForProject } from '../lib/ports';
 
+/**
+ * Which import screen is showing: nothing, the type picker, or the wizard for
+ * one forge. The forge ids are used verbatim so the view name is also the id
+ * handed to the backend.
+ */
+export type ImportView = 'none' | 'picker' | 'github' | 'gitlab';
+
 export interface UseProjectLifecycleParams {
   currentProject: Project | null;
   setCurrentProject: (project: Project | null) => void;
@@ -166,8 +173,8 @@ export function useProjectLifecycle({
   // Create project modal
   const [showCreateModal, setShowCreateModal] = useState(false);
 
-  // Import project view: 'none' | 'picker' | 'github'
-  const [importView, setImportView] = useState<'none' | 'picker' | 'github'>('none');
+  // Which import screen is showing; the forge ids double as view names.
+  const [importView, setImportView] = useState<ImportView>('none');
 
   // Pending monorepo picker — set when an unconfigured monorepo is being
   // opened. The actual project open is deferred until the user commits.

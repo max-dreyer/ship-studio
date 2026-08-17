@@ -240,11 +240,11 @@ export function useAppCommands({
       },
       {
         id: 'project.import.github',
-        title: 'Import from GitHub',
+        title: 'Import from GitHub or GitLab',
         icon: <CodeIcon size={14} />,
         category: 'action',
         when: 'home',
-        keywords: ['clone', 'repo'],
+        keywords: ['clone', 'repo', 'github', 'gitlab', 'project'],
         run: handleImportProject,
       },
       {

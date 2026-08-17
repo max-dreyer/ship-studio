@@ -20,6 +20,7 @@ pub mod edit_structure;
 pub mod env;
 pub mod external_projects;
 pub mod folders;
+pub mod forge_import;
 pub mod forge_ops;
 pub mod git;
 pub mod github;
