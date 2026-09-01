@@ -25,6 +25,8 @@ import { SlackIcon } from '../icons/brand';
 import { PinIcon } from '../icons/layout';
 import { PropSection } from './PropSection';
 import { ImageSection } from './ImageSection';
+import { ElementLinkSection, isLinkElement } from './ElementLinkSection';
+import type { ElementSettings } from '../../hooks/useElementSettings';
 import { PropControlRenderer, type ControlRenderCtx } from './PropControlRenderer';
 import { ClassBar } from './ClassBar';
 import type { CustomClass } from '../../lib/customClasses';
@@ -291,6 +293,9 @@ function CustomCssHint() {
 
 interface Props {
   selection: Selection | null;
+  /** The selection's markup (tag, classes, attributes) — what the Link section
+   *  reads and writes. Optional so the panel still renders standalone (tests). */
+  settings?: ElementSettings;
   /** Project root — the Image section's asset picker lists assets from it. */
   projectPath: string;
   /** The class string currently applied live (what "Save" will persist). */
@@ -368,6 +373,7 @@ function initialPos() {
 
 export function VisualEditorPanel({
   selection,
+  settings,
   projectPath,
   currentClass,
   textResolution,
@@ -405,6 +411,7 @@ export function VisualEditorPanel({
   const resolution = selection?.resolution ?? null;
   // Images get an Image section (current asset + Replace) on top of style controls.
   const isImage = selection?.signature.tagName === 'img';
+  const isLink = isLinkElement(selection?.signature.tagName ?? '');
   // Both 'resolved' (one spot) and 'multi' (several identical spots) are editable.
   const editable = resolution?.status === 'resolved' || resolution?.status === 'multi';
   // Dirty baseline differs by edit target: a class edit compares the live @apply
@@ -616,6 +623,15 @@ export function VisualEditorPanel({
             projectPath={projectPath}
             onReplace={onReplaceImage}
           />
+        )}
+
+        {/* Where a link points is markup, not style — but it's the first thing
+            anyone wants from a selected link, so it sits with the Image section
+            above the style controls rather than in a separate tab. */}
+        {isLink && settings && (
+          <PropSection title="Link" defaultOpen>
+            <ElementLinkSection settings={settings} heading={false} />
+          </PropSection>
         )}
 
         {controlsVisible && (

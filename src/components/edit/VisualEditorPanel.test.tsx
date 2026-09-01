@@ -8,6 +8,19 @@ import {
   type UsageReport,
 } from '../../lib/edit';
 import type { Selection } from '../../hooks/useVisualEditor';
+import type { ElementSettings } from '../../hooks/useElementSettings';
+
+// The Link section's pickers read the project from disk through Tauri, which
+// isn't there in jsdom. The panel's own behavior is what's under test.
+vi.mock('../../hooks/useLinkTargets', () => ({
+  useLinkTargets: () => ({
+    pages: ['/', '/ueber-uns', '/kontakt'],
+    files: ['/preisliste.pdf'],
+    assetsRoot: 'public',
+    loading: false,
+    error: null,
+  }),
+}));
 
 const BREAKPOINTS: Breakpoint[] = [BASE_BREAKPOINT, ...DEFAULT_BREAKPOINTS];
 const MD = BREAKPOINTS.find((b) => b.name === 'md')!;
@@ -792,5 +805,107 @@ describe('VisualEditorPanel', () => {
       await Promise.resolve();
     });
     expect(onAddFirstClass).toHaveBeenCalledWith('flex gap-4');
+  });
+
+  // ── Link section ────────────────────────────────────────────────────────
+  // Where a link points is markup, so it needs `settings`; the panel renders
+  // the section itself rather than hiding it behind a separate tab.
+
+  const linkSelection: Selection = {
+    signature: { className: 'btn', tagName: 'a', ancestorClasses: [] },
+    resolution: {
+      status: 'resolved',
+      file: 'components/Hero.tsx',
+      line: 14,
+      column: 1,
+      class_name: 'btn',
+      confidence: 'unique',
+    },
+    instanceCount: 1,
+  };
+
+  const linkSettings = (over: Partial<ElementSettings> = {}): ElementSettings => ({
+    tag: 'a',
+    sourceTag: 'a',
+    classes: ['btn'],
+    attributes: [{ name: 'href', value: '/ueber-uns' }],
+    addClass: vi.fn(),
+    removeClass: vi.fn(),
+    setAttribute: vi.fn(),
+    setAttributes: vi.fn(),
+    renameAttribute: vi.fn(),
+    removeAttribute: vi.fn(),
+    canEditAttributes: true,
+    attrsError: null,
+    location: { file: 'components/Hero.tsx', line: 14 },
+    projectPath: '/Users/test/ShipStudio/demo',
+    busy: false,
+    ...over,
+  });
+
+  it('offers the link editor for a selected link', () => {
+    render(
+      <VisualEditorPanel
+        {...mk()}
+        selection={linkSelection}
+        currentClass="btn"
+        settings={linkSettings()}
+      />
+    );
+    expect(screen.getByRole('group', { name: 'Link type' })).toBeInTheDocument();
+    expect(screen.getByLabelText('Page target')).toHaveValue('/ueber-uns');
+  });
+
+  it('writes a React-Router link through its own attribute', () => {
+    const setAttributes = vi.fn();
+    render(
+      <VisualEditorPanel
+        {...mk()}
+        selection={linkSelection}
+        currentClass="btn"
+        settings={linkSettings({
+          sourceTag: 'NavLink',
+          attributes: [{ name: 'to', value: '/preise' }],
+          setAttributes,
+        })}
+      />
+    );
+    const input = screen.getByLabelText('Page target');
+    fireEvent.change(input, { target: { value: '/kontakt' } });
+    fireEvent.blur(input);
+    // `href` would sit dead beside the `to` React Router actually reads.
+    expect(setAttributes).toHaveBeenCalledWith([{ name: 'to', value: '/kontakt' }]);
+  });
+
+  it("names the reason a link's markup is out of reach", () => {
+    render(
+      <VisualEditorPanel
+        {...mk()}
+        selection={linkSelection}
+        currentClass="btn"
+        settings={linkSettings({
+          canEditAttributes: false,
+          attributes: [],
+          attrsError: "Couldn't tell which <a> in source to edit — 3 classless <a> tags matched.",
+        })}
+      />
+    );
+    expect(screen.getByText(/3 classless <a> tags matched/)).toBeInTheDocument();
+  });
+
+  it("leaves a component's own link to the component", () => {
+    render(
+      <VisualEditorPanel
+        {...mk()}
+        selection={linkSelection}
+        currentClass="btn"
+        settings={linkSettings({
+          sourceTag: 'CallToAction',
+          attributes: [{ name: 'label', value: 'Angebot anfordern' }],
+        })}
+      />
+    );
+    expect(screen.queryByRole('group', { name: 'Link type' })).toBeNull();
+    expect(screen.getByText(/component, not from this spot/i)).toBeInTheDocument();
   });
 });

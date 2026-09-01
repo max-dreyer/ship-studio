@@ -41,26 +41,56 @@ export interface ElementAttr {
 
 export interface ElementSettings {
   tag: string;
+  /**
+   * The tag as written in SOURCE, which is not always the DOM's `tag`: a
+   * React-Router `<NavLink>` or a Next.js `<Link>` both render an `<a>`.
+   * Empty string when the markup couldn't be resolved.
+   */
+  sourceTag: string;
   classes: string[];
   attributes: ElementAttr[];
   addClass: (name: string) => void;
   removeClass: (name: string) => void;
   /** Set or add an attribute on the element's opening tag (written to source). */
   setAttribute: (name: string, value: string) => void;
+  /**
+   * Set or remove (`value === null`) SEVERAL attributes in one source write.
+   *
+   * The Link section needs this: href, target and download change together,
+   * and firing three independent writes races them — each one is guarded
+   * against the markup it read, so the second would land on a stale baseline
+   * and fail with a drift error.
+   */
+  setAttributes: (changes: { name: string; value: string | null }[]) => void;
   /** Rename an attribute's key, preserving its value (one source write). */
   renameAttribute: (oldName: string, newName: string, value: string) => void;
   removeAttribute: (name: string) => void;
   /** Whether the element resolved to editable source markup (attributes editable). */
   canEditAttributes: boolean;
+  /**
+   * Why the markup couldn't be resolved, in the backend's own words — it names
+   * the actual obstacle (several identical tags, a generated class) where a
+   * flat "can't be edited here" leaves the user with nothing to act on.
+   */
+  attrsError: string | null;
   /** The element's resolved markup location in source (file + 1-based line), if known. */
   location: { file: string; line: number } | null;
+  /** The project the element belongs to, for panels that read their own data
+   *  (the Link section lists the project's pages and assets). */
+  projectPath: string;
   busy: boolean;
+}
+
+/** An element's opening tag: `<Nav.Link href="/x">` → `Nav.Link`. Components
+ *  are why the dot and the capital are allowed. Empty when it can't be read. */
+function parseTagName(html: string): string {
+  return /^<([a-zA-Z][\w.-]*)/.exec(html.trim())?.[1] ?? '';
 }
 
 /** Parse the attributes of an element's opening tag (excluding `class`, which the
  *  CLASSES editor owns). Best-effort, string/quote aware via a global regex. */
 function parseAttributes(html: string): ElementAttr[] {
-  const open = /^<([a-zA-Z][\w-]*)((?:[^>"']|"[^"]*"|'[^']*')*)>/.exec(html.trim());
+  const open = /^<([a-zA-Z][\w.-]*)((?:[^>"']|"[^"]*"|'[^']*')*)>/.exec(html.trim());
   if (!open) return [];
   const attrsPart = open[2];
   const re = /([a-zA-Z_:][-\w:.]*)(?:\s*=\s*(?:"([^"]*)"|'([^']*)'|(\S+)))?/g;
@@ -90,7 +120,9 @@ export function useElementSettings({
   onToast,
 }: Params): ElementSettings {
   const [classes, setClasses] = useState<string[]>([]);
-  const [attributes, setAttributes] = useState<ElementAttr[]>([]);
+  const [attributes, setAttrList] = useState<ElementAttr[]>([]);
+  const [sourceTag, setSourceTag] = useState('');
+  const [attrsError, setAttrsError] = useState<string | null>(null);
   const [canEditAttributes, setCanEditAttributes] = useState(false);
   const [busy, setBusy] = useState(false);
   // The element's resolved markup location in source (file + 1-based line), for "Copy id".
@@ -111,7 +143,9 @@ export function useElementSettings({
   useEffect(() => {
     if (!enabled || !signature) {
       setClasses([]);
-      setAttributes([]);
+      setAttrList([]);
+      setSourceTag('');
+      setAttrsError(null);
       setCanEditAttributes(false);
       setLocation(null);
       htmlRef.current = null;
@@ -123,14 +157,22 @@ export function useElementSettings({
       .then((res) => {
         if (cancelled) return;
         htmlRef.current = res.html;
-        setAttributes(parseAttributes(res.html));
+        setAttrList(parseAttributes(res.html));
+        setSourceTag(parseTagName(res.html));
+        setAttrsError(null);
         setCanEditAttributes(true);
         setLocation({ file: res.file, line: res.line });
       })
-      .catch(() => {
+      .catch((err) => {
         if (cancelled) return;
+        const reason = toastText(err);
+        // Not a toast: selecting an element the editor can't reach is routine,
+        // and the panel says so where the user is already looking.
+        logger.warn('[ElementSettings] element markup not resolvable', { error: reason });
         htmlRef.current = null;
-        setAttributes([]);
+        setAttrList([]);
+        setSourceTag('');
+        setAttrsError(reason);
         setCanEditAttributes(false);
         setLocation(null);
       });
@@ -139,23 +181,32 @@ export function useElementSettings({
     };
   }, [enabled, projectPath, signature]);
 
-  /** Set/add/remove (value === null) an attribute on the element's opening tag,
-   *  drift-guarded against the resolved markup, then refresh the local list. */
-  const applyAttr = useCallback(
-    async (name: string, value: string | null) => {
+  /** Set/add/remove (value === null) attributes on the element's opening tag in
+   *  ONE source write, drift-guarded against the resolved markup, then refresh
+   *  the local list. One write rather than one per attribute: each write is
+   *  guarded against the markup it read, so a second in-flight write would land
+   *  on a stale baseline and be rejected as drift. */
+  const applyAttrs = useCallback(
+    async (changes: { name: string; value: string | null }[]) => {
       const sig = sigRef.current;
       const oldHtml = htmlRef.current;
       if (!sig || oldHtml == null) {
         onToast("Can't edit this element's attributes in source.", 'error');
         return;
       }
-      const newHtml = setAttrInHtml(oldHtml, name, value);
-      if (newHtml == null || newHtml === oldHtml) return;
+      let newHtml = oldHtml;
+      for (const { name, value } of changes) {
+        const next = setAttrInHtml(newHtml, name, value);
+        // An opening tag we can't parse: write nothing rather than half of it.
+        if (next == null) return;
+        newHtml = next;
+      }
+      if (newHtml === oldHtml) return;
       setBusy(true);
       try {
         await applyElementHtml(projectPath, sig, oldHtml, newHtml);
         htmlRef.current = newHtml;
-        setAttributes(parseAttributes(newHtml));
+        setAttrList(parseAttributes(newHtml));
         void trackEvent('visual_style_saved', { mode: 'css-code', attr_edit: true });
       } catch (err) {
         logger.error('[ElementSettings] attribute edit failed', { error: toastText(err) });
@@ -165,6 +216,11 @@ export function useElementSettings({
       }
     },
     [projectPath, onToast]
+  );
+
+  const applyAttr = useCallback(
+    (name: string, value: string | null) => applyAttrs([{ name, value }]),
+    [applyAttrs]
   );
 
   /** Rename an attribute's key (remove old + add new in ONE source write so it never
@@ -186,7 +242,7 @@ export function useElementSettings({
       try {
         await applyElementHtml(projectPath, sig, oldHtml, newHtml);
         htmlRef.current = newHtml;
-        setAttributes(parseAttributes(newHtml));
+        setAttrList(parseAttributes(newHtml));
         void trackEvent('visual_style_saved', { mode: 'css-code', attr_edit: true });
       } catch (err) {
         logger.error('[ElementSettings] attribute rename failed', { error: toastText(err) });
@@ -289,15 +345,19 @@ export function useElementSettings({
 
   return {
     tag,
+    sourceTag,
     classes,
     attributes,
     addClass: (n) => void addClass(n),
     removeClass: (n) => void removeClass(n),
     setAttribute: (name, value) => void applyAttr(name, value),
+    setAttributes: (changes) => void applyAttrs(changes),
     renameAttribute: (oldName, newName, value) => void renameAttr(oldName, newName, value),
     removeAttribute: (name) => void applyAttr(name, null),
     canEditAttributes,
+    attrsError,
     location,
+    projectPath,
     busy,
   };
 }

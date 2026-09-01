@@ -647,12 +647,15 @@ export const Preview = forwardRef<PreviewHandle, PreviewProps>(function Preview(
     cssModulesHint: projectType === 'nextjs',
     onToast,
   });
-  // Settings tab (element tag/classes/attributes) — shares the cascade selection.
+  // The selected element's MARKUP (tag, classes, attributes). Read for whichever
+  // styling editor is live — the two are mutually exclusive — because both
+  // panels edit markup: the CSS panel's Settings tab, and the Tailwind panel's
+  // Link section.
   const elementSettings = useElementSettings({
     iframeRef,
     projectPath,
-    enabled: cssEditorEnabled,
-    signature: cssEditor.selection?.signature ?? null,
+    enabled: cssEditorEnabled || editorEnabled,
+    signature: cssEditor.selection?.signature ?? editor.selection?.signature ?? null,
     onToast,
   });
   // The CSS panel's active scope (Element / Variables / Animations), lifted so the
@@ -1744,6 +1747,7 @@ export const Preview = forwardRef<PreviewHandle, PreviewProps>(function Preview(
           const panel = (
             <VisualEditorPanel
               selection={editor.selection}
+              settings={elementSettings}
               projectPath={projectPath}
               currentClass={editor.currentClass}
               textResolution={textEditing.textResolution}

@@ -1,0 +1,129 @@
+/**
+ * The Link section of the Settings tab.
+ *
+ * Sits inside `.ss-settings__group`, so the section label, spacing and type
+ * scale come from css-cascade.css — only the controls this section adds live
+ * here: the kind switcher, the target picker, and the two flag toggles.
+ */
+
+.ss-link__kinds {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--spacing-xs);
+}
+
+.ss-link__kind {
+  all: unset;
+  cursor: pointer;
+  padding: 2px var(--spacing-sm);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text-secondary);
+  font-size: var(--font-size-xs);
+  transition:
+    color var(--transition-fast),
+    border-color var(--transition-fast),
+    background-color var(--transition-fast);
+}
+
+.ss-link__kind:hover:not(:disabled) {
+  color: var(--text-primary);
+  border-color: var(--border-hover);
+}
+
+.ss-link__kind.is-active {
+  background: var(--action);
+  border-color: var(--action);
+  color: var(--action-text);
+}
+
+.ss-link__kind:disabled {
+  cursor: default;
+  opacity: 0.5;
+}
+
+/* Focus has to stay visible on the active chip too, where the accent
+   background would otherwise swallow a plain outline. */
+.ss-link__kind:focus-visible,
+.ss-link__picker:focus-visible,
+.ss-link__input:focus-visible {
+  outline: 2px solid var(--action);
+  outline-offset: 2px;
+}
+
+.ss-link__picker,
+.ss-link__input {
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+  padding: 4px var(--spacing-sm);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+  font-family: var(--font-mono);
+  font-size: var(--font-size-sm);
+}
+
+.ss-link__picker:disabled,
+.ss-link__input:disabled {
+  color: var(--text-muted);
+  cursor: default;
+}
+
+.ss-link__toggle {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-xs);
+  color: var(--text-secondary);
+  font-size: var(--font-size-xs);
+  cursor: pointer;
+}
+
+.ss-link__toggle:has(input:disabled) {
+  color: var(--text-muted);
+  cursor: default;
+}
+
+/* What is actually in the attribute right now — the section edits parts, this
+   line is the whole truth, and the only place the link can be removed. */
+.ss-link__current {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-sm);
+}
+
+.ss-link__current code {
+  flex: 1 1 auto;
+  min-width: 0;
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  font-size: var(--font-size-xs);
+  overflow-wrap: anywhere;
+}
+
+.ss-link__current button {
+  all: unset;
+  flex: 0 0 auto;
+  cursor: pointer;
+  color: var(--text-muted);
+  font-size: var(--font-size-xs);
+}
+
+.ss-link__current button:hover:not(:disabled) {
+  color: var(--error);
+}
+
+.ss-link__note,
+.ss-link__locked {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: var(--font-size-xs);
+  line-height: 1.5;
+}
+
+.ss-link__locked code {
+  font-family: var(--font-mono);
+  color: var(--text-secondary);
+  overflow-wrap: anywhere;
+}

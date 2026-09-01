@@ -2,12 +2,23 @@
  * The "Settings" tab of the cascade editor (Stacki's Style/Settings split) — edits
  * the selected element's MARKUP: CLASSES (chips with add/remove) and ATTRIBUTES
  * (edit a value, remove, or add) are editable; TAG is shown for reference.
+ *
+ * A link element gets a LINK section on top of that, which owns `href`, `target`
+ * and `download`. Those three then drop out of the attribute rows: two editors
+ * for one value is how a half-written link ends up in source.
  */
 
 import { useState, type KeyboardEvent } from 'react';
 import { CloseIcon } from '../icons/common';
 import { PlusIcon } from '../icons/utility';
 import type { ElementSettings } from '../../hooks/useElementSettings';
+import { ElementLinkSection, isLinkElement } from './ElementLinkSection';
+import { isDynamicHref, linkAttrName } from '../../lib/elementLink';
+
+/** Attributes the Link section owns, so the rows below don't offer a second
+ *  editor for the same value. The target's own attribute (`href`, or `to` on a
+ *  React-Router link) is added to these per element. */
+const LINK_ATTRS = ['target', 'download'];
 
 export function ElementSettingsPanel({ settings }: { settings: ElementSettings }) {
   const {
@@ -24,6 +35,16 @@ export function ElementSettingsPanel({ settings }: { settings: ElementSettings }
   const [adding, setAdding] = useState(false);
   const [text, setText] = useState('');
 
+  const hrefAttr = linkAttrName(attributes);
+  const href = attributes.find((a) => a.name === hrefAttr)?.value ?? '';
+  const showLink = isLinkElement(tag);
+  // The section only takes the attributes over while it can actually write them.
+  const linkOwnsAttrs = showLink && canEditAttributes && !isDynamicHref(href);
+  const owned = [...LINK_ATTRS, hrefAttr.toLowerCase()];
+  const rows = linkOwnsAttrs
+    ? attributes.filter((a) => !owned.includes(a.name.toLowerCase()))
+    : attributes;
+
   const submit = () => {
     const v = text.trim();
     if (v) addClass(v);
@@ -37,6 +58,8 @@ export function ElementSettingsPanel({ settings }: { settings: ElementSettings }
         <h4 className="ss-settings__label">Tag</h4>
         <div className="ss-settings__tag">{tag || '—'}</div>
       </section>
+
+      {showLink && <ElementLinkSection settings={settings} />}
 
       <section className="ss-settings__group">
         <h4 className="ss-settings__label">Classes</h4>
@@ -88,7 +111,7 @@ export function ElementSettingsPanel({ settings }: { settings: ElementSettings }
       <section className="ss-settings__group">
         <h4 className="ss-settings__label">Attributes</h4>
         <ul className="ss-settings__attrs">
-          {attributes.map((a) => (
+          {rows.map((a) => (
             <AttrRow
               key={a.name}
               name={a.name}
@@ -100,7 +123,7 @@ export function ElementSettingsPanel({ settings }: { settings: ElementSettings }
             />
           ))}
         </ul>
-        {attributes.length === 0 && !canEditAttributes && (
+        {rows.length === 0 && !canEditAttributes && (
           <p className="ss-settings__empty">No other attributes.</p>
         )}
         {canEditAttributes && <AddAttr onAdd={(name, value) => setAttribute(name, value)} />}

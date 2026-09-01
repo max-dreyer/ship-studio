@@ -2778,7 +2778,7 @@ pub struct ElementHtml {
 
 /// One located instance of an element: its file, that file's source, and the
 /// byte span of the element's markup (opening tag → matching close tag).
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub(crate) struct LocatedInstance {
     pub(crate) file: String,
     pub(crate) abs: std::path::PathBuf,
@@ -2821,6 +2821,145 @@ fn locate_instance(
     })
 }
 
+/// Text content of a markup span, with the tags taken out — `<a href="x">Zur
+/// <b>Übersicht</b></a>` reads as "Zur Übersicht", which is what the browser
+/// reports for the same element.
+fn markup_text(html: &str) -> String {
+    let mut out = String::with_capacity(html.len());
+    let mut in_tag = false;
+    for ch in html.chars() {
+        match ch {
+            '<' => {
+                in_tag = true;
+                out.push(' ');
+            }
+            '>' => in_tag = false,
+            c if !in_tag => out.push(c),
+            _ => {}
+        }
+    }
+    normalize_ws(&out)
+}
+
+/// Whether every instance's markup is byte-identical — the condition for
+/// writing to a set of them at once.
+fn same_markup(instances: &[LocatedInstance]) -> bool {
+    let Some(first) = instances.first() else {
+        return false;
+    };
+    let head = &first.src[first.start..first.end];
+    instances.iter().all(|i| &i.src[i.start..i.end] == head)
+}
+
+/// Narrow same-class candidates to the ones that ARE the clicked element,
+/// by their own text. Returns their indices, empty when nothing fits.
+///
+/// A shared class can't tell lookalikes apart: `nav_link` sits on six different
+/// links, repeated across eighteen pages. The element's text can. Matching
+/// against each candidate's MARKUP SPAN rather than a window of surrounding
+/// source lines is what makes a label as short as "Events" usable here — there
+/// is no neighboring element inside the span whose text could bleed in.
+///
+/// This narrows rather than picks one, because the same link legitimately lives
+/// on every page of a static site and all of them should move together. The
+/// caller still requires the narrowed set to be byte-identical, so a set that
+/// disagrees about anything is refused exactly as before.
+fn narrow_by_element_text(instances: &[LocatedInstance], dom_text: Option<&str>) -> Vec<usize> {
+    let Some(text) = dom_text else {
+        return Vec::new();
+    };
+    let needle = normalize_ws(text);
+    if needle.is_empty() {
+        return Vec::new();
+    }
+    let texts: Vec<String> = instances
+        .iter()
+        .map(|i| markup_text(&i.src[i.start..i.end]))
+        .collect();
+    let exact: Vec<usize> = texts
+        .iter()
+        .enumerate()
+        .filter(|(_, t)| *t == &needle)
+        .map(|(i, _)| i)
+        .collect();
+    if !exact.is_empty() {
+        return exact;
+    }
+    // Nothing matched outright: the reported DOM text is capped, so a long body
+    // can arrive truncated. A prefix is weaker evidence, hence only the fallback.
+    texts
+        .iter()
+        .enumerate()
+        .filter(|(_, t)| t.starts_with(&needle))
+        .map(|(i, _)| i)
+        .collect()
+}
+
+/// Keep only the candidates that live in a file carrying one of the element's
+/// ancestor classes, nearest ancestor first. Empty when none of them does.
+///
+/// The relaxed cousin of [`locate_insert_site`]'s anchor, which needs an
+/// ancestor class that is unique across the whole project. A nav or a footer
+/// repeated over eighteen pages has no unique ancestor anywhere — yet "this
+/// file carries the surrounding class at all" still separates the live pages
+/// from an old export sitting in the project folder, whose
+/// `<a href="#">Impressum</a>` reads the same but points somewhere else.
+fn filter_by_ancestor_files(
+    candidates: &[LocatedInstance],
+    keep: &[usize],
+    occurrences: &[Occurrence],
+    ancestor_classes: &[String],
+) -> Vec<usize> {
+    for ancestor in ancestor_classes {
+        let files: Vec<&str> = occurrences
+            .iter()
+            .filter(|o| &o.class_name == ancestor)
+            .map(|o| o.file.as_str())
+            .collect();
+        if files.is_empty() {
+            continue;
+        }
+        let subset: Vec<usize> = keep
+            .iter()
+            .copied()
+            .filter(|&i| files.contains(&candidates[i].file.as_str()))
+            .collect();
+        if !subset.is_empty() {
+            return subset;
+        }
+    }
+    Vec::new()
+}
+
+/// The instances the clicked element actually stands for: narrowed by its own
+/// text, then — if those still disagree — by the files its ancestors live in.
+/// Empty unless the survivors are byte-identical, because a set that disagrees
+/// about anything must not be written to.
+fn instances_for_element(
+    candidates: &[LocatedInstance],
+    occurrences: &[Occurrence],
+    signature: Option<&ElementSignature>,
+) -> Vec<usize> {
+    let Some(sig) = signature else {
+        return Vec::new();
+    };
+    let by_text = narrow_by_element_text(candidates, sig.text.as_deref());
+    if by_text.is_empty() {
+        return Vec::new();
+    }
+    let picked: Vec<LocatedInstance> = by_text.iter().map(|&i| candidates[i].clone()).collect();
+    if same_markup(&picked) {
+        return by_text;
+    }
+    let by_ancestor =
+        filter_by_ancestor_files(candidates, &by_text, occurrences, &sig.ancestor_classes);
+    let picked: Vec<LocatedInstance> = by_ancestor.iter().map(|&i| candidates[i].clone()).collect();
+    if !picked.is_empty() && same_markup(&picked) {
+        return by_ancestor;
+    }
+    Vec::new()
+}
+
 /// Locate every editable instance of an element under `root`.
 ///
 /// `Resolved` yields one instance. `Multi` (one class string at several
@@ -2833,6 +2972,7 @@ fn locate_instances_at(
     root: &Path,
     resolution: Resolution,
     target: Option<&Location>,
+    signature: Option<&ElementSignature>,
 ) -> Result<(Vec<LocatedInstance>, Option<Vec<Location>>), CommandError> {
     match resolution {
         Resolution::Resolved {
@@ -2863,17 +3003,26 @@ fn locate_instances_at(
                 .iter()
                 .map(|l| locate_instance(root, &l.file, l.line, &class_name))
                 .collect::<Result<Vec<_>, _>>()?;
-            let first_html = &instances[0].src[instances[0].start..instances[0].end];
-            if instances
-                .iter()
-                .any(|i| &i.src[i.start..i.end] != first_html)
-            {
-                return Err(CommandError::Validation {
-                    field: "element".into(),
-                    reason: "This element appears in several places whose markup differs, so editing it here could change the wrong one. Ask your agent to edit it instead.".into(),
-                });
+            if same_markup(&instances) {
+                return Ok((instances, Some(locations)));
             }
-            Ok((instances, Some(locations)))
+            // The candidates disagree, but they usually aren't one group at all:
+            // six nav links share `nav_link`, each with its own label, and each
+            // repeats on every page. Keep the ones that are the clicked element
+            // — if THEY agree, they're the same link on eighteen pages and move
+            // together, which is what a shared nav means.
+            let occurrences = index_occurrences_cached(root);
+            let keep = instances_for_element(&instances, occurrences.as_slice(), signature);
+            if !keep.is_empty() {
+                let narrowed: Vec<LocatedInstance> =
+                    keep.iter().map(|&i| instances[i].clone()).collect();
+                let narrowed_locations = keep.iter().map(|&i| locations[i].clone()).collect();
+                return Ok((narrowed, Some(narrowed_locations)));
+            }
+            Err(CommandError::Validation {
+                field: "element".into(),
+                reason: "This element appears in several places whose markup differs, so editing it here could change the wrong one. Ask your agent to edit it instead.".into(),
+            })
         }
         Resolution::NoClass => Err(CommandError::Validation {
             field: "element".into(),
@@ -2889,16 +3038,107 @@ fn locate_instances_at(
     }
 }
 
+/// Every class-less tag of the signature's kind, as a located instance.
+///
+/// The second walk of the source tree this costs only happens when the single
+/// tag anchor already failed, i.e. once per click on a repeated element.
+fn classless_instances(root: &Path, tag: &str) -> Vec<LocatedInstance> {
+    let mut out = Vec::new();
+    for (rel, src) in source_files(root) {
+        for (insert_at, line) in find_classless_tag_sites(&src, tag) {
+            // `insert_at` sits just past the tag name, which is inside the
+            // opening tag — what `element_span` needs to expand to the element.
+            if let Some((start, end)) = element_span(&src, insert_at) {
+                out.push(LocatedInstance {
+                    file: rel.clone(),
+                    abs: root.join(&rel),
+                    src: src.clone(),
+                    line,
+                    start,
+                    end,
+                });
+            }
+        }
+    }
+    out
+}
+
+/// Locate a CLASS-LESS element's markup, anchoring on its tag, its ancestors'
+/// file and its own text.
+///
+/// The class-anchored path can't serve these: there is no class literal to find.
+/// A hand-written site is full of them (`<a href="impressum.html">Impressum</a>`),
+/// and requiring a class before a link's target may be edited is a detour that
+/// buys the user nothing.
+///
+/// First the single-tag anchor the "Add class" path uses, so anything that
+/// resolves today resolves the same way. When that can't pin ONE tag, the
+/// element is usually repeated verbatim on every page — the same footer link on
+/// nine of them — so the rule from the class-anchored path applies: keep the
+/// tags that are this element, and write to them only if they agree. Failing
+/// that, the anchor's own error is the answer, because it names what it
+/// searched.
+fn locate_classless_instances(
+    root: &Path,
+    signature: &ElementSignature,
+) -> Result<Vec<LocatedInstance>, CommandError> {
+    let occurrences = index_occurrences_cached(root);
+    let anchor_err = match locate_insert_site(root, occurrences.as_slice(), signature) {
+        Ok((cand, src)) => {
+            let (start, end) =
+                element_span(&src, cand.insert_at).ok_or_else(|| CommandError::Validation {
+                    field: "element".into(),
+                    reason: "couldn't map this element to its source markup".into(),
+                })?;
+            return Ok(vec![LocatedInstance {
+                file: cand.file.clone(),
+                abs: root.join(&cand.file),
+                src,
+                line: cand.line,
+                start,
+                end,
+            }]);
+        }
+        Err(e) => e,
+    };
+
+    let candidates = classless_instances(root, &signature.tag_name.to_ascii_lowercase());
+    let keep = instances_for_element(&candidates, occurrences.as_slice(), Some(signature));
+    if !keep.is_empty() {
+        return Ok(keep.iter().map(|&i| candidates[i].clone()).collect());
+    }
+    Err(anchor_err)
+}
+
 /// Validate the project path, resolve the signature, and locate instances —
 /// the command-facing wrapper around [`locate_instances_at`].
+///
+/// A class-less element takes the tag/text anchor instead of the class one; a
+/// dynamic class still can't be anchored either way and stays read-only.
 fn locate_element_instances(
     project_path: &str,
     signature: ElementSignature,
     target: Option<&Location>,
 ) -> Result<(Vec<LocatedInstance>, Option<Vec<Location>>), CommandError> {
-    let resolution = resolve_classname_source(project_path.to_string(), signature)?;
+    let resolution = resolve_classname_source(project_path.to_string(), signature.clone())?;
     let root = validate_project_path(project_path)?;
-    locate_instances_at(&root, resolution, target)
+    if matches!(resolution, Resolution::NoClass) {
+        let instances = locate_classless_instances(&root, &signature)?;
+        // Report the set the same way the class-anchored path does, so a caller
+        // can see (and target) the individual spots a write would touch.
+        let locations = (instances.len() > 1).then(|| {
+            instances
+                .iter()
+                .map(|i| Location {
+                    file: i.file.clone(),
+                    line: i.line,
+                    column: line_col(&i.src, i.start).1,
+                })
+                .collect()
+        });
+        return Ok((instances, locations));
+    }
+    locate_instances_at(&root, resolution, target, Some(&signature))
 }
 
 /// Resolve an element to the source markup span, file, and contents, plus the
@@ -2917,7 +3157,10 @@ pub(crate) fn locate_element(
         });
     }
     let root = validate_project_path(project_path)?;
-    let (instances, _) = locate_instances_at(&root, resolution, None)?;
+    // No text anchor here: `Multi` is refused outright above, so there is never
+    // a set to pick from — a structural op on the wrong one of several
+    // lookalikes is worse than asking the agent to do it.
+    let (instances, _) = locate_instances_at(&root, resolution, None, None)?;
     let inst = instances.into_iter().next().expect("resolved yields one");
     Ok((
         inst.file, inst.abs, inst.src, inst.line, inst.start, inst.end,
@@ -3091,6 +3334,18 @@ mod tests {
         }
     }
 
+    /// A signature carrying only the clicked element's text — enough for the
+    /// narrowing the markup path does.
+    fn text_sig(text: &str) -> ElementSignature {
+        ElementSignature {
+            class_name: String::new(),
+            tag_name: "a".into(),
+            text: Some(text.into()),
+            ancestor_classes: Vec::new(),
+            attr_src: None,
+        }
+    }
+
     #[test]
     fn multi_identical_markup_resolves_and_applies_to_all() {
         let dir = tempfile::TempDir::new().unwrap();
@@ -3100,7 +3355,7 @@ mod tests {
         std::fs::write(root.join("B.tsx"), card).unwrap();
 
         let res = multi_res(&[("A.tsx", 1), ("B.tsx", 1)], "card");
-        let (instances, locations) = locate_instances_at(root, res, None).unwrap();
+        let (instances, locations) = locate_instances_at(root, res, None, None).unwrap();
         assert_eq!(instances.len(), 2);
         assert_eq!(locations.as_ref().map(Vec::len), Some(2));
         let html = &instances[0].src[instances[0].start..instances[0].end];
@@ -3115,6 +3370,86 @@ mod tests {
                 .unwrap()
                 .contains("Buy later"));
         }
+    }
+
+    #[test]
+    fn a_shared_class_is_narrowed_by_the_clicked_element_s_own_text() {
+        // The nav-link case, at its real shape: one class, several links with
+        // different labels, and the whole nav repeated on every page. The class
+        // can't tell the links apart and the labels are far too short for the
+        // surrounding-lines anchor — the element's own markup is what does it.
+        // The one link that was clicked then moves on BOTH pages, because a
+        // shared nav that changes on one page only is broken, not edited.
+        let dir = tempfile::TempDir::new().unwrap();
+        let root = dir.path();
+        let nav = "<a class=\"nav_link\" href=\"techshore.html\">Techshore</a>\n\
+                   <a class=\"nav_link\" href=\"events.html\">Events</a>\n";
+        std::fs::write(root.join("index.html"), nav).unwrap();
+        std::fs::write(root.join("agb.html"), nav).unwrap();
+
+        let res = multi_res(
+            &[
+                ("index.html", 1),
+                ("index.html", 2),
+                ("agb.html", 1),
+                ("agb.html", 2),
+            ],
+            "nav_link",
+        );
+        let (instances, locations) =
+            locate_instances_at(root, res, None, Some(&text_sig("Events"))).unwrap();
+        assert_eq!(instances.len(), 2);
+        assert_eq!(locations.as_ref().map(Vec::len), Some(2));
+        for inst in &instances {
+            assert_eq!(
+                &inst.src[inst.start..inst.end],
+                "<a class=\"nav_link\" href=\"events.html\">Events</a>"
+            );
+        }
+    }
+
+    #[test]
+    fn same_label_pointing_somewhere_else_stays_refused() {
+        // Two links that read identically but lead elsewhere: nothing in the
+        // signature can say which one was clicked, so neither is written to.
+        let dir = tempfile::TempDir::new().unwrap();
+        let root = dir.path();
+        std::fs::write(
+            root.join("index.html"),
+            "<a class=\"nav_link\" href=\"a.html\">Mehr</a>\n\
+             <a class=\"nav_link\" href=\"b.html\">Mehr</a>\n",
+        )
+        .unwrap();
+
+        let res = multi_res(&[("index.html", 1), ("index.html", 2)], "nav_link");
+        let err = locate_instances_at(root, res, None, Some(&text_sig("Mehr"))).unwrap_err();
+        assert!(matches!(err, CommandError::Validation { .. }));
+    }
+
+    #[test]
+    fn a_label_that_is_only_a_prefix_of_another_still_resolves() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let root = dir.path();
+        std::fs::write(
+            root.join("index.html"),
+            "<a class=\"nav_link\" href=\"a.html\">Mehr</a>\n\
+             <a class=\"nav_link\" href=\"b.html\">Mehr erfahren</a>\n",
+        )
+        .unwrap();
+
+        let res = multi_res(&[("index.html", 1), ("index.html", 2)], "nav_link");
+        // An exact hit beats the prefix fallback, so "Mehr" is its own link.
+        let (instances, _) = locate_instances_at(root, res, None, Some(&text_sig("Mehr"))).unwrap();
+        assert_eq!(instances.len(), 1);
+        assert!(instances[0].src[instances[0].start..instances[0].end].contains("a.html"));
+    }
+
+    #[test]
+    fn markup_text_reads_a_link_the_way_the_browser_does() {
+        assert_eq!(
+            markup_text("<a href=\"x\">Zur <b>Übersicht</b></a>"),
+            "Zur Übersicht"
+        );
     }
 
     #[test]
@@ -3133,7 +3468,7 @@ mod tests {
         .unwrap();
 
         let res = multi_res(&[("A.tsx", 1), ("B.tsx", 1)], "card");
-        let err = locate_instances_at(root, res, None).unwrap_err();
+        let err = locate_instances_at(root, res, None, None).unwrap_err();
         match err {
             CommandError::Validation { reason, .. } => {
                 assert!(reason.contains("markup differs"), "got: {reason}")
@@ -3156,7 +3491,7 @@ mod tests {
             column: 1,
         };
         let res = multi_res(&[("A.tsx", 1), ("B.tsx", 1)], "card");
-        let (instances, _) = locate_instances_at(root, res, Some(&target)).unwrap();
+        let (instances, _) = locate_instances_at(root, res, Some(&target), None).unwrap();
         assert_eq!(instances.len(), 1);
         assert_eq!(instances[0].file, "B.tsx");
 
@@ -3186,7 +3521,7 @@ mod tests {
         .unwrap();
 
         let res = multi_res(&[("List.tsx", 3), ("List.tsx", 4)], "item");
-        let (instances, _) = locate_instances_at(root, res, None).unwrap();
+        let (instances, _) = locate_instances_at(root, res, None, None).unwrap();
         assert_eq!(instances.len(), 2);
         let applied = apply_html_to_instances(
             &instances,
@@ -3209,7 +3544,7 @@ mod tests {
         std::fs::write(root.join("B.tsx"), card).unwrap();
 
         let res = multi_res(&[("A.tsx", 1), ("B.tsx", 1)], "card");
-        let (instances, _) = locate_instances_at(root, res, None).unwrap();
+        let (instances, _) = locate_instances_at(root, res, None, None).unwrap();
         // B drifts after locating (user edited the file directly).
         std::fs::write(
             root.join("B.tsx"),
@@ -4281,6 +4616,75 @@ const items = [];
         let occ = index_occurrences(root);
         let (cand, src) = locate_insert_site(root, &occ, sig)?;
         write_class_attr_insert(root, &cand, &src, class)
+    }
+
+    #[test]
+    fn a_classless_link_still_resolves_to_its_markup() {
+        // The everyday case on a hand-written site: a footer link with no class.
+        // Class anchoring has nothing to hold on to, so the tag/text anchor has
+        // to carry it — otherwise the link's target can't be edited at all.
+        let dir = tempfile::TempDir::new().unwrap();
+        let root = dir.path();
+        std::fs::write(
+            root.join("index.html"),
+            "<footer class=\"site-foot\">\n  <a href=\"impressum.html\">Impressum</a>\n</footer>\n",
+        )
+        .unwrap();
+
+        let sig = classless_sig("a", Some("Impressum"), &["site-foot"]);
+        let found = locate_classless_instances(root, &sig).unwrap();
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].file, "index.html");
+        assert_eq!(
+            &found[0].src[found[0].start..found[0].end],
+            "<a href=\"impressum.html\">Impressum</a>"
+        );
+    }
+
+    #[test]
+    fn a_classless_link_repeated_across_pages_moves_on_all_of_them() {
+        // The footer of a hand-written site: the same link, verbatim, on every
+        // page. Nothing can pin ONE of them, and nothing should — they are one
+        // link. The stale export lying in the project folder reads the same but
+        // points elsewhere, and the ancestor class keeps it out.
+        let dir = tempfile::TempDir::new().unwrap();
+        let root = dir.path();
+        let page =
+            "<footer class=\"site-foot\">\n  <a href=\"impressum.html\">Impressum</a>\n</footer>\n";
+        std::fs::write(root.join("index.html"), page).unwrap();
+        std::fs::write(root.join("agb.html"), page).unwrap();
+        std::fs::write(
+            root.join("old-export.html"),
+            "<div class=\"legacy-foot\">\n  <a href=\"#\">Impressum</a>\n</div>\n",
+        )
+        .unwrap();
+
+        let sig = classless_sig("a", Some("Impressum"), &["site-foot"]);
+        let found = locate_classless_instances(root, &sig).unwrap();
+        assert_eq!(found.len(), 2);
+        for inst in &found {
+            assert_eq!(
+                &inst.src[inst.start..inst.end],
+                "<a href=\"impressum.html\">Impressum</a>"
+            );
+        }
+    }
+
+    #[test]
+    fn two_indistinguishable_classless_links_stay_read_only() {
+        // Same tag, same text, no ancestor to tell them apart: writing to either
+        // would be a guess, so this fails closed rather than picking one.
+        let dir = tempfile::TempDir::new().unwrap();
+        let root = dir.path();
+        std::fs::write(
+            root.join("index.html"),
+            "<a href=\"a.html\">Mehr</a>\n<a href=\"b.html\">Mehr</a>\n",
+        )
+        .unwrap();
+
+        let err =
+            locate_classless_instances(root, &classless_sig("a", Some("Mehr"), &[])).unwrap_err();
+        assert!(matches!(err, CommandError::Validation { .. }));
     }
 
     #[test]
