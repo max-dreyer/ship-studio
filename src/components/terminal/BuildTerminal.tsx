@@ -110,7 +110,9 @@ export function BuildTerminal({
         background: '#1e1e1e',
         foreground: '#cccccc',
         cursor: '#ffffff',
-        selectionBackground: '#3a3d41',
+        selectionBackground: '#264f78',
+        selectionForeground: '#ffffff',
+        selectionInactiveBackground: '#3a3d41',
       },
     });
     const fit = new FitAddon();

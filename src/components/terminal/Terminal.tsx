@@ -414,7 +414,15 @@ export const Terminal = forwardRef<TerminalHandle, TerminalProps>(function Termi
         background: '#1e1e1e',
         foreground: '#cccccc',
         cursor: '#ffffff',
-        selectionBackground: '#3a3d41',
+        // Selection has to be readable against the dark background. The old
+        // #3a3d41 sat ~1.6:1 above #1e1e1e, so a drag over agent output left no
+        // visible trace of what was actually marked. Opaque blue + a forced
+        // white glyph color makes the selection unmistakable; the muted grey
+        // stays on for the unfocused pane, where a loud highlight would only
+        // compete with the pane that has focus.
+        selectionBackground: '#264f78',
+        selectionForeground: '#ffffff',
+        selectionInactiveBackground: '#3a3d41',
         black: '#000000',
         red: '#cd3131',
         green: '#0dbc79',
