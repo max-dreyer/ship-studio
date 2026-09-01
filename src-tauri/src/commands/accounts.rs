@@ -486,15 +486,19 @@ pub fn gh_config_dir(account_id: &str) -> PathBuf {
     private_account_subdir(account_id, "gh")
 }
 
-/// Directory used as `GITLAB_CONFIG_DIR` for this account, created on access.
+/// Directory used as `GLAB_CONFIG_DIR` for this account, created on access.
+///
+/// The variable is `GLAB_CONFIG_DIR`, not `GITLAB_CONFIG_DIR` — `glab` ignores
+/// the latter, so isolated workspaces silently shared the machine's global
+/// GitLab login (and its token) until this was corrected.
 ///
 /// Mirrors [`gh_config_dir`]: the Default account resolves to `glab`'s real,
-/// global config directory (honoring `GITLAB_CONFIG_DIR`/`XDG_CONFIG_HOME` if
+/// global config directory (honoring `GLAB_CONFIG_DIR`/`XDG_CONFIG_HOME` if
 /// already set, else `~/.config/glab-cli`) so an existing `glab` login keeps
 /// working, and other accounts get an isolated directory.
 pub fn glab_config_dir(account_id: &str) -> PathBuf {
     if account_id == DEFAULT_ACCOUNT_ID {
-        if let Ok(dir) = std::env::var("GITLAB_CONFIG_DIR") {
+        if let Ok(dir) = std::env::var("GLAB_CONFIG_DIR") {
             return PathBuf::from(dir);
         }
         let config_home = std::env::var("XDG_CONFIG_HOME")
@@ -643,7 +647,7 @@ pub fn get_env_vars_for_account(account_id: &str) -> HashMap<String, String> {
             gh_config_dir(account_id).to_string_lossy().to_string(),
         );
         vars.insert(
-            "GITLAB_CONFIG_DIR".to_string(),
+            "GLAB_CONFIG_DIR".to_string(),
             glab_config_dir(account_id).to_string_lossy().to_string(),
         );
         vars.insert(
@@ -1044,7 +1048,7 @@ pub async fn get_account_credential_status(
         // Same reasoning as GH_CONFIG_DIR: pinning it for the Default workspace
         // would hide the user's own native glab login.
         if id != DEFAULT_ACCOUNT_ID {
-            glab_cmd.env("GITLAB_CONFIG_DIR", glab_config_dir(&id));
+            glab_cmd.env("GLAB_CONFIG_DIR", glab_config_dir(&id));
         }
         match run_with_timeout(glab_cmd, "glab auth status", 10).await {
             // glab writes its whole report to stderr and exits non-zero when no
@@ -2273,7 +2277,7 @@ mod tests {
 
     #[test]
     fn parse_glab_auth_status_returns_none_without_a_token() {
-        // Verbatim from `glab auth status` with an empty GITLAB_CONFIG_DIR.
+        // Verbatim from `glab auth status` with an empty GLAB_CONFIG_DIR.
         let stderr = "gitlab.com\n  x gitlab.com: API call failed: GET https://gitlab.com/api/v4/user: 401 {message: 401 Unauthorized}\n  ! No token found (checked config file, keyring, and environment variables).\n  X could not authenticate to one or more of the configured GitLab instances.\n";
         assert_eq!(parse_glab_auth_status(stderr), None);
     }

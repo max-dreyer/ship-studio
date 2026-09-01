@@ -12,13 +12,98 @@
 //! per-CLI typed wrappers; this helper is the foundation.
 
 use crate::errors::CommandError;
+use std::path::Path;
+use std::sync::{Arc, LazyLock};
 use std::time::Duration;
 use tokio::process::Command;
+use tokio::sync::Mutex;
 use tracing::{debug, warn};
 
 /// Default timeout for any external CLI invocation. Individual callers can
 /// override per call.
 pub const DEFAULT_TIMEOUT_SECS: u64 = 30;
+
+/// Lets only one `glab` run at a time, app-wide.
+///
+/// GitLab hands `glab` a two-hour OAuth access token plus a **single-use**
+/// refresh token. Any `glab` command whose access token has expired refreshes
+/// the pair itself and writes the new one back, so two `glab` processes that
+/// start in the same moment refresh with the *same* refresh token: GitLab
+/// honors the first, revokes it, and answers the second with
+/// `invalid_grant`. What is left on disk is then a revoked token, and the user
+/// has to authorize again — the "GitLab sign-in doesn't stick" report. The auth
+/// probes poll every 3 seconds, which made that collision routine rather than
+/// rare.
+///
+/// The lock is taken inside the caller's timeout, so a queued call fails with
+/// its normal `Timeout` instead of waiting forever.
+static GITLAB_CLI_GATE: LazyLock<Arc<Mutex<()>>> = LazyLock::new(|| Arc::new(Mutex::new(())));
+
+/// Whether this command runs `glab`. The program is usually an absolute path
+/// (`/opt/homebrew/bin/glab`), and `.exe` on Windows, so match the file stem.
+fn is_gitlab_cli(cmd: &Command) -> bool {
+    Path::new(cmd.as_std().get_program())
+        .file_stem()
+        .is_some_and(|stem| stem.eq_ignore_ascii_case("glab"))
+}
+
+/// Spawn the child and wait for it, retrying transient EAGAIN spawn failures in
+/// place (issue #616): the process-table pressure that produces them usually
+/// clears within milliseconds, and background polling callers (e.g. `gh pr
+/// list`) would otherwise surface a scary one-off error for a self-healing
+/// condition. The retries run inside the caller's timeout budget.
+async fn output_with_spawn_retries(
+    cmd: &mut Command,
+    label: &str,
+) -> std::io::Result<std::process::Output> {
+    const ATTEMPTS: u64 = 3;
+    for attempt in 1..=ATTEMPTS {
+        match cmd.output().await {
+            Err(e) if attempt < ATTEMPTS && is_spawn_resource_pressure(&e.to_string()) => {
+                warn!(
+                    cmd = %label,
+                    attempt,
+                    error = %e,
+                    "spawn hit transient resource pressure (EAGAIN); retrying"
+                );
+                tokio::time::sleep(Duration::from_millis(100 * attempt)).await;
+            }
+            other => return other,
+        }
+    }
+    unreachable!("loop returns on the final attempt")
+}
+
+/// Run `glab` under [`GITLAB_CLI_GATE`], and let it finish even when the
+/// caller's timeout fires.
+///
+/// Killing `glab` mid-refresh loses the login exactly the way a collision does:
+/// GitLab has already revoked the old refresh token by the time the reply comes
+/// back, so a process killed before it persists the new pair leaves nothing
+/// usable on disk. This path therefore does **not** set `kill_on_drop` — a
+/// timed-out `glab` runs to completion in a detached task that still holds the
+/// gate (and reaps the child), while the caller gets its `Timeout` as before.
+/// `glab` has its own network timeouts, so the task can't linger indefinitely.
+async fn run_gitlab_cli(
+    mut cmd: Command,
+    label: String,
+    timeout_secs: u64,
+) -> Result<std::io::Result<std::process::Output>, tokio::time::error::Elapsed> {
+    let gated = async move {
+        let gate = Arc::clone(&GITLAB_CLI_GATE).lock_owned().await;
+        let task = tokio::spawn(async move {
+            let _gate = gate;
+            output_with_spawn_retries(&mut cmd, &label).await
+        });
+        match task.await {
+            Ok(output) => output,
+            Err(join_err) => Err(std::io::Error::other(format!(
+                "the glab runner task failed: {join_err}"
+            ))),
+        }
+    };
+    tokio::time::timeout(Duration::from_secs(timeout_secs), gated).await
+}
 
 /// Run an external command with a timeout. Returns the captured `Output` on
 /// success, or a `CommandError::Timeout` / `CommandError::Io` on failure.
@@ -34,37 +119,23 @@ pub async fn run_with_timeout(
     let label = cmd_label.into();
     debug!(cmd = %label, timeout_secs, "spawning external command");
 
-    // When the timeout fires, the output() future is dropped — without
-    // kill_on_drop the child would keep running (a timed-out headless-browser
-    // capture lingered forever, issue #510; a timed-out `git diff` keeps
-    // grinding a big repo in the background, issue #608; same class as
-    // run_git_net's #556).
-    cmd.kill_on_drop(true);
-
-    // Retry transient EAGAIN spawn failures in place (issue #616): the
-    // process-table pressure that produces them usually clears within
-    // milliseconds, and background polling callers (e.g. `gh pr list`) would
-    // otherwise surface a scary one-off error for a self-healing condition.
-    // The retries run inside the caller's timeout budget.
-    let run = async {
-        const ATTEMPTS: u64 = 3;
-        for attempt in 1..=ATTEMPTS {
-            match cmd.output().await {
-                Err(e) if attempt < ATTEMPTS && is_spawn_resource_pressure(&e.to_string()) => {
-                    warn!(
-                        cmd = %label,
-                        attempt,
-                        error = %e,
-                        "spawn hit transient resource pressure (EAGAIN); retrying"
-                    );
-                    tokio::time::sleep(Duration::from_millis(100 * attempt)).await;
-                }
-                other => return other,
-            }
-        }
-        unreachable!("loop returns on the final attempt")
+    // `glab` gets its own runner: its OAuth credential can't survive two
+    // processes racing, or one being killed mid-refresh (see GITLAB_CLI_GATE).
+    let result = if is_gitlab_cli(&cmd) {
+        run_gitlab_cli(cmd, label.clone(), timeout_secs).await
+    } else {
+        // When the timeout fires, the output() future is dropped — without
+        // kill_on_drop the child would keep running (a timed-out
+        // headless-browser capture lingered forever, issue #510; a timed-out
+        // `git diff` keeps grinding a big repo in the background, issue #608;
+        // same class as run_git_net's #556).
+        cmd.kill_on_drop(true);
+        tokio::time::timeout(
+            Duration::from_secs(timeout_secs),
+            output_with_spawn_retries(&mut cmd, &label),
+        )
+        .await
     };
-    let result = tokio::time::timeout(Duration::from_secs(timeout_secs), run).await;
 
     match result {
         Ok(Ok(output)) => {
@@ -413,6 +484,19 @@ pub fn truncate_output_head_tail(text: &str) -> String {
 mod tests {
     use super::*;
 
+    #[test]
+    fn the_gitlab_cli_is_recognized_by_path_not_by_name() {
+        // How every caller actually builds it: an absolute path from PATH
+        // resolution, or the bare name when the lookup found nothing.
+        assert!(is_gitlab_cli(&Command::new("/opt/homebrew/bin/glab")));
+        assert!(is_gitlab_cli(&Command::new("glab")));
+        // Windows resolves it with the extension.
+        assert!(is_gitlab_cli(&Command::new("glab.exe")));
+        // Serializing anything else would be a pointless bottleneck.
+        assert!(!is_gitlab_cli(&Command::new("/opt/homebrew/bin/gh")));
+        assert!(!is_gitlab_cli(&Command::new("git")));
+    }
+
     #[tokio::test]
     async fn run_with_timeout_returns_output_for_quick_command() {
         let mut cmd = Command::new("echo");
@@ -459,6 +543,41 @@ mod tests {
         assert!(
             !marker.exists(),
             "timed-out child survived and wrote its marker — kill_on_drop regressed"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// The opposite guarantee, and deliberately so: a timed-out `glab` must be
+    /// left alone to finish writing the OAuth token pair it may be holding
+    /// (see GITLAB_CLI_GATE). Killing it there costs the user their sign-in.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn a_timed_out_glab_is_left_to_finish() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = std::env::temp_dir().join(format!("ss-glab-test-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let marker = dir.join("finished-marker");
+        let _ = std::fs::remove_file(&marker);
+
+        // Named `glab`, because that is what the runner keys off.
+        let fake_glab = dir.join("glab");
+        std::fs::write(
+            &fake_glab,
+            format!("#!/bin/sh\nsleep 2\ntouch {}\n", marker.display()),
+        )
+        .unwrap();
+        std::fs::set_permissions(&fake_glab, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+        let err = run_with_timeout(Command::new(&fake_glab), "glab auth status", 1)
+            .await
+            .unwrap_err();
+        assert!(matches!(err, CommandError::Timeout { .. }));
+
+        tokio::time::sleep(Duration::from_millis(2500)).await;
+        assert!(
+            marker.exists(),
+            "the timed-out glab was killed — a refresh mid-flight loses the login"
         );
         let _ = std::fs::remove_dir_all(&dir);
     }

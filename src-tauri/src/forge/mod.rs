@@ -176,7 +176,7 @@ pub const GITLAB: ForgeConfig = ForgeConfig {
     default_host: "gitlab.com",
     known_hosts: &["gitlab.com", "www.gitlab.com"],
     transport: ForgeTransport::Cli("glab"),
-    config_dir_env: Some("GITLAB_CONFIG_DIR"),
+    config_dir_env: Some("GLAB_CONFIG_DIR"),
     credential_helper_args: Some(&["auth", "git-credential"]),
     setup_item_ids: (Some("glab"), "glab_auth"),
     brew_package: Some("glab"),

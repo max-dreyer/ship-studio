@@ -23,6 +23,10 @@ use crate::errors::CommandError;
 /// - "No token found (checked config file, keyring, and environment variables)."
 /// - "could not authenticate to one or more of the configured GitLab instances."
 /// - "API call failed: GET https://gitlab.com/api/v4/user: 401 {message: 401 Unauthorized}"
+/// - `oauth2: "invalid_grant" "The provided authorization grant is invalid,
+///   expired, revoked, ..."` — the stored refresh token no longer works, which
+///   reads as an OAuth internal but means exactly one thing to the user: sign
+///   in again.
 pub fn glab_auth_error(stderr: &str) -> Option<CommandError> {
     let lower = stderr.to_lowercase();
     if lower.contains("no token found")
@@ -30,6 +34,7 @@ pub fn glab_auth_error(stderr: &str) -> Option<CommandError> {
         || lower.contains("glab auth login")
         || stderr.contains("GITLAB_TOKEN")
         || lower.contains("401 unauthorized")
+        || lower.contains("invalid_grant")
         // git falling back to an interactive credential prompt, same as the
         // GitHub path: no tty in a GUI-spawned process, so it can never be
         // answered and the reconnect flow is the fix.
@@ -117,6 +122,17 @@ mod tests {
     fn glab_401_is_an_auth_error() {
         let stderr =
             "x gitlab.com: API call failed: GET https://gitlab.com/api/v4/user: 401 {message: 401 Unauthorized}";
+        assert!(matches!(
+            glab_auth_error(stderr),
+            Some(CommandError::NotAuthenticated { service }) if service == "gitlab"
+        ));
+    }
+
+    #[test]
+    fn an_expired_refresh_token_is_an_auth_error() {
+        // Verbatim from `glab repo create` after the stored refresh token was
+        // revoked — the raw text used to reach the user as-is.
+        let stderr = "ERROR Error creating project: oauth2: \"invalid_grant\" \"The provided authorization grant is invalid, expired, revoked, does not match the redirection URI used in the authorization request, or was issued to another client.\"";
         assert!(matches!(
             glab_auth_error(stderr),
             Some(CommandError::NotAuthenticated { service }) if service == "gitlab"

@@ -32,7 +32,7 @@ const FORGE_CLI_TIMEOUT_SECS: u64 = 20;
 /// The active workspace rather than a project's: an import has no project yet,
 /// and the repositories offered must come from the account the user is currently
 /// working as (see `accounts::get_env_vars_for_active_account`, which pins
-/// `GH_CONFIG_DIR` / `GITLAB_CONFIG_DIR` for isolated workspaces).
+/// `GH_CONFIG_DIR` / `GLAB_CONFIG_DIR` for isolated workspaces).
 fn forge_cli_command(forge: &'static ForgeConfig) -> Result<Command, CommandError> {
     let binary = listing::cli_binary(forge)?;
     let mut cmd = match find_executable(binary) {
