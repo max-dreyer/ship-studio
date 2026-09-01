@@ -4,8 +4,12 @@
  *
  * Notes are grouped by page, because a review session wanders across a site
  * and "which page was that on" is the first thing you ask when reading them
- * back. Sent notes stay visible but muted until cleared: they're the record of
- * what the agent was already told.
+ * back.
+ *
+ * A note that reached the agent is done, so the list drops it: what's left is
+ * the work still open. It isn't deleted — "Show N sent" brings the record of
+ * what the agent was already told back, and "Clear sent" is still the only
+ * thing that removes them.
  *
  * @module components/preview/CommentsPanel
  */
@@ -53,7 +57,10 @@ export function CommentsPanel({
 }: Props) {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [draft, setDraft] = useState('');
-  const hasSent = comments.some((c) => c.sent);
+  const [showSent, setShowSent] = useState(false);
+  const sentCount = comments.filter((c) => c.sent).length;
+  // Open notes only, unless the user asked to see the sent ones again.
+  const listed = showSent ? comments : comments.filter((c) => !c.sent);
 
   const beginEdit = (comment: PreviewComment) => {
     setEditingId(comment.id);
@@ -69,7 +76,7 @@ export function CommentsPanel({
     <aside className="ss-notes">
       <header className="ss-notes__head">
         <span className="ss-notes__title">Notes</span>
-        {comments.length > 0 && <span className="ss-notes__count">{comments.length}</span>}
+        {listed.length > 0 && <span className="ss-notes__count">{listed.length}</span>}
         <button
           type="button"
           className="ss-notes__close"
@@ -80,16 +87,33 @@ export function CommentsPanel({
         </button>
       </header>
 
-      {comments.length === 0 ? (
+      {sentCount > 0 && (
+        <div className="ss-notes__sent-bar">
+          <button
+            type="button"
+            className="ss-notes__sent-toggle"
+            onClick={() => setShowSent((open) => !open)}
+            aria-expanded={showSent}
+          >
+            {showSent ? 'Hide' : 'Show'} {sentCount} sent
+          </button>
+        </div>
+      )}
+
+      {listed.length === 0 ? (
         <div className="ss-notes__empty">
-          <p className="ss-notes__empty-lead">No notes yet.</p>
+          <p className="ss-notes__empty-lead">
+            {comments.length === 0 ? 'No notes yet.' : 'Nothing open.'}
+          </p>
           <p className="ss-notes__empty-hint">
-            Click anything in the preview to leave one, then send them all to the agent at once.
+            {comments.length === 0
+              ? 'Click anything in the preview to leave one, then send them all to the agent at once.'
+              : 'Every note went to the agent. Show them again above, or clear them for good.'}
           </p>
         </div>
       ) : (
         <div className="ss-notes__list">
-          {groupByPage(comments).map((group) => {
+          {groupByPage(listed).map((group) => {
             const isCurrent = (group.url || '/') === (currentUrl || '/');
             return (
               <section className="ss-notes__group" key={group.url}>
@@ -183,7 +207,7 @@ export function CommentsPanel({
               ? 'Nothing to send'
               : `Send ${unsentCount} to agent`}
         </button>
-        {hasSent && (
+        {sentCount > 0 && (
           <button type="button" className="ss-notes__clear" onClick={onClearSent}>
             Clear sent
           </button>

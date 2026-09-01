@@ -100,6 +100,46 @@ describe('CommentPins', () => {
     expect(labels).toEqual(['1', '3']);
   });
 
+  it('leaves out a note that already went to the agent', () => {
+    render(
+      <CommentPins
+        comments={[note('1', { sent: true }), note('2')]}
+        positions={[
+          { id: '1', x: 10, y: 10, found: true },
+          { id: '2', x: 30, y: 30, found: true },
+        ]}
+        selectedId={null}
+        onSelect={vi.fn()}
+      />
+    );
+    // The remaining note is numbered 1: sent notes are out of the sequence, so
+    // the canvas never shows a gap where one used to be.
+    const labels = screen.getAllByRole('button').map((b) => b.textContent);
+    expect(labels).toEqual(['1']);
+  });
+
+  it('brings a sent note back while it is selected in the list', () => {
+    render(
+      <CommentPins
+        comments={[note('1', { sent: true }), note('2')]}
+        positions={[
+          { id: '1', x: 10, y: 10, found: true },
+          { id: '2', x: 30, y: 30, found: true },
+        ]}
+        selectedId="1"
+        onSelect={vi.fn()}
+      />
+    );
+    const pins = screen.getAllByRole('button');
+    expect(pins).toHaveLength(2);
+    const sent = pins.filter((p) => p.classList.contains('is-sent'));
+    // It carries a check, not a number — it holds no place in the sequence, and
+    // the open note beside it keeps number 1.
+    expect(sent).toHaveLength(1);
+    expect(sent[0].textContent).toBe('');
+    expect(pins.map((p) => p.textContent)).toContain('1');
+  });
+
   it('scales positions onto a shrunk canvas', () => {
     render(
       <CommentPins

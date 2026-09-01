@@ -4,18 +4,23 @@
  * Positions come from the iframe (only it can resolve a `dom_path`), so this
  * component just paints.
  *
- * Two cases get no pin at all.
+ * Three cases get no pin at all.
  *
  * A note whose element the page no longer has: it used to get one at (0, 0) —
  * the iframe's placeholder for "not found" — which put a pin in the corner
  * that stayed there while the page scrolled, looking like a real marker on the
  * wrong element. An invented position is worse than no position.
  *
- * And an element that exists but is covered by something else. A sticky footer
+ * An element that exists but is covered by something else. A sticky footer
  * revealed from behind the page content is the case that surfaced this: it
  * holds one spot the whole time, hidden under the content, so its pin floated
  * in the middle of blank space and never moved. The pin comes back when you
  * scroll far enough for the element to actually be there.
+ *
+ * And a note already handed to the agent. That work is done, and a canvas
+ * still covered in numbers for it hides the notes that are actually open.
+ * Selecting one in the notes list brings its pin back — with a check instead
+ * of a number, so it never takes a place in the open notes' 1..n sequence.
  *
  * The notes list is where a note nobody can point at stays visible.
  *
@@ -24,6 +29,7 @@
 
 import type { PinPosition } from '../../hooks/usePreviewComments';
 import type { PreviewComment } from '../../lib/comments';
+import { CheckIcon } from '../icons';
 
 interface Props {
   comments: PreviewComment[];
@@ -40,12 +46,18 @@ export function CommentPins({ comments, positions, scale = 1, selectedId, onSele
   // Guard against a zero or missing factor putting every pin in the corner.
   const factor = scale > 0 ? scale : 1;
 
+  // Only open notes are numbered, so the canvas always reads 1..n with no gaps
+  // where a sent note used to sit.
+  const numbers = new Map(comments.filter((c) => !c.sent).map((c, index) => [c.id, index + 1]));
+  const painted = comments.filter((c) => !c.sent || c.id === selectedId);
+
   return (
-    <div className="ss-pins" aria-hidden={comments.length === 0}>
-      {comments.map((comment, index) => {
+    <div className="ss-pins" aria-hidden={painted.length === 0}>
+      {painted.map((comment) => {
         const at = byId.get(comment.id);
         // No position yet, no element, or the element is behind something.
         if (!at || !at.found || at.visible === false) return null;
+        const number = numbers.get(comment.id);
         return (
           <button
             key={comment.id}
@@ -57,7 +69,7 @@ export function CommentPins({ comments, positions, scale = 1, selectedId, onSele
             onClick={() => onSelect(comment.id)}
             title={`${comment.label}: ${comment.text}`}
           >
-            {index + 1}
+            {number ?? <CheckIcon size={12} />}
           </button>
         );
       })}
