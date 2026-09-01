@@ -592,6 +592,7 @@ pub fn run() {
             // GitHub integration
             commands::github::check_github_cli_status,
             commands::github::get_project_forge,
+            commands::github::list_project_forges,
             commands::forge_ops::move_project_to_forge,
             commands::forge_ops::mirror_project_to_forge,
             commands::github::get_github_username,

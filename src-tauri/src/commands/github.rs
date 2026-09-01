@@ -154,6 +154,23 @@ pub async fn get_project_forge(
     Ok(crate::forge::detect::forge_for_project(&validated_path).to_info())
 }
 
+/// Every forge the project already has a remote for.
+///
+/// The "put this project on another host" menu is built from what's left, so a
+/// project mirrored to GitLab stops being offered a second GitLab mirror.
+/// Origin's forge alone can't answer that — a mirror lives on its own remote.
+#[tauri::command]
+#[tracing::instrument(skip(project_path), fields(project = %project_path))]
+pub async fn list_project_forges(
+    project_path: String,
+) -> Result<Vec<crate::types::ForgeInfo>, CommandError> {
+    let validated_path = validate_project_path(&project_path)?;
+    Ok(crate::forge::detect::forges_for_project(&validated_path)
+        .into_iter()
+        .map(|forge| forge.to_info())
+        .collect())
+}
+
 #[tauri::command]
 #[tracing::instrument]
 pub async fn check_github_cli_status() -> GitHubCliStatus {

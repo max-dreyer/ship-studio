@@ -35,12 +35,20 @@ static PROJECT_FORGE_CACHE: LazyLock<TtlCache<String, &'static ForgeConfig>> =
 ///
 /// Split out from [`forge_for_project`] so it can be tested without a git repo.
 pub fn forge_for_remote_url(url: &str) -> &'static ForgeConfig {
-    let Some(remote) = super::remote::parse_remote(url) else {
-        return DEFAULT_FORGE;
-    };
+    identify_remote_url(url).unwrap_or(DEFAULT_FORGE)
+}
+
+/// The forge a remote URL names, or `None` when the host identifies none.
+///
+/// The same resolution as [`forge_for_remote_url`] without its fallback. A
+/// caller asking "which forges is this project already on?" must not have
+/// `git.acme.com` answered with "GitHub" — that would hide the GitHub entry
+/// from a menu on the strength of a guess.
+pub fn identify_remote_url(url: &str) -> Option<&'static ForgeConfig> {
+    let remote = super::remote::parse_remote(url)?;
 
     if let Some(forge) = super::host_to_forge(&remote.host) {
-        return forge;
+        return Some(forge);
     }
 
     // Self-hosted convention: the instance lives at <forge>.<company>.<tld>.
@@ -48,13 +56,7 @@ pub fn forge_for_remote_url(url: &str) -> &'static ForgeConfig {
     // "not-gitlab.example.com" and "mygithub-mirror.acme.com" to the wrong
     // forge, and those are exactly the hosts we cannot afford to guess on.
     let first_label = remote.host.split('.').next().unwrap_or_default();
-    for forge in ALL_FORGES {
-        if first_label == forge.id {
-            return forge;
-        }
-    }
-
-    DEFAULT_FORGE
+    ALL_FORGES.iter().copied().find(|f| first_label == f.id)
 }
 
 /// The forge a project's `origin` remote points at.
@@ -96,6 +98,45 @@ fn detect_uncached(project_path: &Path) -> &'static ForgeConfig {
     forge_for_remote_url(url.trim())
 }
 
+/// Every forge the project already has a remote for, `origin` included.
+///
+/// `git remote -v` rather than `get-url origin`, because a mirror lives on a
+/// second remote: a UI that only knows about origin keeps offering to mirror a
+/// project onto a forge it is already mirrored to.
+///
+/// Deliberately uncached — the caller is a menu that opens rarely, and a stale
+/// answer here would re-offer a host that was just added.
+pub fn forges_for_project(project_path: &Path) -> Vec<&'static ForgeConfig> {
+    let Ok(mut cmd) = crate::utils::git_command_in(project_path) else {
+        return Vec::new();
+    };
+
+    // Reads .git/config and touches no network — same reasoning as
+    // `detect_uncached` above.
+    let output = match cmd.args(["remote", "-v"]).output() {
+        Ok(output) if output.status.success() => output,
+        // No repo, no remotes, or no git. All three mean "none that we know of".
+        _ => return Vec::new(),
+    };
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let mut found: Vec<&'static ForgeConfig> = Vec::new();
+    for line in stdout.lines() {
+        // "origin\thttps://github.com/owner/repo.git (fetch)" — the URL is the
+        // second field, and every remote is listed twice (fetch + push).
+        let Some(url) = line.split_whitespace().nth(1) else {
+            continue;
+        };
+        let Some(forge) = identify_remote_url(url) else {
+            continue;
+        };
+        if !found.iter().any(|f| f.id == forge.id) {
+            found.push(forge);
+        }
+    }
+    found
+}
+
 /// Drop the cached forge for one project. Call after the remote changes.
 pub fn invalidate_project_forge(project_path: &Path) {
     PROJECT_FORGE_CACHE.invalidate(project_path.to_string_lossy().as_ref());
@@ -123,6 +164,20 @@ mod tests {
         assert_eq!(
             forge_for_remote_url("https://codeberg.org/owner/repo.git").id,
             "forgejo"
+        );
+    }
+
+    #[test]
+    fn an_unidentified_host_is_none_rather_than_the_default() {
+        // `forge_for_remote_url` answers GitHub for anything it can't place, so
+        // "which forges is this project already on?" has to ask the version
+        // without the fallback — otherwise a git.acme.com remote would hide the
+        // GitHub entry from the transfer menu on the strength of a guess.
+        assert!(identify_remote_url("https://git.acme.com/team/site.git").is_none());
+        assert!(identify_remote_url("not a url").is_none());
+        assert_eq!(
+            forge_for_remote_url("https://git.acme.com/team/site.git").id,
+            "github"
         );
     }
 

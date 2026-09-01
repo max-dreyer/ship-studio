@@ -6,6 +6,10 @@
  * the dropdown body carries the main-branch context (pushing to main updates
  * the live site) vs feature-branch context (create a PR to go live).
  *
+ * Every mention of the host comes from the project's own forge. This panel used
+ * to say "Push to GitHub" over a GitLab origin, which named a host the push was
+ * never going to touch.
+ *
  * @module components/PublishBranchDropdown
  */
 
@@ -15,6 +19,7 @@ import { publishBranch } from '../../lib/branches';
 import { ChevronIcon, BranchIcon, SuccessIcon, ErrorIcon } from '../icons';
 import { Spinner } from '../primitives/Spinner';
 import { useClickOutside } from '../../hooks/useClickOutside';
+import { useProjectForge } from '../../hooks/useProjectForge';
 import { logger } from '../../lib/logger';
 import { trackEvent, trackError } from '../../lib/analytics';
 import { useOptionalToast } from '../../contexts/ToastContext';
@@ -27,7 +32,8 @@ let lastPublishAt: number | null = null;
 interface PublishBranchDropdownProps {
   /** Current branch name */
   currentBranch: string;
-  /** Project's GitHub connection status */
+  /** Whether the project has a repository on its forge (the type is named for
+   *  GitHub for historical reasons; it carries every forge's status). */
   projectGithubStatus: ProjectGitHubStatus | null;
   /** Absolute path to the project */
   projectPath: string;
@@ -90,6 +96,8 @@ export function PublishBranchDropdown({
   const [isOpen, setIsOpen] = useState(false);
   const [publishState, setPublishState] = useState<PublishState>({ status: 'idle' });
   const dropdownRef = useRef<HTMLDivElement>(null);
+  // Where origin actually points — this panel only ever pushes there.
+  const forge = useProjectForge(projectPath);
 
   const hasGitHubRepo =
     projectGithubStatus?.status === 'connected' && projectGithubStatus?.github_repo;
@@ -167,7 +175,7 @@ export function PublishBranchDropdown({
         $screen_name: 'Workspace',
       });
       lastPublishAt = now;
-      onToast?.('Pushed to GitHub!', 'success');
+      onToast?.(`Pushed to ${forge.displayName}!`, 'success');
       onStatusChange();
       setPublishState({ status: 'success' });
     } catch (e) {
@@ -217,7 +225,7 @@ export function PublishBranchDropdown({
     onModalClose?.();
   };
 
-  // Still checking GitHub status - show loading state
+  // Still checking the forge status - show loading state
   if (projectGithubStatus === null) {
     return (
       <div className="publish-dropdown" ref={dropdownRef}>
@@ -225,7 +233,7 @@ export function PublishBranchDropdown({
           className="publish-button publish-checking"
           data-education-id="publish-button"
           disabled
-          title="Checking GitHub status..."
+          title={`Checking ${forge.displayName} status...`}
         >
           Push
           <ChevronIcon />
@@ -234,7 +242,7 @@ export function PublishBranchDropdown({
     );
   }
 
-  // If no GitHub repo, show disabled state
+  // If the project has no repository on its forge, show disabled state
   if (!hasGitHubRepo) {
     return (
       <div className="publish-dropdown" ref={dropdownRef}>
@@ -242,7 +250,7 @@ export function PublishBranchDropdown({
           className="publish-button publish-disabled"
           data-education-id="publish-button"
           disabled
-          title="Create a GitHub repository first"
+          title={`Create a ${forge.displayName} ${forge.repositoryTerm.toLowerCase()} first`}
         >
           Push
           <ChevronIcon />
@@ -276,7 +284,8 @@ export function PublishBranchDropdown({
               </div>
               {!isMainBranch && (
                 <div className="publish-branch-hint">
-                  Your changes are on the <strong>{currentBranch}</strong> branch on GitHub.
+                  Your changes are on the <strong>{currentBranch}</strong> branch on{' '}
+                  {forge.displayName}.
                   {onCreatePR && (
                     <>
                       {' '}
@@ -288,7 +297,7 @@ export function PublishBranchDropdown({
                           onCreatePR();
                         }}
                       >
-                        create a PR
+                        create a {forge.pullRequestShort}
                       </button>
                       .
                     </>
@@ -314,7 +323,7 @@ export function PublishBranchDropdown({
                 {publishState.errorType === 'push_rejected'
                   ? 'Push was rejected. Someone else pushed changes to this branch.'
                   : publishState.errorType === 'auth_error'
-                    ? 'Authentication failed. Please check your GitHub connection.'
+                    ? `Authentication failed. Please check your ${forge.displayName} connection.`
                     : publishState.message}
               </div>
               <div className="publish-actions">
@@ -336,7 +345,7 @@ export function PublishBranchDropdown({
             <>
               <div className="publish-in-progress-header">
                 <Spinner />
-                <span>Pushing to GitHub...</span>
+                <span>Pushing to {forge.displayName}...</span>
               </div>
               <div className="publish-actions">
                 <button className="publish-close" onClick={() => setIsOpen(false)}>
@@ -350,7 +359,7 @@ export function PublishBranchDropdown({
           {publishState.status === 'idle' && canSync && (
             <>
               <div className="publish-branch-header">
-                <h3>Push to GitHub</h3>
+                <h3>Push to {forge.displayName}</h3>
               </div>
 
               <div className="publish-branch-body">
@@ -368,8 +377,8 @@ export function PublishBranchDropdown({
 
                 {!isMainBranch && (
                   <div className="publish-branch-description">
-                    Commits your changes and pushes the <strong>{currentBranch}</strong> branch to
-                    GitHub.
+                    Commits your changes and pushes the <strong>{currentBranch}</strong> branch to{' '}
+                    {forge.displayName}.
                   </div>
                 )}
               </div>
@@ -394,7 +403,7 @@ export function PublishBranchDropdown({
             <>
               <div className="publish-success">
                 <SuccessIcon />
-                <span>Nothing to push — GitHub is up to date</span>
+                <span>Nothing to push — {forge.displayName} is up to date</span>
               </div>
               <div className="publish-actions publish-actions-center">
                 <button className="publish-done" onClick={handleDone}>

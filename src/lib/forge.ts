@@ -109,6 +109,24 @@ export async function fetchProjectForge(projectPath: string): Promise<ForgeInfo>
   }
 }
 
+/**
+ * Every forge the project already has a remote for, `origin` included.
+ *
+ * Resolves to an empty list rather than rejecting: this only decides which
+ * entries a menu offers, and the caller falls back to origin's forge alone.
+ */
+export async function fetchProjectForges(projectPath: string): Promise<ForgeInfo[]> {
+  try {
+    const result = await invoke<ForgeInfo[]>('list_project_forges', { projectPath });
+    // An unmocked command in tests resolves to undefined; reading `.id` off the
+    // entries would crash the menu rather than degrade it.
+    if (!Array.isArray(result)) return [];
+    return result.filter((forge) => forge && typeof forge.id === 'string');
+  } catch {
+    return [];
+  }
+}
+
 /** Options for putting an existing project on another forge. */
 export interface ForgeTransferOptions {
   projectPath: string;

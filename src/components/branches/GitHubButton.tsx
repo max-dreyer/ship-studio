@@ -12,7 +12,7 @@
  * @module components/GitHubButton
  */
 
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { GitHubState } from '../../hooks/useIntegrationStatus';
 import {
   ProjectGitHubStatus,
@@ -33,10 +33,13 @@ import {
 import { logger } from '../../lib/logger';
 import {
   ALL_FORGES,
+  DEFAULT_FORGE,
   getForgeById,
   getDefaultForge,
+  fetchProjectForges,
   moveProjectToForge,
   mirrorProjectToForge,
+  type ForgeInfo,
 } from '../../lib/forge';
 import { useProjectForge } from '../../hooks/useProjectForge';
 // This file carries its own local GitHubIcon (below); ForgeIcon comes from the
@@ -83,6 +86,13 @@ export function GitHubButton({
   const [transferMode, setTransferMode] = useState<'create' | 'move' | 'mirror'>('create');
   const [showTransferMenu, setShowTransferMenu] = useState(false);
   const targetForge = getForgeById(targetForgeId);
+  // Where a NEW repo would land. The create button used to be labelled GitHub
+  // whatever the user had picked as their default host.
+  const [defaultForge, setDefaultForge] = useState<ForgeInfo>(DEFAULT_FORGE);
+  // Every forge the project already has a remote for. Origin's forge alone is
+  // not enough: a mirror lives on its own remote, so a project already mirrored
+  // to GitLab kept being offered "Also push to GitLab".
+  const [existingForges, setExistingForges] = useState<ForgeInfo[]>([]);
   // For a project that already has a remote, the link below must carry that
   // forge's mark and name — a GitLab project used to show a GitHub icon.
   const projectForge = useProjectForge(projectPath);
@@ -160,6 +170,30 @@ export function GitHubButton({
     };
   }, [showCreateModal, transferMode]);
 
+  // The default host, for the create-repo button's own wording. Read on mount
+  // rather than only when the modal opens — the button names it before then.
+  useEffect(() => {
+    let cancelled = false;
+    void getDefaultForge().then((forge) => {
+      if (!cancelled) setDefaultForge(forge);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  // Which forges the project is already on. A mirror leaves origin (and so the
+  // project's status) untouched, so this is also re-read explicitly after a
+  // transfer — otherwise the menu would keep offering the host just added.
+  const refreshExistingForges = useCallback(() => {
+    if (!projectPath) return;
+    void fetchProjectForges(projectPath).then(setExistingForges);
+  }, [projectPath]);
+
+  useEffect(() => {
+    refreshExistingForges();
+  }, [refreshExistingForges, projectStatus?.github_url]);
+
   // Clear isCreatingRepo when status becomes connected
   // This synchronizes local loading state with external status - a valid pattern
   useEffect(() => {
@@ -204,7 +238,7 @@ export function GitHubButton({
 
       <div className="github-form">
         {transferMode === 'create' && (
-          <label>
+          <label className="github-field">
             Host
             <select
               className="owner-select"
@@ -224,7 +258,7 @@ export function GitHubButton({
               org API. On GitLab the project lands in the signed-in user's own
               namespace, which is what `glab repo create` does without a group. */}
         {targetForgeId === 'github' && (
-          <label>
+          <label className="github-field">
             Owner
             <select
               className="owner-select"
@@ -241,7 +275,7 @@ export function GitHubButton({
           </label>
         )}
 
-        <label>
+        <label className="github-field">
           Repository name
           <div className="repo-name-input">
             {targetForgeId === 'github' && (
@@ -348,6 +382,7 @@ export function GitHubButton({
 
                 // Refresh status - this will clear isCreatingRepo when status updates
                 await onStatusChange();
+                refreshExistingForges();
                 onToast?.(doneMessage, 'success');
 
                 // Fallback: clear isCreatingRepo after a delay if status doesn't update
@@ -359,7 +394,7 @@ export function GitHubButton({
                 // collapses every failure mode (auth, name collision,
                 // network…) into one undiagnosable telemetry fingerprint
                 // (issue #511).
-                const detail = humanizeGitError(e);
+                const detail = humanizeGitError(e, { forgeName: targetForge.displayName });
                 setError(detail);
                 const verb =
                   transferMode === 'move'
@@ -429,8 +464,11 @@ export function GitHubButton({
   // If the project has a repo on its forge, show a link to it plus the ways to
   // put it on another one.
   if (projectStatus?.status === 'connected' && projectStatus?.github_url) {
-    // Only forges we can actually drive, and never the one it's already on.
-    const otherForges = ALL_FORGES.filter((f) => f.hasCli && f.id !== projectForge.id);
+    // Only forges we can actually drive, and never one the project already has
+    // a remote for. `existingForges` is empty until it loads (and when the
+    // lookup fails), so origin's forge is always excluded on its own.
+    const occupied = new Set([projectForge.id, ...existingForges.map((f) => f.id)]);
+    const otherForges = ALL_FORGES.filter((f) => f.hasCli && !occupied.has(f.id));
 
     const startTransfer = (mode: 'move' | 'mirror', forgeId: string) => {
       setTransferMode(mode);
@@ -497,16 +535,21 @@ export function GitHubButton({
   if (isCreatingRepo) {
     return (
       <button className="github-button github-creating" disabled title="Setting up...">
-        <GitHubIcon />
+        <ForgeIcon forgeId={targetForge.id} />
         Setting up...
       </button>
     );
   }
 
-  // Still checking GitHub status - show loading state
+  // Still checking the project's remote - show loading state. The host is not
+  // known yet, so this state names none.
   if (projectStatus === null) {
     return (
-      <button className="github-button github-checking" disabled title="Checking GitHub status...">
+      <button
+        className="github-button github-checking"
+        disabled
+        title="Checking repository status..."
+      >
         <GitHubIcon />
         Checking...
       </button>
@@ -527,9 +570,9 @@ export function GitHubButton({
           setShowCreateModal(true);
           setError(null);
         }}
-        title="Create GitHub repository"
+        title={`Create a ${defaultForge.displayName} ${defaultForge.repositoryTerm.toLowerCase()}`}
       >
-        <GitHubIcon />
+        <ForgeIcon forgeId={defaultForge.id} />
         <span style={{ whiteSpace: 'nowrap' }}>Create Repo</span>
       </button>
 

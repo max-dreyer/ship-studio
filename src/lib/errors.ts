@@ -66,6 +66,12 @@ export interface GitErrorContext {
   branch?: string;
   /** The base/target branch, when relevant (PRs, merges). */
   base?: string;
+  /**
+   * Brand name of the forge the failed action talked to ("GitLab"). Defaults
+   * to GitHub, which every pre-forge call site means. Blaming GitHub for a
+   * GitLab sign-in sends the user to reconnect the wrong account.
+   */
+  forgeName?: string;
 }
 
 /**
@@ -121,6 +127,7 @@ export function humanizeGitError(value: unknown, ctx: GitErrorContext = {}): str
   const m = raw.toLowerCase();
   const branch = ctx.branch ?? 'This branch';
   const base = ctx.base ?? 'the base branch';
+  const forgeName = ctx.forgeName ?? 'GitHub';
 
   // Nothing to open a PR for — the branch matches the base.
   if (m.includes('no commits between')) {
@@ -172,7 +179,7 @@ export function humanizeGitError(value: unknown, ctx: GitErrorContext = {}): str
     m.includes('bad credentials') ||
     m.includes('403')
   ) {
-    return `GitHub didn't accept the connection. Your sign-in may have expired, or your account may not have write access to this repository. Reconnect GitHub (top right) or check your access, then try again.`;
+    return `${forgeName} didn't accept the connection. Your sign-in may have expired, or your account may not have write access to this repository. Reconnect ${forgeName} (top right) or check your access, then try again.`;
   }
 
   // TLS certificate verification failed — a corporate proxy/antivirus doing

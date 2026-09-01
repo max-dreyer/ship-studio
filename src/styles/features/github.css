@@ -171,8 +171,12 @@
   margin-top: 16px;
 }
 
-.github-form > label:first-child,
-.github-form > label:nth-child(2) {
+/* The stacked field labels (Host / Owner / Repository name). Matched by class,
+   not by position: the form's children differ per forge and per mode — a
+   GitLab mirror drops Host and Owner — and the positional selectors this
+   replaced then landed on the "Private" radio row, laying it out as a column
+   with the circle centered above its own label. */
+.github-form > label.github-field {
   padding: 0 20px 16px;
   font-size: var(--font-size-md);
   font-weight: 500;
